@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "Provenance-aware MCP security proxy for agentic AI."
+requires-python = ">=3.11"
+authors = [{ name = "SENTINEL team" }]
+readme = "README.md"
+license = { text = "MIT" }
+
+# Phase 0 §3: dependencies are runtime-resolved.  pyproject.toml carries
+# minimum-floor constraints; the exact installed versions are written to
+# versions.lock and SDK facts to SDK_VERIFICATION.md.  BUILD_SPEC.md is NOT
+# mutated.
+dependencies = [
+    # Azure / Foundry
+    "azure-ai-projects==2.0.0",          # Foundry; AIProjectClient is THE entry point
+    "azure-identity>=1.17",
+    "azure-cosmos>=4.7",
+    "azure-monitor-opentelemetry>=1.6",
+
+    # MCP — official Python SDK (server + client)
+    "mcp>=1.2",
+
+    # OpenAI — exact pin written to versions.lock after resolve
+    "openai>=1.50",
+
+    # OpenTelemetry
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+
+    # HTTP / SSE
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+
+    # Models / config
+    "pydantic>=2.9,<3",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "pre-commit>=3.8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",   # stubs so `import yaml` type-checks under mypy --strict
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the canonical authorization policy and trust config with the package so
+# they are loadable via importlib.resources in both editable and wheel installs.
+"sentinel.authorization" = ["policies/*.yaml"]
+"sentinel.trust" = ["config.yaml"]
+"sentinel.control" = ["static/*.html", "static/fonts/*.woff2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    # azure-* and opentelemetry occasionally emit deprecation noise we do not own
+    "ignore::DeprecationWarning:azure.*",
+    "ignore::DeprecationWarning:opentelemetry.*",
+    "ignore::PendingDeprecationWarning:azure.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ANN", "S"]
+ignore = [
+    "ANN101",  # missing self type
+    "ANN102",  # missing cls type
+    "S101",    # assert in tests is fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ANN"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]

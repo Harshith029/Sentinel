@@ -1,0 +1,36 @@
+# SENTINEL pre-commit configuration.
+#
+# Phase 0 / BUILD_SPEC §2: secrets are gitignored and `gitleaks` blocks any
+# accidental commit. The pre-commit framework downloads the gitleaks binary,
+# which keeps this cross-platform (Windows / macOS / Linux CI) and avoids
+# pulling in a system-wide Go install.
+#
+# Run locally:
+#   pre-commit install         # one-time, wires up .git/hooks/pre-commit
+#   pre-commit run --all-files # scan everything
+#
+# The Phase 0 DoD test (`tests/test_phase0_gitleaks.py`) calls
+# `pre-commit run gitleaks --files <planted>` against a deliberately-planted
+# fake AWS key, and asserts that gitleaks fails (= blocks) the commit.
+
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        # No additional args; we want the default rule-set to catch anything
+        # gitleaks already knows about, plus the in-repo `gitleaks.toml` if
+        # we add one in a later phase.
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]

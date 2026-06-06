@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for gitleaks staged-secret test
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+
+      - name: Verify versions.lock matches installed deps
+        # Phase 0 DoD: versions.lock must reflect REAL exact pins. If CI ever
+        # installs different versions than what's recorded, fail loudly so we
+        # never silently drift.
+        run: |
+          python -m pip freeze --exclude-editable > .ci_freeze.txt
+          # Allow lock file to be a SUPERSET (no harm if dev extras differ),
+          # but every recorded pin must be present.
+          python -c "
+          from pathlib import Path
+          lock = {l.strip() for l in Path('versions.lock').read_text().splitlines() if l.strip() and not l.startswith('#')}
+          got = {l.strip() for l in Path('.ci_freeze.txt').read_text().splitlines() if l.strip()}
+          missing = lock - got
+          if missing:
+              raise SystemExit(f'versions.lock drift: missing in CI install: {sorted(missing)}')
+          "
+
+      - name: Install pre-commit hooks (gitleaks binary)
+        run: |
+          pre-commit install
+          pre-commit install-hooks
+
+      - name: pytest
+        run: python -m pytest -v

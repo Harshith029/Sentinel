@@ -1,0 +1,64 @@
+# Secrets / env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtualenv
+.venv/
+venv/
+ENV/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+
+# Local IDE / preview launch config (machine-specific absolute paths)
+.claude/
+
+# Local artifacts that should NOT be committed
+sdk_verification_dump.json
+
+# Phase 0 gitleaks test plants this file at runtime; the fixture cleans it up,
+# but belt-and-braces: never let it slip into a commit.
+_phase0_planted_secret_DELETE_ME.txt

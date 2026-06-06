@@ -178,5 +178,3 @@ pre-commit hook blocks accidental commits.
 Model Context Protocol Python SDK (`mcp`), FastAPI, Starlette, `sse-starlette`,
 Uvicorn, Pydantic, OpenTelemetry, PyYAML, httpx, pytest, ruff, mypy, gitleaks, and
 the Azure SDKs for Python. Thank you to their maintainers.
-
-> Built for the Microsoft Build AI Hackathon 2026 — "Security in the Agentic Future."

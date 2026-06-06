@@ -29,24 +29,18 @@ jobs:
       - name: Install package + dev deps
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e ".[dev]"
+          # Install pinned to versions.lock for a reproducible environment. -c
+          # constrains versions of everything installed; platform-only pins (e.g.
+          # pywin32/colorama from the Windows-generated lock) are simply not
+          # installed on Linux, which is expected.
+          python -m pip install -e ".[dev]" -c versions.lock
 
       - name: Verify versions.lock matches installed deps
-        # Phase 0 DoD: versions.lock must reflect REAL exact pins. If CI ever
-        # installs different versions than what's recorded, fail loudly so we
-        # never silently drift.
-        run: |
-          python -m pip freeze --exclude-editable > .ci_freeze.txt
-          # Allow lock file to be a SUPERSET (no harm if dev extras differ),
-          # but every recorded pin must be present.
-          python -c "
-          from pathlib import Path
-          lock = {l.strip() for l in Path('versions.lock').read_text().splitlines() if l.strip() and not l.startswith('#')}
-          got = {l.strip() for l in Path('.ci_freeze.txt').read_text().splitlines() if l.strip()}
-          missing = lock - got
-          if missing:
-              raise SystemExit(f'versions.lock drift: missing in CI install: {sorted(missing)}')
-          "
+        # Fail loudly on real version drift. Platform-specific pins (pywin32,
+        # colorama, …) recorded on Windows are absent on a Linux runner by design
+        # and are tolerated; only a co-installed package at the wrong version is
+        # drift. See scripts/check_versions_lock.py.
+        run: python scripts/check_versions_lock.py
 
       - name: Install pre-commit hooks (gitleaks binary)
         run: |

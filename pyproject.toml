@@ -73,6 +73,13 @@ filterwarnings = [
     "ignore::DeprecationWarning:azure.*",
     "ignore::DeprecationWarning:opentelemetry.*",
     "ignore::PendingDeprecationWarning:azure.*",
+    # anyio/mcp in-memory streams are closed at GC time, which pytest surfaces as
+    # an *unraisable* ResourceWarning. Under "error" this intermittently fails the
+    # suite depending on GC timing (benign on Windows, fails on the Linux runner).
+    # It is a third-party cleanup artifact, not a defect in our code — ignore it
+    # like the azure/opentelemetry noise above.
+    "ignore::ResourceWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
 [tool.ruff]

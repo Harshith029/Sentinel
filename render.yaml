@@ -1,0 +1,17 @@
+# Render.com blueprint — one-click live deploy of the SENTINEL demo.
+#
+# Free tier: the service sleeps after ~15 min of inactivity and cold-starts in
+# under a minute on the next request. The dashboard, the one-click attacks, and
+# the /mcp wire endpoint are all served by this single container (the same image
+# `make serve` runs locally). All data is synthetic; nothing real is sent.
+services:
+  - type: web
+    name: sentinel
+    runtime: docker
+    plan: free
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: SENTINEL_DEMO_MODE
+        value: "1"

@@ -19,8 +19,11 @@ COPY src ./src
 RUN python -m pip install --upgrade pip setuptools wheel \
  && python -m pip install .
 
-# Run as non-root.
-RUN useradd --create-home --uid 10001 sentinel
+# Run as non-root. /data is the writable home of the SQLite forensic store —
+# /app is root-owned, so the default ./var path would fail for uid 10001.
+RUN useradd --create-home --uid 10001 sentinel \
+ && mkdir -p /data && chown sentinel /data
+ENV SENTINEL_DATA_DIR=/data
 USER sentinel
 
 EXPOSE 8765

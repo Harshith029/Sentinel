@@ -33,4 +33,6 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
-        args: ["--maxkb=512"]
+        # 2MB: the hackathon submission deck (deck/SENTINEL_Submission.pptx,
+        # ~1.3MB with embedded dashboard screenshots) lives in the repo.
+        args: ["--maxkb=2048"]

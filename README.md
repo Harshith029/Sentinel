@@ -6,6 +6,10 @@
 > derived from — so an instruction that arrived inside retrieved web content can
 > never drive a high-risk action, even when it slips past content filters.
 
+**▶ Live demo: https://sentinel-i63x.onrender.com** — open it and the hero attack
+auto-plays; watch the exfiltration get **blocked** in seconds. (Free tier, so the
+first load after it's been idle may take ~50 s to wake — just refresh once.)
+
 SENTINEL is an **MCP (Model Context Protocol) proxy**. To a protected agent it
 presents as an MCP server; to the real tool servers it is an MCP client. Every
 tool call physically traverses SENTINEL — **interception is guaranteed by network
@@ -41,20 +45,63 @@ tainted. Taint clears only through an explicit, auditable **StructuredExtractor*
 (schema validation → a fresh SYSTEM-trust value with no inherited ancestry) — and a
 sanitized value cannot launder a tainted sibling.
 
-## Quick start
+## Run it
+
+### 1 · Try the live demo (nothing to install)
+Open **https://sentinel-i63x.onrender.com** — the hero attack auto-plays and you'll
+see the exfiltration blocked within seconds. Click **reset** then **launch attack**
+(or **--evasion**) to run it again yourself. Free tier, so the first load after it's
+been idle may take ~50 s to wake; just refresh once.
+
+### 2 · Run it locally
+**Requires Python 3.11+ and git.**
 
 ```bash
-# Docker (no Python needed):
-docker build -t sentinel -f deploy/Dockerfile . && docker run --rm -p 8765:8765 sentinel
-# or with a venv:
-python -m venv .venv && .venv/bin/python -m pip install -e ".[dev]" && make dashboard
+git clone https://github.com/Harshith029/Sentinel.git
+cd Sentinel
+python -m venv .venv
 ```
-Open **http://localhost:8765**, click **Launch attack**. Tests: `make test`
-(277 passing) · lint: `make lint` · types: `make typecheck` (`mypy --strict`).
 
-`make dashboard` runs the REST-driven demo. `make serve` runs the **full
-product** — same dashboard plus a real **MCP-over-HTTP endpoint at `/mcp`** that
-any external MCP client can connect to (next section).
+Install (editable, with dev extras) and start the dashboard:
+
+```powershell
+# Windows (PowerShell)
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
+```
+
+```bash
+# macOS / Linux   (or just: make dashboard)
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
+```
+
+Then open **http://localhost:8765** and click **launch attack** (or **--evasion** for
+the variant that slips past the content filter).
+
+### 3 · Run with Docker (no Python needed)
+```bash
+docker build -t sentinel -f deploy/Dockerfile .
+docker run --rm -p 8765:8765 sentinel        # → http://localhost:8765
+```
+
+### 4 · The full product (adds the real `/mcp` wire endpoint)
+`create_gateway_app` exposes a streamable-HTTP MCP server at `/mcp` so an external MCP
+client can connect and be secured by the same pipeline — this is what the live demo
+and `make serve` run:
+
+```bash
+.venv/bin/python -m uvicorn sentinel.control.app:create_gateway_app --factory --host 127.0.0.1 --port 8765
+```
+
+### 5 · Tests & checks
+```bash
+.venv/bin/python -m pytest                 # 277 tests       (make test)
+.venv/bin/python -m ruff check src tests   # lint            (make lint)
+.venv/bin/python -m mypy src               # mypy --strict   (make typecheck)
+```
+On Windows, replace `.venv/bin/python` with `.venv\Scripts\python.exe`. The `make`
+targets are just Unix shortcuts for the commands above.
 
 **The hero attack.** A user asks the agent to look up a customer record and research
 a pricing page. The page is poisoned with a hidden instruction to email the record

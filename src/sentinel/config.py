@@ -96,6 +96,17 @@ class Settings(BaseModel):
         ),
     )
 
+    real_web_fetch: bool = Field(
+        default=False,
+        description=(
+            "When True, the in-process `web` tool performs a REAL, SSRF-guarded "
+            "HTTP fetch of the requested URL (sentinel.toolservers.web_fetch) instead "
+            "of returning canned demo pages. The security pipeline is unchanged; only "
+            "the downstream `web_fetch` implementation differs. Off by default so the "
+            "scripted demo stays reproducible offline."
+        ),
+    )
+
     def tool_server_urls(self) -> dict[str, str]:
         """Server-key → URL for any configured REMOTE downstream tool servers.
 
@@ -131,6 +142,7 @@ def _read_settings_from_env() -> Settings:
         sentinel_tools_records_url=os.environ.get("SENTINEL_TOOLS_RECORDS_URL") or None,
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
+        real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
     )
 
 

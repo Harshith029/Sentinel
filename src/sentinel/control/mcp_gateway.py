@@ -181,7 +181,9 @@ class SentinelGateway:
 
     async def _connect_inmemory_downstream(self) -> None:
         """The DEMO default: three in-process mock tool servers over in-memory MCP."""
-        servers = build_downstream(self._state)
+        servers = build_downstream(
+            self._state, real_web=get_settings().real_web_fetch
+        )
         clients: dict[str, ClientSession] = {}
         for key, server in servers.items():
             client = await self._stack.enter_async_context(connect(server))

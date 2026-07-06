@@ -284,6 +284,7 @@ class RunManager:
                 input_shield=self._shield,
                 trace_id=record.trace_id,
                 extra_pages=build.extra_pages,
+                real_web=self._settings.real_web_fetch,
             )
             record.status = "completed"
         except Exception as exc:  # noqa: BLE001 - record failure; never crash the loop

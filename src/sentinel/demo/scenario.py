@@ -80,6 +80,7 @@ async def run_demo_session(
     trace_id: str | None = None,
     extra_pages: Mapping[str, str] | None = None,
     skip_sentinel: bool = False,
+    real_web: bool = False,
 ) -> DemoResult:
     """Run ``driver`` against the single SENTINEL pipeline and return the trace.
 
@@ -98,7 +99,7 @@ async def run_demo_session(
     scorer = scorer if scorer is not None else TrustScorer(emitter, load_default_trust_config())
     shield = input_shield if input_shield is not None else InputShield(demo_mode=demo_mode)
     trace_id = trace_id if trace_id is not None else emitter.new_trace_id()
-    servers = build_downstream(state)
+    servers = build_downstream(state, real_web=real_web)
     config = authorization_config or DEFAULT_CONFIG
 
     async with AsyncExitStack() as stack:

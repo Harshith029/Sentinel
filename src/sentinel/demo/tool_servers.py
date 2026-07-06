@@ -94,18 +94,35 @@ class ToolServerState:
     extra_pages: dict[str, str] = field(default_factory=dict)
 
 
-def build_downstream(state: ToolServerState) -> dict[str, FastMCP]:
-    """Build the three isolated mock tool servers wired to ``state``."""
+def build_downstream(state: ToolServerState, *, real_web: bool = False) -> dict[str, FastMCP]:
+    """Build the three isolated tool servers wired to ``state``.
+
+    ``real_web=True`` swaps the canned ``web_fetch`` for the REAL, SSRF-guarded
+    fetcher (:func:`sentinel.toolservers.web_fetch.fetch_url`) so the agent can
+    research any live URL — the content then flows into provenance/taint exactly
+    like a canned page. ``send_email`` and ``get_customer_record`` stay a sink and
+    synthetic-data source respectively, by design (a security demo must never
+    actually send data or process real PII). Default is the reproducible mock.
+    """
 
     web = FastMCP("web")
 
-    @web.tool()
-    def web_fetch(url: str) -> str:
-        """Fetch a (canned or user-supplied) web page."""
-        state.executions.append(("web_fetch", url))
-        if url in state.extra_pages:
-            return state.extra_pages[url]
-        return _PAGES.get(url, f"<no canned page for {url}>")
+    if real_web:
+        from sentinel.toolservers.web_fetch import fetch_url
+
+        @web.tool()
+        async def web_fetch(url: str) -> str:
+            """Fetch a real web page over HTTP(S) with SSRF guards."""
+            state.executions.append(("web_fetch", url))
+            return (await fetch_url(url)).as_tool_output()
+    else:
+        @web.tool()
+        def web_fetch(url: str) -> str:
+            """Fetch a (canned or user-supplied) web page."""
+            state.executions.append(("web_fetch", url))
+            if url in state.extra_pages:
+                return state.extra_pages[url]
+            return _PAGES.get(url, f"<no canned page for {url}>")
 
     email = FastMCP("email")
 

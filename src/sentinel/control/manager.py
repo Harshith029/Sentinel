@@ -264,6 +264,23 @@ class RunManager:
         )
         return proxy
 
+    def _select_driver(self, build: ScenarioBuild) -> Any:  # noqa: ANN401 - AgentDriver
+        """Choose the agent that proposes tool calls for a run.
+
+        Default (product): a REAL LLM when a credential is configured
+        (``OPENAI_API_KEY`` / Azure OpenAI). Offline / CI: the deterministic
+        scripted transcript from the scenario build, so runs stay reproducible and
+        key-free. The security pipeline is identical either way — only the driver
+        differs (BUILD_SPEC §10).
+        """
+        from sentinel.demo.llm_driver import default_agent_driver
+
+        return default_agent_driver(
+            task=build.user_input,
+            scripted_fallback=build.driver,
+            settings=self._settings,
+        )
+
     async def _execute(self, record: RunRecord, build: ScenarioBuild) -> None:
         try:
             # Resolve the tenant's policy at run time → registry hot-reloads take
@@ -272,7 +289,7 @@ class RunManager:
             if engine is None:
                 raise ValueError(f"no policy registered for tenant {record.tenant!r}")
             await run_demo_session(
-                build.driver,
+                self._select_driver(build),
                 user_input=build.user_input,
                 demo_mode=self._demo_mode,
                 agent_id=record.agent_id,

@@ -39,6 +39,14 @@ def _force_demo_mode(
     monkeypatch.setenv(
         "SENTINEL_DATA_DIR", str(tmp_path_factory.mktemp("sentinel_data"))
     )
+    # The default agent path is a REAL LLM when a credential is configured. Clear
+    # any live-model env the developer may have set, so tests deterministically use
+    # the scripted offline fallback and never touch the network.
+    for _var in (
+        "OPENAI_API_KEY", "OPENAI_MODEL",
+        "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT",
+    ):
+        monkeypatch.delenv(_var, raising=False)
 
 
 class FakeAsyncCosmosContainer:

@@ -29,13 +29,16 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
 import mcp.types as mcp_types
 from mcp.client.session import ClientSession
 
 from sentinel.config import Settings, get_settings
 from sentinel.mcp_proxy.content import result_text
+
+if TYPE_CHECKING:
+    from sentinel.demo.driver import AgentDriver
 
 
 class LiveAgentUnavailable(RuntimeError):
@@ -270,6 +273,29 @@ def build_live_model(
         "AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT (Azure OpenAI), or run "
         "the offline stub instead. The live agent does not silently fall back."
     )
+
+
+def default_agent_driver(
+    *,
+    task: str,
+    scripted_fallback: AgentDriver,
+    settings: Settings | None = None,
+    system: str = DEFAULT_SYSTEM_PROMPT,
+    max_steps: int = 6,
+) -> AgentDriver:
+    """The DEFAULT agent path (product default): a REAL LLM when credentials are
+    configured, else the deterministic scripted driver kept as the offline fallback.
+
+    With ``OPENAI_API_KEY`` (or Azure OpenAI settings) present, an actual model
+    decides the actions and SENTINEL is the backstop. With no credential it degrades
+    to ``scripted_fallback`` so offline / CI runs stay deterministic and key-free.
+    The scripted transcript is thus a fixture / fallback — no longer the default.
+    """
+    try:
+        model = build_live_model(settings)
+    except LiveAgentUnavailable:
+        return scripted_fallback
+    return LLMAgentDriver(model, task=task, system=system, max_steps=max_steps)
 
 
 # --- the OFFLINE faithful stand-in -------------------------------------------

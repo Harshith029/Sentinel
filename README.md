@@ -136,10 +136,15 @@ MCP boundary. By default the downstream tool servers are in-process mocks; set
 end-to-end in `tests/test_phase9_mcp_gateway.py`, where the proxy routes to three
 HTTP-served tool servers and still blocks the exfiltration.)
 
-**A real LLM in the loop.** The agent doesn't have to be a script. `LLMAgentDriver`
-runs a genuine tool-use loop where the *model* decides what to do; SENTINEL is the
-backstop. Point it at the `/mcp` endpoint with a real model — or the offline
-susceptible stand-in if you have no key:
+**A real LLM is the default agent.** When a credential is configured, every run is
+driven by a genuine model deciding the actions — set **`OPENAI_API_KEY`** (optionally
+`OPENAI_MODEL`, default `gpt-4o-mini`) or **`AZURE_OPENAI_ENDPOINT` +
+`AZURE_OPENAI_DEPLOYMENT`** (identity auth). With no credential the run deterministically
+falls back to the scripted transcript, so offline/CI stays key-free and reproducible.
+
+`LLMAgentDriver` runs a genuine tool-use loop where the *model* decides what to do;
+SENTINEL is the backstop. Point it at the `/mcp` endpoint with a real model — or the
+offline susceptible stand-in if you have no key:
 
 ```bash
 OPENAI_API_KEY=sk-... python examples/run_live_agent.py     # a real model, tricked → BLOCKED

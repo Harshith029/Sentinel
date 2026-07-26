@@ -15,6 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 import mcp.types as mcp_types
 from mcp.client.session import ClientSession
 
+from sentinel.catalogue import CatalogueIntegrityError
 from sentinel.mcp_proxy.content import mcp_error
 
 
@@ -45,10 +46,32 @@ class ToolRouter:
                 self._sessions.append(session)
 
     async def list_tools(self) -> mcp_types.ListToolsResult:
+        """Merge every backing server's catalogue, refusing name collisions.
+
+        A tool name exposed by two servers is the **cross-server shadowing**
+        attack: whichever catalogue wins, the agent reads that server's
+        description while ``call_tool`` may route to the *other* server — so the
+        described tool and the executed tool differ. Silently first-winning
+        (``setdefault``) hides exactly that mismatch, so we fail CLOSED instead
+        and make the operator disambiguate.
+        """
         merged: dict[str, mcp_types.Tool] = {}
+        collisions: dict[str, int] = {}
         for session in self._sessions:
             for tool in (await session.list_tools()).tools:
-                merged.setdefault(tool.name, tool)
+                if tool.name in merged:
+                    collisions[tool.name] = collisions.get(tool.name, 1) + 1
+                    continue
+                merged[tool.name] = tool
+        if collisions:
+            raise CatalogueIntegrityError(
+                "downstream tool-name collision (possible cross-server shadowing): "
+                + ", ".join(
+                    f"{name!r} exposed by {count} servers"
+                    for name, count in sorted(collisions.items())
+                )
+                + " — refusing to guess which server is authoritative"
+            )
         return mcp_types.ListToolsResult(tools=list(merged.values()))
 
     async def call_tool(

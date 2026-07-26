@@ -96,6 +96,17 @@ class Settings(BaseModel):
         ),
     )
 
+    catalogue_strict: bool = Field(
+        default=True,
+        description=(
+            "When True (the secure default), SENTINEL REFUSES to serve a downstream "
+            "tool catalogue whose definitions carry prompt-injection markers (tool "
+            "poisoning) — a supply-chain compromise provenance alone cannot catch. "
+            "Set False to downgrade to flag-only triage. Cross-server tool-name "
+            "shadowing always fails closed regardless of this setting."
+        ),
+    )
+
     real_web_fetch: bool = Field(
         default=False,
         description=(
@@ -143,6 +154,7 @@ def _read_settings_from_env() -> Settings:
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
+        catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
     )
 
 

@@ -65,6 +65,7 @@ from sentinel.demo.tool_servers import (
 from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.proxy import SentinelProxy
 from sentinel.mcp_proxy.router import ToolRouter
+from sentinel.shield import InputShield
 
 _GATEWAY_NAME: Final[str] = "sentinel"
 _LIVE_USER_INPUT: Final[str] = "(live MCP session over HTTP)"
@@ -171,8 +172,18 @@ class SentinelGateway:
         else:
             await self._connect_inmemory_downstream()
         assert self._router is not None  # both connect paths set it
-        # Preflight (health-check + cache schemas) so list_tools can't flake.
-        cache = await preflight(self._router, required_tools=REQUIRED_TOOLS)
+        # Preflight (health-check + cache schemas) so list_tools can't flake, AND
+        # vet the catalogue itself: a poisoned tool DESCRIPTION subverts the agent
+        # before anything is retrieved, so provenance alone cannot catch it. By
+        # default a poisoned catalogue refuses to boot. (Cross-server tool-name
+        # shadowing already fails closed inside ToolRouter.list_tools.)
+        settings = get_settings()
+        cache = await preflight(
+            self._router,
+            required_tools=REQUIRED_TOOLS,
+            shield=InputShield.from_settings(settings),
+            strict=settings.catalogue_strict,
+        )
         self._cache = cache.tools
         # The session manager's run() owns the task group every HTTP session lives
         # in; it must wrap the whole app lifetime.

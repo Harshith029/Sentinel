@@ -18,6 +18,7 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 
 from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import load_default_policy
+from sentinel.config import get_settings
 from sentinel.demo.driver import AgentDriver, ScriptedAgentDriver, Step, ToolInvocation
 from sentinel.demo.preflight import preflight
 from sentinel.demo.tool_servers import (
@@ -111,8 +112,14 @@ async def run_demo_session(
             clients[key] = client
         router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
 
-        # PREFLIGHT: health-check + cache schemas BEFORE the run (anti-flakiness).
-        cache = await preflight(router, required_tools=REQUIRED_TOOLS)
+        # PREFLIGHT: health-check + cache schemas BEFORE the run (anti-flakiness),
+        # and vet the catalogue for tool poisoning with the same Layer-1 shield.
+        cache = await preflight(
+            router,
+            required_tools=REQUIRED_TOOLS,
+            shield=shield,
+            strict=get_settings().catalogue_strict,
+        )
 
         if skip_sentinel:
             # "Without Sentinel" baseline: drive the SAME tool servers directly,

@@ -142,6 +142,14 @@ driven by a genuine model deciding the actions — set **`OPENAI_API_KEY`** (opt
 `AZURE_OPENAI_DEPLOYMENT`** (identity auth). With no credential the run deterministically
 falls back to the scripted transcript, so offline/CI stays key-free and reproducible.
 
+*No budget? Run a real model for free* — point `OPENAI_BASE_URL` at any
+OpenAI-compatible endpoint. A local [Ollama](https://ollama.com) needs no API key at all:
+
+```bash
+ollama serve && ollama pull llama3.2
+export OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2
+```
+
 `LLMAgentDriver` runs a genuine tool-use loop where the *model* decides what to do;
 SENTINEL is the backstop. Point it at the `/mcp` endpoint with a real model — or the
 offline susceptible stand-in if you have no key:

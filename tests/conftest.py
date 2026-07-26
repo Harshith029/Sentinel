@@ -43,7 +43,7 @@ def _force_demo_mode(
     # any live-model env the developer may have set, so tests deterministically use
     # the scripted offline fallback and never touch the network.
     for _var in (
-        "OPENAI_API_KEY", "OPENAI_MODEL",
+        "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT",
     ):
         monkeypatch.delenv(_var, raising=False)

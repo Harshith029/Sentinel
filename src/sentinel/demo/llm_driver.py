@@ -241,7 +241,17 @@ def build_live_model(
        classifier, §6); the deployment name is the model.
     2. **OpenAI** if ``OPENAI_API_KEY`` is set — ``model`` arg or ``OPENAI_MODEL``
        (default ``gpt-4o-mini``).
-    3. Otherwise raise :class:`LiveAgentUnavailable`.
+    3. **Any OpenAI-compatible endpoint** if ``OPENAI_BASE_URL`` is set — a local
+       runtime (Ollama ``http://localhost:11434/v1``, LM Studio, vLLM) or a
+       free-tier hosted provider (Groq, Gemini's OpenAI-compat URL). Needs no paid
+       key: ``OPENAI_API_KEY`` is sent if present, else a placeholder, since local
+       servers ignore it. ``OPENAI_MODEL`` names the model (e.g. ``llama3.2``).
+    4. Otherwise raise :class:`LiveAgentUnavailable`.
+
+    Checking the base-URL case AFTER the plain-key case is deliberate: with both a
+    real key and a base URL set, the explicit endpoint wins only if no key-only
+    OpenAI path applies — see the ordering below (base_url is honoured together
+    with a key by passing both to the same client).
     """
     import os
 
@@ -262,16 +272,28 @@ def build_live_model(
         return OpenAIModelClient(model=settings.azure_openai_deployment, client=client)
 
     api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    if api_key or base_url:
         from openai import AsyncOpenAI
 
         chosen = model or os.environ.get("OPENAI_MODEL") or "gpt-4o-mini"
-        return OpenAIModelClient(model=chosen, client=AsyncOpenAI(api_key=api_key))
+        # A local runtime (Ollama/LM Studio/vLLM) needs no real key but the SDK
+        # requires *some* value, so send a placeholder when only a base URL is set.
+        # base_url=None makes the SDK use api.openai.com, so passing it through
+        # unconditionally keeps the plain-OpenAI path unchanged. (Distinct name
+        # from the Azure client above: they are different SDK types.)
+        openai_client = AsyncOpenAI(
+            api_key=api_key or "not-needed-for-local", base_url=base_url
+        )
+        return OpenAIModelClient(model=chosen, client=openai_client)
 
     raise LiveAgentUnavailable(
-        "No live-model credentials found. Set OPENAI_API_KEY (OpenAI) or "
-        "AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT (Azure OpenAI), or run "
-        "the offline stub instead. The live agent does not silently fall back."
+        "No live-model credentials found. Set OPENAI_API_KEY (OpenAI), "
+        "AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT (Azure OpenAI), or "
+        "OPENAI_BASE_URL for any OpenAI-compatible endpoint (e.g. Ollama at "
+        "http://localhost:11434/v1 with OPENAI_MODEL=llama3.2 — no paid key "
+        "required). Otherwise the deterministic scripted driver is used. The live "
+        "agent does not silently fall back to a fake model."
     )
 
 

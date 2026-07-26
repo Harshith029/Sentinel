@@ -12,6 +12,7 @@ from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
 from sentinel.demo.llm_driver import (
     LLMAgentDriver,
     SusceptibleStubModel,
+    build_live_model,
     default_agent_driver,
 )
 from sentinel.demo.scenario import run_demo_session
@@ -34,6 +35,21 @@ def test_default_is_the_llm_when_openai_key_present(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     driver = default_agent_driver(task="do the task", scripted_fallback=_scripted())
     assert isinstance(driver, LLMAgentDriver)  # real-LLM path selected (constructed only)
+
+
+def test_local_openai_compatible_endpoint_needs_no_paid_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A local runtime (Ollama/LM Studio/vLLM) or a free-tier provider: base URL
+    # only, NO api key. The live path must be selected and pointed at that host.
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "llama3.2")
+    driver = default_agent_driver(task="do the task", scripted_fallback=_scripted())
+    assert isinstance(driver, LLMAgentDriver)
+
+    model = build_live_model()
+    assert model._model == "llama3.2"
+    assert "localhost:11434" in str(model._client.base_url)
 
 
 async def test_llm_path_blocks_induced_exfiltration_offline() -> None:

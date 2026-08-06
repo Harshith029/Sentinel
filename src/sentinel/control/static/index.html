@@ -348,6 +348,10 @@ ul.bnd b{color:var(--txt)}
             <div class="card-b"><pre class="jsonl" id="soc"><span class="faint">run a scenario, then render the SIEM JSONL.</span></pre></div>
           </div>
           <div class="card">
+            <div class="card-h"><span class="t">protected downstream</span> <span class="dim">your MCP servers + catalogue defenses</span></div>
+            <div class="card-b" id="downstream"><span class="faint">loading…</span></div>
+          </div>
+          <div class="card">
             <div class="card-h"><span class="t">deployment mode</span> <span class="dim">azure is load-bearing</span></div>
             <div class="card-b" id="capabilities"><span class="faint">loading…</span></div>
           </div>
@@ -605,6 +609,16 @@ async function loadCapabilities(){
     $('capabilities').innerHTML='<div class="dim" style="margin-bottom:9px"><b style="color:var(--txt)">'+esc(d.mode)+'</b> · '+esc(d.tagline)+'</div>'+d.capabilities.map(c=>'<div class="cap '+(c.degraded?'deg':'live')+'"><div class="n"><span class="d"></span>'+esc(c.name)+'</div><div class="vals"><div class="row"><span class="lab">demo</span><span class="'+(c.degraded?'on deg':'')+'">'+esc(c.demo)+'</span></div><div class="row"><span class="lab">azure</span><span class="'+(c.degraded?'':'on az')+'">'+esc(c.azure)+'</span></div></div></div>').join('');
   }catch(e){}
 }
+async function loadDownstream(){
+  try{ const d=await (await fetch('/downstream')).json(); const el=$('downstream');
+    if(d.mode==='not-connected'){ el.innerHTML='<div class="faint">'+esc(d.detail||'no downstream connected')+'</div>'; return; }
+    const label=d.declared?'your declared MCP servers':(d.mode==='remote-http'?'remote tool servers':'bundled example servers');
+    const head='<div class="dim" style="margin-bottom:9px"><b style="color:var(--txt)">'+esc(label)+'</b> · '+d.server_count+' server(s), '+d.tool_count+' tool(s) discovered</div>';
+    const servers=d.servers.map(s=>'<div class="cap live"><div class="n"><span class="d"></span>'+esc(s.name)+'</div><div class="vals"><div class="row"><span class="lab">tools</span><span>'+(s.tools.map(esc).join(', ')||'—')+'</span></div></div></div>').join('');
+    const checks=Object.entries(d.checks||{}).map(([k,v])=>'<div class="row"><span class="lab">'+esc(k.replace(/_/g,' '))+'</span><span class="on">'+esc(v)+'</span></div>').join('');
+    el.innerHTML=head+servers+(checks?'<div class="cap live" style="margin-top:9px"><div class="n"><span class="d"></span>catalogue defenses</div><div class="vals">'+checks+'</div></div>':'');
+  }catch(e){}
+}
 
 /* custom + history */
 const PRESETS={
@@ -638,7 +652,7 @@ function reset(){ if(es){es.close();es=null;} if(pollTimer){clearInterval(pollTi
   $('obx-yes').innerHTML='<span class="obx-empty">—</span>'; $('obx-no').innerHTML='<span class="obx-empty">—</span>'; $('chain').innerHTML='<span class="faint">launch an attack to populate the kill chain.</span>';
   render(); setConn('idle'); }
 
-reset(); loadExtractor(); loadCapabilities();
+reset(); loadExtractor(); loadCapabilities(); loadDownstream();
 setTimeout(()=>{ if(autoplayed||currentTrace) return; autoplayed=true; launch('hero-obvious'); $('autorun').innerHTML='<span class="a">// auto-playing demo…</span>'; }, 1000);
 </script>
 </body>

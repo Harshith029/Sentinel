@@ -291,6 +291,28 @@ def create_app(
         """DEMO-vs-AZURE capability matrix — the 'Azure is load-bearing' delta."""
         return mgr.capabilities()
 
+    @app.get("/downstream")
+    async def downstream() -> dict[str, Any]:
+        """What SENTINEL is protecting: connected servers, discovered tools, defenses.
+
+        Empty when the ``/mcp`` gateway is off (the REST-only demo), because there
+        is no downstream connection to describe in that mode.
+        """
+        if gateway is None:
+            return {
+                "mode": "not-connected",
+                "declared": False,
+                "servers": [],
+                "server_count": 0,
+                "tool_count": 0,
+                "checks": {},
+                "detail": (
+                    "the /mcp gateway is disabled; start with create_gateway_app "
+                    "(make serve) to connect downstream MCP servers"
+                ),
+            }
+        return gateway.describe()
+
     @app.get("/runs/{run_id}/audit")
     async def get_audit(
         run_id: str, format: str = "json"

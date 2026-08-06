@@ -42,7 +42,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
-from typing import Final
+from typing import Any, Final
 
 import mcp.types as mcp_types
 from mcp import ClientSession
@@ -169,8 +169,49 @@ class SentinelGateway:
 
     @property
     def downstream_mode(self) -> str:
-        """``"memory"`` (in-process mocks) or ``"remote-http"`` (tool servers over HTTP)."""
+        """``"memory"`` / ``"remote-http"`` / ``"declared"`` (the operator's own servers)."""
         return self._downstream_mode
+
+    def describe(self) -> dict[str, Any]:
+        """Operator-facing view of what SENTINEL is actually protecting.
+
+        Surfaces the things that make this a product rather than a demo: WHICH
+        downstream servers are connected, WHICH tools were discovered on each, and
+        WHICH catalogue defenses are active. Rendered by the dashboard so the
+        posture is visible instead of implied.
+        """
+        servers: list[dict[str, Any]] = []
+        if self._topology is not None:
+            servers = [
+                {"name": name, "tools": sorted(t.name for t in tools)}
+                for name, tools in sorted(self._topology.catalogues.items())
+            ]
+        elif self._cache:
+            # Example/legacy topology: one merged catalogue, no per-server split.
+            servers = [
+                {
+                    "name": "bundled example servers",
+                    "tools": sorted(t.name for t in self._cache),
+                }
+            ]
+        settings = get_settings()
+        return {
+            "mode": self._downstream_mode,
+            "declared": self._downstream_mode == "declared",
+            "servers": servers,
+            "server_count": len(servers),
+            "tool_count": sum(len(s["tools"]) for s in servers),
+            "checks": {
+                "cross_server_shadowing": "enforced (connect fails closed)",
+                "tool_poisoning": (
+                    "strict (refuse to serve)"
+                    if settings.catalogue_strict
+                    else "flag-only"
+                ),
+                "rug_pull": "catalogue pinned at connect",
+                "unknown_tools": "default-denied until policy is written",
+            },
+        }
 
     async def __aenter__(self) -> SentinelGateway:
         # Choose the downstream: remote MCP-over-HTTP tool servers if their URLs

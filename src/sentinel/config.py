@@ -96,6 +96,19 @@ class Settings(BaseModel):
         ),
     )
 
+    mcp_servers: str | None = Field(
+        default=None,
+        description=(
+            "JSON declaring the operator's OWN downstream MCP servers, e.g. "
+            '[{"name":"github","url":"https://mcp.example/gh"}] (an object mapping '
+            "name->url also works). When set, SENTINEL connects to these, DISCOVERS "
+            "their tools, and builds routing from discovery — the product path. When "
+            "unset it falls back to the bundled example servers. Discovery never "
+            "grants permission: a discovered tool with no policy entry is "
+            "default-denied until the operator writes a rule for it."
+        ),
+    )
+
     catalogue_strict: bool = Field(
         default=True,
         description=(
@@ -155,6 +168,7 @@ def _read_settings_from_env() -> Settings:
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
+        mcp_servers=os.environ.get("SENTINEL_MCP_SERVERS") or None,
     )
 
 

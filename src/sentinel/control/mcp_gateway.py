@@ -40,6 +40,7 @@ orthogonal change (the ACA bicep already models them as separate services).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from typing import Final
 
@@ -61,6 +62,12 @@ from sentinel.demo.tool_servers import (
     TOOL_TO_SERVER,
     ToolServerState,
     build_downstream,
+)
+from sentinel.downstream import (
+    DownstreamServer,
+    DownstreamTopology,
+    connect_downstream,
+    parse_servers,
 )
 from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.proxy import SentinelProxy
@@ -137,7 +144,9 @@ class SentinelGateway:
         self._cache: tuple[mcp_types.Tool, ...] = ()
         # Shared mock tool servers (observable side effects live on this state).
         self._state = ToolServerState()
-        self._downstream_mode = "memory"  # "memory" | "remote-http"
+        self._downstream_mode = "memory"  # "memory" | "remote-http" | "declared"
+        # Set only on the declared-servers (product) path: per-server catalogues.
+        self._topology: DownstreamTopology | None = None
         # session-id → (session, proxy). The session object is held so its id()
         # cannot be reused by a different session while we still track it.
         self._sessions: dict[int, tuple[ServerSession, SentinelProxy]] = {}
@@ -166,12 +175,16 @@ class SentinelGateway:
     async def __aenter__(self) -> SentinelGateway:
         # Choose the downstream: remote MCP-over-HTTP tool servers if their URLs
         # are configured (the deploy sets them), else the in-process mock servers.
+        declared = parse_servers(get_settings().mcp_servers)
         urls = get_settings().tool_server_urls()
-        if urls:
+        if declared:
+            # PRODUCT PATH: the operator's own MCP servers, discovered dynamically.
+            await self._connect_declared_downstream(declared)
+        elif urls:
             await self._connect_remote_downstream(urls)
         else:
             await self._connect_inmemory_downstream()
-        assert self._router is not None  # both connect paths set it
+        assert self._router is not None  # every connect path sets it
         # Preflight (health-check + cache schemas) so list_tools can't flake, AND
         # vet the catalogue itself: a poisoned tool DESCRIPTION subverts the agent
         # before anything is retrieved, so provenance alone cannot catch it. By
@@ -180,7 +193,10 @@ class SentinelGateway:
         settings = get_settings()
         cache = await preflight(
             self._router,
-            required_tools=REQUIRED_TOOLS,
+            # With declared servers there is no fixed expected tool set — whatever
+            # discovery found IS the catalogue. Only the bundled example topology
+            # has required tools to assert.
+            required_tools=() if declared else REQUIRED_TOOLS,
             shield=InputShield.from_settings(settings),
             strict=settings.catalogue_strict,
         )
@@ -189,6 +205,20 @@ class SentinelGateway:
         # in; it must wrap the whole app lifetime.
         await self._stack.enter_async_context(self._session_manager.run())
         return self
+
+    async def _connect_declared_downstream(
+        self, servers: Sequence[DownstreamServer]
+    ) -> None:
+        """The PRODUCT path: connect the operator's own MCP servers and discover.
+
+        Routing comes from ``tools/list`` on each declared server, not from any
+        hardcoded map, so SENTINEL proxies servers it has never seen. Fails closed
+        on an unreachable server or a cross-server tool-name collision.
+        """
+        topology = await connect_downstream(servers, self._stack)
+        self._router = topology.router
+        self._downstream_mode = "declared"
+        self._topology = topology
 
     async def _connect_inmemory_downstream(self) -> None:
         """The DEMO default: three in-process mock tool servers over in-memory MCP."""

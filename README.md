@@ -6,7 +6,7 @@ actions whose data originated in untrusted content — even when the attack slip
 past your content filter.
 
 ```bash
-pip install -e .          # PyPI package coming; install from source for now
+pip install sentinel-proxy   # imports and CLI are both `sentinel`
 sentinel init             # write sentinel.yaml
 sentinel check            # validate config, connect to your servers, vet their tools
 sentinel scaffold > policy.yaml
@@ -186,8 +186,10 @@ python -m venv .venv
 Install `-c versions.lock` so local matches CI and the container — a floating
 dependency is how a production deploy once broke. Requires Python 3.11+.
 
-Design notes live in [`docs/`](./docs): the scoping analysis for proxying arbitrary
-MCP servers, and the competitive/threat-landscape research behind the roadmap.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the security invariants a change must
+preserve, and [CHANGELOG.md](./CHANGELOG.md) for release notes. Design notes live in
+[`docs/`](./docs): the scoping analysis for proxying arbitrary MCP servers, and the
+competitive/threat-landscape research behind the roadmap.
 
 ## License & credits
 

@@ -192,6 +192,62 @@ async def scan_descriptions(
     return findings
 
 
+# --- continuous re-verification (the rug-pull loop) ---------------------------
+
+
+@dataclass
+class CatalogueMonitor:
+    """Re-checks a live catalogue against the one pinned at approval time.
+
+    Pinning at connect stops an agent ever *reading* a rug-pulled description
+    (the proxy serves the approved cache), but it does not tell anyone the
+    downstream **lied**. This closes that loop: re-fetch, compare, and report.
+
+    Resilience matters more than eagerness here. A downstream hiccup must not
+    break tool discovery — that is why the catalogue is cached in the first place
+    — so a failed re-fetch is recorded as ``last_error`` and the caller keeps
+    serving the pinned catalogue. Only a *successful* fetch that DIFFERS is drift.
+    """
+
+    pinned: Mapping[str, str]
+    findings: tuple[CatalogueFinding, ...] = ()
+    checks: int = 0
+    last_error: str | None = None
+
+    @property
+    def drifted(self) -> bool:
+        """True once a successful re-fetch has diverged from the approved pin."""
+        return bool(self.findings)
+
+    async def check(self, downstream: object) -> tuple[CatalogueFinding, ...]:
+        """Re-fetch ``downstream``'s catalogue and diff it against the pin.
+
+        ``downstream`` is anything with ``list_tools()`` (the proxy's router).
+        Findings are sticky: once drift is observed it stays reported, because a
+        server that mutates its catalogue and reverts has still misbehaved.
+        """
+        self.checks += 1
+        try:
+            listed = await downstream.list_tools()  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 - transport failure is not drift
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            return self.findings
+        self.last_error = None
+        found = tuple(detect_drift(self.pinned, list(listed.tools)))
+        if found:
+            self.findings = found
+        return self.findings
+
+    def status(self) -> dict[str, object]:
+        """Operator-facing summary (rendered by the dashboard)."""
+        return {
+            "checks": self.checks,
+            "drifted": self.drifted,
+            "last_error": self.last_error,
+            "findings": [str(f) for f in self.findings],
+        }
+
+
 # --- the composed check -------------------------------------------------------
 
 

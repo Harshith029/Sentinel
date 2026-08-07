@@ -40,6 +40,7 @@ orthogonal change (the ACA bicep already models them as separate services).
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from typing import Any, Final
@@ -54,6 +55,7 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 from starlette.types import Receive, Scope, Send
 
 from sentinel.authorization.registry import DEFAULT_TENANT
+from sentinel.catalogue import CatalogueFinding, CatalogueMonitor
 from sentinel.config import get_settings
 from sentinel.control.manager import RunManager
 from sentinel.demo.preflight import preflight
@@ -74,6 +76,7 @@ from sentinel.mcp_proxy.proxy import SentinelProxy
 from sentinel.mcp_proxy.router import ToolRouter
 from sentinel.shield import InputShield
 
+_LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.mcp_gateway")
 _GATEWAY_NAME: Final[str] = "sentinel"
 _LIVE_USER_INPUT: Final[str] = "(live MCP session over HTTP)"
 # Concurrency cap. A session's proxy, once created, is NEVER replaced or evicted
@@ -147,6 +150,8 @@ class SentinelGateway:
         self._downstream_mode = "memory"  # "memory" | "remote-http" | "declared"
         # Set only on the declared-servers (product) path: per-server catalogues.
         self._topology: DownstreamTopology | None = None
+        # Pins the approved catalogue at connect; re-checked on tool discovery.
+        self._monitor: CatalogueMonitor | None = None
         # session-id → (session, proxy). The session object is held so its id()
         # cannot be reused by a different session while we still track it.
         self._sessions: dict[int, tuple[ServerSession, SentinelProxy]] = {}
@@ -208,9 +213,16 @@ class SentinelGateway:
                     if settings.catalogue_strict
                     else "flag-only"
                 ),
-                "rug_pull": "catalogue pinned at connect",
+                "rug_pull": (
+                    "DRIFT DETECTED after approval"
+                    if (self._monitor is not None and self._monitor.drifted)
+                    else "catalogue pinned; re-checked on tool discovery"
+                ),
                 "unknown_tools": "default-denied until policy is written",
             },
+            "catalogue_monitor": (
+                self._monitor.status() if self._monitor is not None else {}
+            ),
         }
 
     async def __aenter__(self) -> SentinelGateway:
@@ -242,6 +254,8 @@ class SentinelGateway:
             strict=settings.catalogue_strict,
         )
         self._cache = cache.tools
+        # Pin the approved catalogue so a later mutation (rug pull) is detectable.
+        self._monitor = CatalogueMonitor(pinned=cache.fingerprints)
         # The session manager's run() owns the task group every HTTP session lives
         # in; it must wrap the whole app lifetime.
         await self._stack.enter_async_context(self._session_manager.run())
@@ -321,13 +335,37 @@ class SentinelGateway:
             return
         await self._session_manager.handle_request(scope, receive, send)
 
+    async def _verify_catalogue(self) -> tuple[CatalogueFinding, ...]:
+        """Re-check the live downstream against the catalogue pinned at connect.
+
+        Logs loudly on first detection — a downstream that mutates its published
+        definitions after approval is misbehaving, and an operator needs to know
+        even though the agent is protected (it only ever sees the pinned copy).
+        """
+        if self._monitor is None or self._router is None:
+            return ()
+        was_clean = not self._monitor.drifted
+        findings = await self._monitor.check(self._router)
+        if findings and was_clean:
+            _LOG.error(
+                "downstream catalogue changed after approval (possible rug pull): %s",
+                "; ".join(str(f) for f in findings),
+            )
+        return findings
+
     def _build_front_server(self) -> Server:
         front: Server = Server(_GATEWAY_NAME)
 
         @front.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
         async def _list_tools() -> list[mcp_types.Tool]:
-            # The preflighted catalogue, identical to what the in-process proxy
-            # serves. Every entry is still gated by the call_tool pipeline below.
+            # Re-verify the downstream against the catalogue approved at connect.
+            # This is the rug-pull check, run at the moment it matters (an agent
+            # is about to learn what tools exist). The agent is ALWAYS served the
+            # pinned catalogue, so a mutated description can never reach it; the
+            # check exists to detect and report that a server changed its
+            # definitions after approval. A transport hiccup is not drift — the
+            # monitor records the error and we keep serving the cache.
+            await self._verify_catalogue()
             return list(self._cache)
 
         @front.call_tool()  # type: ignore[untyped-decorator]

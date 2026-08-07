@@ -28,11 +28,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[dev]" -c versions.lock
-      - name: Lint, types, tests
+      # Separate steps on purpose: a combined step only reports "something
+      # failed", and job logs need admin rights to read. One tool per step makes
+      # the failure identifiable from the run summary alone.
+      - name: Tool versions
         run: |
-          python -m ruff check src tests
-          python -m mypy src
-          python -m pytest -q
+          python -m ruff --version
+          python -m mypy --version
+          python -m pytest --version
+      - name: Lint (ruff)
+        run: python -m ruff check src tests
+      - name: Types (mypy)
+        run: python -m mypy src
+      - name: Tests (pytest)
+        run: python -m pytest -q
 
   build:
     needs: verify

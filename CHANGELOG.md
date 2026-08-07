@@ -6,7 +6,7 @@ All notable changes to this project are documented here. Format follows
 
 ## [0.1.0] — 2026-08-07
 
-First packaged release. Published to PyPI as **`sentinel-proxy`**; the import
+First packaged release. Published to PyPI as **`sentinel-prox`**; the import
 package and CLI command are both `sentinel`.
 
 ### Added

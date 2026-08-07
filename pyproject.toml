@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # Distribution name only — the import package and CLI command are both `sentinel`.
-# (`sentinel`, `sentinel-mcp` and `mcp-sentinel` are already taken on PyPI by
-# unrelated projects.)
-name = "sentinel-proxy"
+# (`sentinel`, `sentinel-mcp`, `mcp-sentinel` and `sentinel-proxy` were all
+# unavailable on PyPI, so the published distribution is `sentinel-prox`.)
+name = "sentinel-prox"
 version = "0.1.0"
 description = "Provenance-aware security proxy for AI agents: block prompt-injection actions at the MCP tool boundary."
 requires-python = ">=3.11"

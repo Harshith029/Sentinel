@@ -77,7 +77,7 @@ One-time setup on PyPI (before the first upload), at
 
 | Field | Value |
 |---|---|
-| PyPI Project Name | `sentinel-proxy` |
+| PyPI Project Name | `sentinel-prox` |
 | Owner | `Harshith029` |
 | Repository name | `Sentinel` |
 | Workflow name | `release.yml` |

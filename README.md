@@ -6,7 +6,7 @@ actions whose data originated in untrusted content — even when the attack slip
 past your content filter.
 
 ```bash
-pip install sentinel-proxy   # imports and CLI are both `sentinel`
+pip install sentinel-prox    # imports and CLI are both `sentinel`
 sentinel init             # write sentinel.yaml
 sentinel check            # validate config, connect to your servers, vet their tools
 sentinel scaffold > policy.yaml

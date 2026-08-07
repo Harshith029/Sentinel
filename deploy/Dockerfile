@@ -13,11 +13,19 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install the package (deps resolve to the pins recorded in versions.lock).
+# Install the package PINNED to versions.lock.
+#
+# `-c versions.lock` is load-bearing, not decorative: pyproject declares floors
+# (e.g. `mcp>=1.2`), so a plain `pip install .` silently resolves to whatever is
+# newest at build time. That is exactly how this image broke in production — a
+# newer `mcp` dropped `create_connected_server_and_client_session` and the
+# container crashed on import. Constraints only bind packages that are actually
+# installed, so the Windows-only entries in the lock (pywin32, colorama) are
+# simply ignored on this Linux base image. Same mechanism CI uses.
 COPY pyproject.toml README.md versions.lock ./
 COPY src ./src
 RUN python -m pip install --upgrade pip setuptools wheel \
- && python -m pip install .
+ && python -m pip install . -c versions.lock
 
 # Run as non-root. /data is the writable home of the SQLite forensic store —
 # /app is root-owned, so the default ./var path would fail for uid 10001.

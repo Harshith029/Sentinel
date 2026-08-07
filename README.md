@@ -1,246 +1,206 @@
-# SENTINEL — a provenance-aware security proxy for agentic AI
+# SENTINEL
 
-> **Thesis.** An AI agent's risk lives in the **causal path from instruction-origin
-> to action**, not in the text of either. SENTINEL secures the **action layer**
-> (tool calls), authorizing each one against the **provenance** of everything it
-> derived from — so an instruction that arrived inside retrieved web content can
-> never drive a high-risk action, even when it slips past content filters.
-
-**▶ Live demo: https://sentinel-i63x.onrender.com** — open it and the hero attack
-auto-plays; watch the exfiltration get **blocked** in seconds. (Free tier, so the
-first load after it's been idle may take ~50 s to wake — just refresh once.)
-
-SENTINEL is an **MCP (Model Context Protocol) proxy**. To a protected agent it
-presents as an MCP server; to the real tool servers it is an MCP client. Every
-tool call physically traverses SENTINEL — **interception is guaranteed by network
-topology, not by code wrapping**. It is agent-agnostic: it secures Microsoft
-Foundry agents, Claude, GPT, or any custom MCP client identically, with **no
-agent-code modification**.
-
-```
- Agent (Foundry / Claude / GPT / custom)          ← only reachable MCP endpoint
-        │  speaks MCP
-        ▼
- ┌─────────────────────────────────────────────┐
- │                 SENTINEL                     │
- │  Provenance taint tracker  (set-union model) │   every tool call →
- │  Authorization engine      (typed AST)       │   ToolCallProposed → Authorize
- │  Trust scorer              (tier-2, Laplace) │   → Trust → forward / BLOCK
- │  Forensic span spine       (OTel + seq)      │   → ToolExecuted / ToolBlocked
- └───────────────────┬─────────────────────────┘
-                     │  speaks MCP (only AFTER authorization)
-                     ▼
-   Isolated tool servers  (web_fetch · send_email · get_customer_record …)
-   — network-isolated: reachable ONLY from SENTINEL, no external ingress —
-```
-
-## The differentiator (provenance, formal)
-
-Provenance is a **SET of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)
-unioned over a span's transitive `derived_from` ancestry — not a single mutable
-enum. `is_tainted(span) := RETRIEVED_CONTENT ∈ effective_provenance(span)`. A real
-cycle-safe graph walk computes it; the authorization engine parses policy into a
-**typed condition AST** (never `eval`) and blocks `send_email` when the lineage is
-tainted. Taint clears only through an explicit, auditable **StructuredExtractor**
-(schema validation → a fresh SYSTEM-trust value with no inherited ancestry) — and a
-sanitized value cannot launder a tainted sibling.
-
-## Run it
-
-### 1 · Try the live demo (nothing to install)
-Open **https://sentinel-i63x.onrender.com** — the hero attack auto-plays and you'll
-see the exfiltration blocked within seconds. Click **reset** then **launch attack**
-(or **--evasion**) to run it again yourself. Free tier, so the first load after it's
-been idle may take ~50 s to wake; just refresh once.
-
-### 2 · Run it locally
-**Requires Python 3.11+ and git.**
+**A provenance-aware security proxy for AI agents.** It sits between your agent and
+your MCP tool servers, tracks where every byte of context came from, and refuses
+actions whose data originated in untrusted content — even when the attack slipped
+past your content filter.
 
 ```bash
-git clone https://github.com/Harshith029/Sentinel.git
-cd Sentinel
-python -m venv .venv
+pip install -e .          # PyPI package coming; install from source for now
+sentinel init             # write sentinel.yaml
+sentinel check            # validate config, connect to your servers, vet their tools
+sentinel scaffold > policy.yaml
+sentinel serve            # your agent points at http://127.0.0.1:8765/mcp
 ```
 
-Install (editable, with dev extras) and start the dashboard:
+Your agent needs **no code changes**: point its MCP endpoint at SENTINEL instead of
+directly at your tool servers. Interception is guaranteed by topology, not by asking
+the agent to cooperate.
 
-```powershell
-# Windows (PowerShell)
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.venv\Scripts\python.exe -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
+---
+
+## The problem
+
+AI agents don't just answer questions any more — they send email, query business
+systems, and read the open web. That makes **indirect prompt injection** an action
+problem, not a text problem: an attacker hides an instruction inside content the
+agent will read, and it executes with the agent's full privileges.
+*"Summarize this pricing page"* quietly becomes *"email this customer's SSN to the
+attacker."*
+
+Content filters scan the words. Microsoft's own Prompt Shields documentation says it
+"may not catch all attack vectors" and recommends additional validation layers.
+**The gap: security is applied to the words, while the damage is done by the actions.**
+
+SENTINEL closes it by judging an action on **where its data came from**, not on how
+the request was phrased.
+
+## What it protects against
+
+| Attack | How SENTINEL stops it |
+|---|---|
+| **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied — regardless of phrasing, so obfuscation doesn't help |
+| **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
+| **Tool poisoning** | Tool descriptions *and* input schemas are scanned at connect; a poisoned catalogue is refused |
+| **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked; post-approval mutation is detected |
+| **Privilege escalation** | Unknown tools are default-denied until you write a rule |
+| **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
+
+Every decision becomes an immutable, replayable forensic record, exportable as
+SIEM-ready JSONL.
+
+## How it works
+
+```
+ your agent  ──MCP──▶  SENTINEL  ──MCP──▶  your MCP servers
+                          │
+       1. trace    label the origin of everything the agent has seen
+       2. authorize  policy decides each call using that lineage (deny-overrides)
+       3. contain   trust score + automatic quarantine
+       4. record    immutable spans → replay + SOC export
 ```
 
-```bash
-# macOS / Linux   (or just: make dashboard)
-.venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/python -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
+Provenance is a **set of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)
+unioned over an action's transitive `derived_from` ancestry — computed by a real
+cycle-safe graph walk, not a mutable flag. An action is tainted iff
+`RETRIEVED_CONTENT` is in that set. Taint clears only through an explicit, auditable
+`StructuredExtractor` (strict schema validation produces a fresh SYSTEM-trust value
+with no inherited ancestry), and a sanitized value **cannot launder a tainted
+sibling** — recombination re-taints.
+
+Policy compiles to a **typed condition AST** and is evaluated by tree-walk;
+there is no `eval` anywhere in the codebase. Rules are deny-only with
+deny-overrides, and **unknown tools are default-denied**.
+
+## Configuration
+
+`sentinel.yaml` (created by `sentinel init`):
+
+```yaml
+servers:                      # YOUR MCP servers — SENTINEL ships no tools
+  - name: github
+    url: https://mcp.example/gh
+policy: ./policy.yaml         # your rules; generate with `sentinel scaffold`
+host: 127.0.0.1
+port: 8765
+dashboard: false              # the bundled UI is a DEMO, opt-in only
+catalogue_strict: true        # refuse catalogues containing injection markers
 ```
 
-Then open **http://localhost:8765** and click **launch attack** (or **--evasion** for
-the variant that slips past the content filter).
+Precedence is **CLI flag > environment variable > config file > default**, so a
+container can override a checked-in file. Every key has an env equivalent
+(`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, …) — see [`.env.example`](./.env.example).
 
-### 3 · Run with Docker (no Python needed)
+### Writing policy
+
+Rules are **deny-only**: a call is allowed when no deny rule matches. `sentinel
+scaffold` emits every discovered tool explicitly denied, with its description and a
+recommended starting rule, so you edit rather than invent.
+
+```yaml
+policy_version: 1
+tools:
+  send_email:
+    rules:
+      - id: block-untrusted-origin
+        deny_if: "RETRIEVED_CONTENT in effective_provenance"
+      - id: domain-allowlist
+        deny_if: "recipient_domain not in allowed_domains"
+  delete_record:
+    rules:
+      - id: never
+        deny_always: true
+```
+
+Predicates support `== != < >= in "not in"`, set literals (`{USER}`), tool arguments,
+and config values.
+
+## Deployment
+
 ```bash
 docker build -t sentinel -f deploy/Dockerfile .
-docker run --rm -p 8765:8765 sentinel        # → http://localhost:8765
+docker run --rm -p 8765:8765 -v $(pwd)/sentinel.yaml:/app/sentinel.yaml sentinel
 ```
 
-### 4 · The full product (adds the real `/mcp` wire endpoint)
-`create_gateway_app` exposes a streamable-HTTP MCP server at `/mcp` so an external MCP
-client can connect and be secured by the same pipeline — this is what the live demo
-and `make serve` run:
+Put your tool servers on an internal network reachable **only** by SENTINEL — that
+topology is what makes interception unbypassable. An Azure Container Apps blueprint
+(internal-ingress tool servers, KEDA scaling, managed identity, Cosmos persistence)
+is in [`deploy/`](./deploy).
+
+Gate the endpoint on any public deploy with `SENTINEL_API_TOKEN`.
+
+## Try the demo
+
+A bundled demo shows the whole pipeline on a scripted attack — useful for seeing what
+a block looks like, but **not** the product surface:
 
 ```bash
-.venv/bin/python -m uvicorn sentinel.control.app:create_gateway_app --factory --host 127.0.0.1 --port 8765
+sentinel serve --dashboard     # → http://localhost:8765
 ```
 
-### 5 · Tests & checks
-```bash
-.venv/bin/python -m pytest                 # 277 tests       (make test)
-.venv/bin/python -m ruff check src tests   # lint            (make lint)
-.venv/bin/python -m mypy src               # mypy --strict   (make typecheck)
-```
-On Windows, replace `.venv/bin/python` with `.venv\Scripts\python.exe`. The `make`
-targets are just Unix shortcuts for the commands above.
+Hosted: **https://sentinel-i63x.onrender.com** (free tier — first load may take ~50 s
+to wake). A poisoned page induces the agent to email a synthetic customer record to an
+attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
+anyway. All demo data is synthetic — the record is a labelled fake
+(SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
+writes to an in-memory sink. Nothing is ever sent.
 
-**The hero attack.** A user asks the agent to look up a customer record and research
-a pricing page. The page is poisoned with a hidden instruction to email the record
-to `attacker@evil-corp.io`. The record is retrieved (RETRIEVED_CONTENT); the page is
-fetched (RETRIEVED_CONTENT); the induced `send_email` is **blocked** by
-`block-untrusted-origin` because its lineage is tainted — the synthetic SSN/api_key
-**never reach the outbox**. An *evasion* variant slips past the Layer-1 shield and is
-still caught by Authorization (the thesis: the architecture saves the day, not the
-filter).
+### With a real model
 
-## Put SENTINEL in front of your own agent (MCP over HTTP)
-
-SENTINEL is not just a scripted demo — it speaks MCP over a real network
-transport. `make serve` exposes the proxy as a **streamable-HTTP MCP server at
-`/mcp`**. Point any MCP client at it (Claude Desktop, an Azure AI Foundry agent,
-or the upstream `mcp` SDK) and every tool call the agent makes is run through the
-full pipeline; the client needs **no SENTINEL-specific code** — interception is by
-topology, not integration.
-
-```bash
-make serve                              # control plane + dashboard + /mcp wire endpoint
-python examples/connect_over_http.py    # a real MCP client drives the hero attack → BLOCKED
-```
-
-Each MCP session is its own trace (own provenance frontier, own per-agent trust);
-the live run appears on the dashboard as a `live-mcp` trace. This is proven
-end-to-end over a real socket in `tests/test_phase9_mcp_gateway.py` — a real
-`mcp` client connects, runs the kill chain, and the exfiltration is refused at the
-MCP boundary. By default the downstream tool servers are in-process mocks; set
-`SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway instead connects to
-**remote tool servers over MCP-over-HTTP** (the real deploy topology) — proven
-end-to-end in `tests/test_phase9_mcp_gateway.py`, where the proxy routes to three
-HTTP-served tool servers and still blocks the exfiltration.)
-
-**A real LLM is the default agent.** When a credential is configured, every run is
-driven by a genuine model deciding the actions — set **`OPENAI_API_KEY`** (optionally
-`OPENAI_MODEL`, default `gpt-4o-mini`) or **`AZURE_OPENAI_ENDPOINT` +
-`AZURE_OPENAI_DEPLOYMENT`** (identity auth). With no credential the run deterministically
-falls back to the scripted transcript, so offline/CI stays key-free and reproducible.
-
-*No budget? Run a real model for free* — point `OPENAI_BASE_URL` at any
-OpenAI-compatible endpoint. A local [Ollama](https://ollama.com) needs no API key at all:
+The default agent is a real LLM whenever a credential is present — set
+`OPENAI_API_KEY`, or `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_DEPLOYMENT`. With no
+credential it falls back to a deterministic scripted transcript so CI stays key-free.
+For a free local model, point `OPENAI_BASE_URL` at any OpenAI-compatible endpoint:
 
 ```bash
 ollama serve && ollama pull llama3.2
 export OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2
 ```
 
-`LLMAgentDriver` runs a genuine tool-use loop where the *model* decides what to do;
-SENTINEL is the backstop. Point it at the `/mcp` endpoint with a real model — or the
-offline susceptible stand-in if you have no key:
+## What SENTINEL does *not* protect against
+
+Stating the boundary precisely is what separates a security product from a demo.
+
+- Provenance is tracked at **message / tool-result granularity**, not token-level
+  inside model reasoning. Taint spreads conservatively unless a sanitizer clears it.
+- It secures the **action layer**, not the model's cognition. It does not stop a model
+  being *persuaded* — it stops the resulting unauthorized **action**.
+- The proxy and the policy store are **trusted** components.
+- One trace is handled by one proxy instance; horizontal scaling is *across* traces.
+- **Conservative tainting is intentional.** Some benign workflows will need explicit
+  sanitization. Taint saturation is the correct bias for action-layer security.
+- **Sanitization is syntactic, not semantic.** A schema-valid `{"price": 999999}` is
+  well-formed but still subject to argument-level rules such as an amount cap.
+
+## Development
 
 ```bash
-OPENAI_API_KEY=sk-... python examples/run_live_agent.py     # a real model, tricked → BLOCKED
-python examples/run_live_agent.py --offline                 # no key: faithful stand-in model
+python -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
+.venv/bin/python -m pytest        # 370 tests
+.venv/bin/python -m ruff check src tests
+.venv/bin/python -m mypy src      # strict
 ```
 
-The model fetches a poisoned page, is induced to email the record to an attacker,
-and the call is blocked over the wire — the agent then sees the block and stands
-down. The loop (and the OpenAI/Azure adapter's parsing) are covered in
-`tests/test_phase10_llm_agent.py`, including the evasion variant where Layer-1 misses
-and authorization-by-provenance still catches it.
+Install `-c versions.lock` so local matches CI and the container — a floating
+dependency is how a production deploy once broke. Requires Python 3.11+.
 
-## Threat model — what SENTINEL does NOT protect against (a strength)
+Design notes live in [`docs/`](./docs): the scoping analysis for proxying arbitrary
+MCP servers, and the competitive/threat-landscape research behind the roadmap.
 
-- Provenance is tracked at **message / tool-result** granularity, **not** token-level
-  inside opaque model reasoning. Taint spreads conservatively unless a sanitizer clears it.
-- SENTINEL secures the **action layer**, not the model's cognition. It does not stop a
-  model being *persuaded*; it stops the resulting unauthorized **action**.
-- The proxy itself and the policy store are **trusted** components.
-- **Trace affinity:** one trace → one proxy instance; horizontal scaling is *across*
-  traces, which is why a per-trace monotonic `seq` suffices (vector clocks out of scope).
+## License & credits
 
-## Framing
+MIT — see [LICENSE](./LICENSE).
 
-- **Conservative tainting is intentional.** We optimize to never let an untrusted
-  instruction reach a high-risk action, accepting that some benign workflows need
-  explicit sanitization. Taint saturation is the correct bias for action-layer security.
-- **Sanitization is syntactic, not semantic.** A schema-valid `{price: 999999}` is still
-  caught by the argument-level `amount >= cap` rule. The sanitizer and the policy engine
-  catch *different* classes of problem and compose — a strength, not a gap.
-- **MCP is the substrate, not the limit.** Because interception is at the MCP message
-  boundary, SENTINEL drops in front of *any* MCP-speaking agent or tool ecosystem with
-  no code changes; the proxy is infrastructure, not a sandbox.
+Built on the [Model Context Protocol](https://modelcontextprotocol.io) Python SDK,
+FastAPI, Starlette, `sse-starlette`, Uvicorn, Pydantic, OpenTelemetry, PyYAML, httpx,
+pytest, ruff, mypy, gitleaks, and the Azure SDKs for Python. Thank you to their
+maintainers.
 
-## Deployment (Azure Container Apps)
+**AI tools used in development:** Claude Code (Anthropic) and GitHub Copilot.
+SENTINEL also *integrates* Azure OpenAI (attack classification) and Azure AI Content
+Safety / Prompt Shields (Layer-1 screening) as optional components.
 
-Insertion point: register SENTINEL as the agent's MCP tool server (`MCPTool`,
-`server_url=SENTINEL_MCP_URL`, `require_approval="never"`, tools enumerated
-explicitly) — **the agent's only reachable MCP endpoint**. The mock tool servers
-deploy with **internal ingress only** (no external endpoint); only SENTINEL reaches
-them, so topology enforces the thesis. KEDA HTTP-concurrency scaler on the proxy;
-system-assigned managed identity + Key Vault RBAC; Cosmos partitioned by `trace_id`
-(idempotent upserts, default SDK retry). See [`deploy/`](./deploy) and
-[`deploy/DEPLOY.md`](./deploy/DEPLOY.md).
-
-**DEMO MODE vs AZURE MODE.** The security pipeline is **live and identical** in both
-modes; only integrations degrade without Azure. The dashboard's *Deployment mode*
-panel names the delta: Layer-1 Prompt Shields, the semantic attack classifier
-(Azure OpenAI), distributed Cosmos persistence, App Insights observability, the live
-Foundry driver, and Key-Vault secret resolution all light up in AZURE MODE. Flipping
-the mode shows the delta — the "Azure is load-bearing" proof. Only the agent **driver**
-differs between modes.
-
-## Dependencies
-
-Python 3.11+, Pydantic v2. Exact pins are recorded in
-[`versions.lock`](./versions.lock); confirmed SDK facts in
-[`SDK_VERIFICATION.md`](./SDK_VERIFICATION.md). Key runtime deps:
-`mcp==1.27.1`, `azure-ai-projects==2.0.0`, `openai==2.38.0`, `azure-identity`,
-`azure-cosmos`, `azure-monitor-opentelemetry`, `fastapi==0.136.3`,
-`sse-starlette==3.4.4`, `uvicorn`, `pydantic==2.13.4`, `PyYAML`. Dev:
-`pytest`, `ruff`, `mypy`, `httpx`, `pre-commit` (with a `gitleaks` hook).
-
-## Data handling
-
-**All data is synthetic.** The "customer record" is a clearly-labelled fake
-(`Jordan Rivera (SYNTHETIC TEST RECORD)`, SSN `000-00-0000`, a non-functional
-`sk-synthetic-DO-NOT-USE` key). `send_email` writes to an in-memory **outbox sink** —
-nothing is ever sent. Forensic spans are stored in-memory (LRU-bounded) by default;
-in AZURE MODE in Cosmos with identity-only auth (no keys in code). No real PII is
-processed or persisted. Secrets in dev live in a gitignored `.env`; a `gitleaks`
-pre-commit hook blocks accidental commits.
-
-## AI-tools disclosure
-
-- **Claude Code** (Anthropic) — used to author this implementation phase by phase.
-- **GitHub Copilot** — inline assistance.
-- **Azure OpenAI** — the semantic attack classifier (labels blocked attempts for the SOC panel; AZURE MODE).
-- **Azure AI Content Safety · Prompt Shields** — the Layer-1 injection shield (AZURE MODE).
-
-## Open-source credits
-
-Model Context Protocol Python SDK (`mcp`), FastAPI, Starlette, `sse-starlette`,
-Uvicorn, Pydantic, OpenTelemetry, PyYAML, httpx, pytest, ruff, mypy, gitleaks, and
-the Azure SDKs for Python. Thank you to their maintainers.
-
-## Team & roles
-
-| Member | Role |
-|---|---|
-| Pali Krishna Harshith (solo) | Architecture, provenance/authorization core, proxy & control plane, dashboard & UX, deployment |
+Originally built for the Microsoft Build AI Hackathon 2026 — *Security in the Agentic
+Future* — by Pali Krishna Harshith.

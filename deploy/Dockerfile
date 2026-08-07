@@ -39,5 +39,7 @@ EXPOSE 8765
 # Default role: the FULL product — control plane + dashboard + the real /mcp wire
 # gateway (create_gateway_app), so the deployed app is the same thing `make serve`
 # runs locally. Gate /mcp with SENTINEL_API_TOKEN on any public deploy.
-CMD ["python", "-m", "uvicorn", "sentinel.control.app:create_gateway_app", \
-     "--factory", "--host", "0.0.0.0", "--port", "8765"]
+# Run through the CLI (the product interface), so a mounted /app/sentinel.yaml is
+# honoured exactly as it is locally: `docker run -v $(pwd)/sentinel.yaml:/app/sentinel.yaml`.
+# Without one it serves with defaults, which is what the hosted demo does.
+CMD ["sentinel", "serve", "--host", "0.0.0.0", "--port", "8765"]

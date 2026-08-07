@@ -40,6 +40,13 @@ jobs:
         run: python -m ruff check src tests
       - name: Types (mypy)
         run: python -m mypy src
+      # tests/test_phase0_gitleaks.py asserts that commits are actually being
+      # secret-scanned, so it needs the hook installed and the gitleaks binary
+      # fetched. ci.yml does this too — keep the two workflows in step.
+      - name: Install pre-commit hooks (gitleaks binary)
+        run: |
+          pre-commit install
+          pre-commit install-hooks
       - name: Tests (pytest)
         run: python -m pytest -q
 

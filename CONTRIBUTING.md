@@ -65,6 +65,35 @@ not a passing test suite.
   reasoning is the part a future reader can't reconstruct.
 - Keep `ruff` and `mypy --strict` clean.
 
+## Publishing a release (maintainers)
+
+Releases are automated by `.github/workflows/release.yml`, which runs lint, types and
+tests, builds, checks the tag matches `pyproject.toml`, and publishes to PyPI via
+**Trusted Publishing** — GitHub proves the workflow's identity over OIDC, so no API
+token is stored in the repo.
+
+One-time setup on PyPI (before the first upload), at
+<https://pypi.org/manage/account/publishing/>:
+
+| Field | Value |
+|---|---|
+| PyPI Project Name | `sentinel-proxy` |
+| Owner | `Harshith029` |
+| Repository name | `Sentinel` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+Then, to cut a release:
+
+```bash
+# 1. bump the version in pyproject.toml and add a CHANGELOG entry
+# 2. commit, then tag with the SAME version prefixed by v
+git tag -a v0.1.1 -m "..." && git push origin v0.1.1
+```
+
+**A version number can never be reused on PyPI**, even after deletion — so dry-run on
+TestPyPI first if unsure. Push tags individually; never `git push --tags`.
+
 ## Reporting a vulnerability
 
 Please **do not** open a public issue for a security vulnerability in SENTINEL

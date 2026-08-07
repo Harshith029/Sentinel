@@ -22,6 +22,7 @@ from typing import Any
 
 import mcp.types as mcp_types
 
+from sentinel.authorization.policy import load_policy
 from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry, ReloadResult
 from sentinel.classifier import AttackClassifier
 from sentinel.classifier.attack_classifier import BlockedAttempt
@@ -90,6 +91,27 @@ def _build_cosmos_container(settings: Settings) -> Any:  # noqa: ANN401 - SDK co
     return database.get_container_client(settings.azure_cosmos_container)
 
 
+def _build_registry(settings: Settings) -> PolicyRegistry:
+    """Load the operator's policy file, or fall back to the bundled example one.
+
+    Governing your own tools requires your own policy; the packaged default only
+    describes the example tools, so everything else is default-denied. Failing
+    loudly on a bad path is deliberate — silently running the example policy while
+    the operator believes theirs is active would be a security surprise.
+    """
+    if not settings.policy_file:
+        return PolicyRegistry.with_default()
+    path = Path(settings.policy_file)
+    if not path.is_file():
+        raise ValueError(
+            f"policy file not found: {path} (set SENTINEL_POLICY_FILE / `policy:` "
+            "in sentinel.yaml, or run `sentinel scaffold` to generate one)"
+        )
+    registry = PolicyRegistry()
+    registry.register(DEFAULT_TENANT, load_policy(path.read_text(encoding="utf-8")))
+    return registry
+
+
 def _default_store(settings: Settings) -> ForensicStore:
     """The default forensic store, chosen by mode.
 
@@ -154,7 +176,7 @@ class RunManager:
         self._bus = EventBus()
         self._store = BroadcastStore(self._inner_store, self._bus)
         self._emitter = SpanEmitter(self._store)
-        self._registry = PolicyRegistry.with_default()  # multi-tenant policies
+        self._registry = _build_registry(self._settings)  # multi-tenant policies
         self._scorer = TrustScorer(self._emitter, load_default_trust_config())
         # Build the shield FROM SETTINGS so AZURE MODE actually carries the
         # Content-Safety endpoint/key (demo_mode alone left it unconfigured).

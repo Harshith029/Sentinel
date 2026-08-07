@@ -96,6 +96,16 @@ class Settings(BaseModel):
         ),
     )
 
+    policy_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to YOUR authorization policy (YAML). This is how an operator "
+            "governs their own tools; without it SENTINEL loads the bundled example "
+            "policy, which only knows the example tools and therefore default-denies "
+            "everything else. Generate a starting point with `sentinel scaffold`."
+        ),
+    )
+
     mcp_servers: str | None = Field(
         default=None,
         description=(
@@ -169,6 +179,7 @@ def _read_settings_from_env() -> Settings:
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
         mcp_servers=os.environ.get("SENTINEL_MCP_SERVERS") or None,
+        policy_file=os.environ.get("SENTINEL_POLICY_FILE") or None,
     )
 
 

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # (`sentinel`, `sentinel-mcp`, `mcp-sentinel` and `sentinel-proxy` were all
 # unavailable on PyPI, so the published distribution is `sentinel-prox`.)
 name = "sentinel-prox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Provenance-aware security proxy for AI agents: block prompt-injection actions at the MCP tool boundary."
 requires-python = ">=3.11"
 authors = [{ name = "Pali Krishna Harshith" }]
@@ -37,36 +37,37 @@ classifiers = [
 # `[project]` — in TOML, a table header ends the parent table, so anything after it
 # would be absorbed into the sub-table.
 
-# Phase 0 §3: dependencies are runtime-resolved.  pyproject.toml carries
-# minimum-floor constraints; the exact installed versions are written to
-# versions.lock and SDK facts to SDK_VERIFICATION.md.  BUILD_SPEC.md is NOT
-# mutated.
+# Every direct dependency carries an UPPER bound as well as a floor. Floors alone
+# let `pip install sentinel-prox` resolve a breaking major: mcp 2.0.0 removed an
+# API we use and made the first published release fail on import. Exact tested
+# versions live in versions.lock (used by CI and the container); these ranges are
+# what protects a plain `pip install` for everyone else.
 dependencies = [
     # Azure / Foundry
     "azure-ai-projects==2.0.0",          # Foundry; AIProjectClient is THE entry point
-    "azure-identity>=1.17",
-    "azure-cosmos>=4.7",
-    "azure-monitor-opentelemetry>=1.6",
+    "azure-identity>=1.17,<2",
+    "azure-cosmos>=4.7,<5",
+    "azure-monitor-opentelemetry>=1.6,<2",
 
     # MCP — official Python SDK (server + client)
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
 
     # OpenAI — exact pin written to versions.lock after resolve
-    "openai>=1.50",
+    "openai>=1.50,<3",
 
     # OpenTelemetry
-    "opentelemetry-api>=1.27",
-    "opentelemetry-sdk>=1.27",
+    "opentelemetry-api>=1.27,<2",
+    "opentelemetry-sdk>=1.27,<2",
 
     # HTTP / SSE
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "sse-starlette>=2.1",
-    "httpx>=0.27",          # real web_fetch tool + Content Safety REST client
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.32,<1",
+    "sse-starlette>=2.1,<4",
+    "httpx>=0.27,<1",          # real web_fetch tool + Content Safety REST client
 
     # Models / config
     "pydantic>=2.9,<3",
-    "pyyaml>=6.0",
+    "pyyaml>=6.0,<7",
 ]
 
 [project.urls]

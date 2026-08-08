@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-08-08
+
+### Fixed
+- **`pip install sentinel-prox` was broken on a clean machine.** Dependencies
+  declared only lower bounds, so a fresh install resolved `mcp` 2.0.0 — a major
+  release that removed `create_connected_server_and_client_session`, making the
+  package fail on import. Every direct dependency now carries an upper bound as
+  well as a floor (`mcp>=1.2,<2` and eleven others). `versions.lock` still pins the
+  exact tested versions for CI and the container; these ranges are what protect a
+  plain `pip install` for everyone else.
+
+This is the same class of failure that previously broke a production container
+deploy. Floors-only dependency ranges are now treated as a defect.
+
 ## [0.1.0] — 2026-08-07
 
 First packaged release. Published to PyPI as **`sentinel-prox`**; the import

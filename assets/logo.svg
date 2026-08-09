@@ -1,0 +1,25 @@
+<svg width="128" height="128" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SENTINEL logo">
+  <title>SENTINEL</title>
+  <!-- Shield: the proxy boundary. Stroked (not filled) so the mark reads on both
+       light and dark GitHub themes without a background plate. -->
+  <path d="M32 3.5 L57 13.5 V31 C57 45.5 45.5 56.5 32 60.5 C18.5 56.5 7 45.5 7 31 V13.5 Z"
+        stroke="#38BDF8" stroke-width="3" stroke-linejoin="round" fill="none"/>
+
+  <!-- Provenance lineage entering the boundary: two trusted hops... -->
+  <line x1="17" y1="30" x2="29" y2="30" stroke="#38BDF8" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="17" cy="30" r="3.6" fill="#38BDF8"/>
+  <circle cx="30" cy="30" r="3.6" fill="#38BDF8"/>
+
+  <!-- ...and the tainted action that is refused: the edge is severed. -->
+  <line x1="34.5" y1="30" x2="39.5" y2="30" stroke="#F43F5E" stroke-width="2.6"
+        stroke-linecap="round" stroke-dasharray="1.5 3.5"/>
+  <circle cx="46" cy="30" r="3.6" fill="none" stroke="#F43F5E" stroke-width="2.6"/>
+
+  <!-- The block itself. -->
+  <line x1="41.5" y1="24.5" x2="50.5" y2="35.5" stroke="#F43F5E" stroke-width="2.6" stroke-linecap="round"/>
+
+  <!-- Lineage continuing below: provenance is a set over the whole ancestry. -->
+  <line x1="17" y1="42" x2="30" y2="42" stroke="#64748B" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <circle cx="17" cy="42" r="2.6" fill="#64748B" opacity="0.85"/>
+  <circle cx="30" cy="42" r="2.6" fill="#64748B" opacity="0.85"/>
+</svg>

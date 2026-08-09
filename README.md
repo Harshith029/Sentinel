@@ -1,9 +1,30 @@
-# SENTINEL
+<div align="center">
 
-**A provenance-aware security proxy for AI agents.** It sits between your agent and
-your MCP tool servers, tracks where every byte of context came from, and refuses
-actions whose data originated in untrusted content — even when the attack slipped
-past your content filter.
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="640">
+
+[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?color=38BDF8&label=pypi)](https://pypi.org/project/sentinel-prox/)
+[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?color=38BDF8)](https://pypi.org/project/sentinel-prox/)
+[![CI](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-38BDF8.svg)](./LICENSE)
+[![Checked with mypy](https://img.shields.io/badge/mypy-strict-2ea44f.svg)](http://mypy-lang.org/)
+[![Ruff](https://img.shields.io/badge/lint-ruff-2ea44f.svg)](https://github.com/astral-sh/ruff)
+[![Live demo](https://img.shields.io/badge/demo-live-2ea44f.svg)](https://sentinel-i63x.onrender.com)
+
+**Stop prompt-injection attacks at the action layer — where the damage happens.**
+
+</div>
+
+SENTINEL sits between your agent and your MCP tool servers, tracks where every byte of
+context came from, and refuses actions whose data originated in untrusted content —
+**even when the attack slipped past your content filter**.
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/dashboard.png" alt="SENTINEL blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
+<br>
+<sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
+Layer-1 filter <b>misses</b> the obfuscated injection — the action is refused anyway,
+because its lineage traces back to untrusted content.</i></sub>
+</div>
 
 ```bash
 pip install sentinel-prox    # imports and CLI are both `sentinel`
@@ -50,15 +71,26 @@ the request was phrased.
 Every decision becomes an immutable, replayable forensic record, exportable as
 SIEM-ready JSONL.
 
+<div align="center">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/outbox-diff.png" alt="The same attack with and without SENTINEL: without it the SSN and API key reach the attacker; with it the email is never sent" width="820">
+<br>
+<sub><i>The same attack, run twice. Without SENTINEL the customer's SSN and API key reach
+the attacker's inbox; with it, the email is never sent.</i></sub>
+</div>
+
 ## How it works
+
+<div align="center">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through SENTINEL, which traces origins, authorizes, contains, and records" width="760">
+</div>
 
 ```
  your agent  ──MCP──▶  SENTINEL  ──MCP──▶  your MCP servers
                           │
-       1. trace    label the origin of everything the agent has seen
+       1. trace      label the origin of everything the agent has seen
        2. authorize  policy decides each call using that lineage (deny-overrides)
-       3. contain   trust score + automatic quarantine
-       4. record    immutable spans → replay + SOC export
+       3. contain    trust score + automatic quarantine
+       4. record     immutable spans → replay + SOC export
 ```
 
 Provenance is a **set of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)

@@ -1,28 +1,45 @@
-<svg width="640" height="190" viewBox="0 0 640 190" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SENTINEL — provenance-aware security for AI agents">
+<svg width="720" height="200" viewBox="0 0 720 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SENTINEL — provenance-aware security for AI agents">
   <title>SENTINEL — provenance-aware security for AI agents</title>
+  <defs>
+    <!-- Cyan -> indigo. Saturated enough to carry the mark on either GitHub theme,
+         without needing a background plate that would fight the page. -->
+    <linearGradient id="wm" x1="0" y1="0" x2="1" y2="0.35">
+      <stop offset="0%"   stop-color="#22D3EE"/>
+      <stop offset="52%"  stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </linearGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#22D3EE" stop-opacity="0.85"/>
+      <stop offset="65%"  stop-color="#6366F1" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
 
-  <!-- Mark: the shield boundary, with a tainted action being severed inside it. -->
-  <g transform="translate(40, 52) scale(1.5)">
+  <!-- Mark: the proxy boundary, with a tainted edge severed inside it. -->
+  <g transform="translate(30, 56) scale(1.42)">
     <path d="M32 3.5 L57 13.5 V31 C57 45.5 45.5 56.5 32 60.5 C18.5 56.5 7 45.5 7 31 V13.5 Z"
-          stroke="#38BDF8" stroke-width="3" stroke-linejoin="round" fill="none"/>
-    <line x1="17" y1="30" x2="29" y2="30" stroke="#38BDF8" stroke-width="2.6" stroke-linecap="round"/>
-    <circle cx="17" cy="30" r="3.6" fill="#38BDF8"/>
-    <circle cx="30" cy="30" r="3.6" fill="#38BDF8"/>
-    <line x1="34.5" y1="30" x2="39.5" y2="30" stroke="#F43F5E" stroke-width="2.6"
+          stroke="url(#wm)" stroke-width="3.4" stroke-linejoin="round" fill="none"/>
+    <line x1="17" y1="30" x2="29" y2="30" stroke="#22D3EE" stroke-width="2.8" stroke-linecap="round"/>
+    <circle cx="17" cy="30" r="3.8" fill="#22D3EE"/>
+    <circle cx="30" cy="30" r="3.8" fill="#22D3EE"/>
+    <line x1="34.5" y1="30" x2="39.5" y2="30" stroke="#FB5D75" stroke-width="2.8"
           stroke-linecap="round" stroke-dasharray="1.5 3.5"/>
-    <circle cx="46" cy="30" r="3.6" fill="none" stroke="#F43F5E" stroke-width="2.6"/>
-    <line x1="41.5" y1="24.5" x2="50.5" y2="35.5" stroke="#F43F5E" stroke-width="2.6" stroke-linecap="round"/>
-    <line x1="17" y1="42" x2="30" y2="42" stroke="#64748B" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
-    <circle cx="17" cy="42" r="2.6" fill="#64748B" opacity="0.85"/>
-    <circle cx="30" cy="42" r="2.6" fill="#64748B" opacity="0.85"/>
+    <circle cx="46" cy="30" r="3.8" fill="none" stroke="#FB5D75" stroke-width="2.8"/>
+    <line x1="41.5" y1="24.5" x2="50.5" y2="35.5" stroke="#FB5D75" stroke-width="2.8" stroke-linecap="round"/>
+    <line x1="17" y1="42" x2="30" y2="42" stroke="#7C8CA0" stroke-width="2.2" stroke-linecap="round" opacity="0.8"/>
+    <circle cx="17" cy="42" r="2.7" fill="#7C8CA0" opacity="0.8"/>
+    <circle cx="30" cy="42" r="2.7" fill="#7C8CA0" opacity="0.8"/>
   </g>
 
-  <!-- Wordmark. #7C8CA0 is legible on both the light and dark GitHub themes,
-       so the banner needs no background plate. -->
-  <text x="180" y="98" font-family="Segoe UI, Helvetica, Arial, sans-serif"
-        font-size="62" font-weight="300" letter-spacing="9" fill="#7C8CA0">SENTINEL</text>
-  <text x="184" y="134" font-family="Segoe UI, Helvetica, Arial, sans-serif"
-        font-size="20" font-weight="400" fill="#38BDF8">provenance-aware security for AI agents</text>
-  <text x="184" y="162" font-family="Segoe UI, Helvetica, Arial, sans-serif"
-        font-size="15" font-weight="400" fill="#64748B">block prompt-injection actions at the MCP tool boundary</text>
+  <!-- Wordmark: heavy and wide-tracked. The previous thin weight read as washed
+       out at README scale; weight is what gives the mark presence. -->
+  <text x="152" y="96" font-family="'Segoe UI Black', 'Arial Black', 'Segoe UI', Helvetica, sans-serif"
+        font-size="56" font-weight="900" letter-spacing="6.5" fill="url(#wm)">SENTINEL</text>
+
+  <rect x="155" y="112" width="452" height="2.5" rx="1.25" fill="url(#rule)"/>
+
+  <text x="155" y="145" font-family="'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="19.5" font-weight="600" fill="#8FA3B8">provenance-aware security for AI agents</text>
+  <text x="155" y="172" font-family="Consolas, 'JetBrains Mono', 'Courier New', monospace"
+        font-size="13.5" fill="#7C8CA0">block prompt-injection actions at the MCP tool boundary</text>
 </svg>

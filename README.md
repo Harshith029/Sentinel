@@ -1,14 +1,17 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="640">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="680">
 
-[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?color=38BDF8&label=pypi)](https://pypi.org/project/sentinel-prox/)
-[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?color=38BDF8)](https://pypi.org/project/sentinel-prox/)
-[![CI](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-38BDF8.svg)](./LICENSE)
-[![Checked with mypy](https://img.shields.io/badge/mypy-strict-2ea44f.svg)](http://mypy-lang.org/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-2ea44f.svg)](https://github.com/astral-sh/ruff)
-[![Live demo](https://img.shields.io/badge/demo-live-2ea44f.svg)](https://sentinel-i63x.onrender.com)
+[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/sentinel-prox/)
+[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/sentinel-prox/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/Sentinel/ci.yml?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=CI)](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/LICENSE-MIT-3B82F6?style=for-the-badge&labelColor=0B1220)](./LICENSE)
+[![Live demo](https://img.shields.io/badge/DEMO-LIVE-6366F1?style=for-the-badge&labelColor=0B1220)](https://sentinel-i63x.onrender.com)
+
+[![tests](https://img.shields.io/badge/TESTS-370%20PASSING-22D3EE?style=for-the-badge&labelColor=0B1220)](./tests)
+[![mypy](https://img.shields.io/badge/MYPY-STRICT-3B82F6?style=for-the-badge&labelColor=0B1220)](http://mypy-lang.org/)
+[![ruff](https://img.shields.io/badge/LINT-RUFF-3B82F6?style=for-the-badge&labelColor=0B1220)](https://github.com/astral-sh/ruff)
+[![no eval](https://img.shields.io/badge/CODEBASE-NO%20EVAL-22D3EE?style=for-the-badge&labelColor=0B1220)](./src/sentinel/authorization/ast.py)
 
 **Stop prompt-injection attacks at the action layer — where the damage happens.**
 

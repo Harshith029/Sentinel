@@ -10,6 +10,7 @@ from __future__ import annotations
 from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
 from sentinel.demo.scenario import run_demo_session
 from sentinel.mcp_proxy.content import result_text
+from sentinel.redaction import redact_text
 
 CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
 
@@ -30,11 +31,16 @@ async def test_real_web_fetch_runs_and_still_blocks_exfiltration() -> None:
     executed = [s.payload for s in res.replay.ordered if s.event_type == "ToolExecuted"]
     blocked = [s.payload for s in res.replay.ordered if s.event_type == "ToolBlocked"]
 
-    # the REAL fetcher ran (its guard message proves it isn't the canned mock)
-    assert any(
-        e.tool_name == "web_fetch" and "blocked" in e.result_summary.lower()  # type: ignore[attr-defined]
-        for e in executed
-    )
+    # The REAL fetcher ran, not the canned mock. Results are redacted before
+    # persistence (F-01), so we prove it by fingerprint: had the mock served this
+    # URL it would have returned its "<no canned page for ...>" string, whose
+    # redaction is deterministic within the process and therefore comparable.
+    mock_output = redact_text("<no canned page for http://127.0.0.1/internal>")
+    web_results = [
+        e.result_summary for e in executed if e.tool_name == "web_fetch"  # type: ignore[attr-defined]
+    ]
+    assert web_results, "web_fetch never executed"
+    assert all(r != mock_output for r in web_results)
     # content it fetched taints the lineage → exfil blocked, nothing leaves
     assert any(
         b.tool_name == "send_email" and b.matched_rule_id == "block-untrusted-origin"  # type: ignore[attr-defined]

@@ -24,6 +24,7 @@ import asyncio
 from sentinel.forensics.events import EventPayload
 from sentinel.forensics.span import Span
 from sentinel.forensics.store import ForensicStore
+from sentinel.redaction import redact_payload
 from sentinel.tracing import new_span_id_hex, new_trace_id_hex
 
 
@@ -60,6 +61,11 @@ class SpanEmitter:
         Returns the written Span. The span's ``span_id`` is freshly minted; pass
         it as the next event's ``parent_span_id`` to build the causal DAG.
         """
+        # Redact BEFORE anything durable sees the payload. This is the single
+        # serialization point for every span, so there is no code path that can
+        # persist raw caller data by forgetting to redact at the call site.
+        payload = redact_payload(payload)
+
         # Mint the id outside the lock (CPU-only, collision-free in practice) to
         # keep the critical section to just the seq read/increment + construct.
         span_id = new_span_id_hex()

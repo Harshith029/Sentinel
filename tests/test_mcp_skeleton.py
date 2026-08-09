@@ -15,6 +15,7 @@ from sentinel.forensics.replay import replay
 from sentinel.forensics.store import InMemoryForensicStore
 from sentinel.labels import RETRIEVED_CONTENT
 from sentinel.mcp_proxy.skeleton import SentinelProxySkeleton, make_downstream_server
+from sentinel.redaction import redact_text
 
 
 async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
@@ -48,14 +49,21 @@ async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
     proposed, executed = rep.ordered
     assert isinstance(proposed.payload, ToolCallProposed)
     assert proposed.payload.tool_name == "noop_echo"
-    assert proposed.payload.arguments == {"message": "ping"}
+    # Argument NAMES survive for forensic shape; values are redacted before the
+    # span is persisted, so a proposal can never leak caller data (F-01).
+    assert list(proposed.payload.arguments) == ["message"]
+    assert proposed.payload.arguments == {"message": redact_text("ping")}
+    assert "ping" not in str(proposed.payload.arguments)
     assert proposed.is_root is True
 
     assert isinstance(executed.payload, ToolExecuted)
     assert executed.parent_span_id == proposed.span_id  # execution is the proposal's child
     assert executed.payload.tool_name == "noop_echo"
     assert executed.payload.result_label == RETRIEVED_CONTENT  # external output is tainted
-    assert "echo: ping" in executed.payload.result_summary
+    # The tool's output really round-tripped — proven by its redaction
+    # fingerprint, since the raw result must never be persisted (F-01).
+    assert executed.payload.result_summary == redact_text("echo: ping")
+    assert "ping" not in executed.payload.result_summary
 
     # The branch view links them.
     assert [c.span_id for c in rep.children_of(proposed.span_id)] == [executed.span_id]

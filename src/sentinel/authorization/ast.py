@@ -42,12 +42,16 @@ def _to_decimal(value: object) -> Decimal:
     """Coerce a numeric operand to Decimal for exact ordered comparison."""
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal, str)):
         raise ConditionError(
-            f"operand is not numeric for ordered comparison: {value!r}"
+            # Never echo the operand: this message reaches RuleEvaluation.detail,
+            # which is persisted and served. Report the type, not the value.
+            f"operand is not numeric for ordered comparison: {type(value).__name__}"
         )
     try:
         return value if isinstance(value, Decimal) else Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
-        raise ConditionError(f"operand is not a valid number: {value!r}") from exc
+        raise ConditionError(
+            f"operand is not a valid number: {type(value).__name__}"
+        ) from exc
 
 
 def _equal(left: object, right: object) -> bool:

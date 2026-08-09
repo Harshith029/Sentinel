@@ -45,6 +45,7 @@ from typing import Final
 from sentinel.forensics.emitter import SpanEmitter
 from sentinel.forensics.events import AgentQuarantined, ToolBlocked, TrustUpdated
 from sentinel.forensics.span import Span
+from sentinel.observability import log_quarantined
 from sentinel.trust.config import MAX_SCORE, MIN_SCORE, TrustConfig
 
 # The sentinel "source" for the first tool in a trace (it is never a target, so
@@ -165,6 +166,7 @@ class TrustScorer:
                 f"{self._config.quarantine_threshold:.2f}; tool calls refused until reset"
             ),
         )
+        log_quarantined(agent_id, trace_id=trace_id, score=state.score)
         await self._emitter.emit(payload, trace_id=trace_id, parent_span_id=parent_span_id)
 
     # --- update paths --------------------------------------------------------

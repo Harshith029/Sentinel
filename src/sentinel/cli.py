@@ -220,6 +220,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
     port = int(_resolve(config, "port", args.port, 8765))
     dashboard = bool(_resolve(config, "dashboard", args.dashboard or None, False))
 
+    # Enforcement must be visible where the operator is looking, not only in the
+    # forensic store. Blocks log at WARNING; payloads are never written.
+    from sentinel.observability import configure_logging
+
+    configure_logging(
+        level=str(_resolve(config, "log_level", args.log_level, "INFO")),
+        fmt=str(_resolve(config, "log_format", args.log_format, "text")),  # type: ignore[arg-type]
+    )
+
     os.environ.setdefault("SENTINEL_ENABLE_MCP_GATEWAY", "1")
 
     from sentinel.config import reset_settings_cache
@@ -265,6 +274,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int)
     p_serve.add_argument(
         "--dashboard", action="store_true", help="also serve the demo dashboard"
+    )
+    p_serve.add_argument(
+        "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="verbosity of security decision logging (default: INFO)",
+    )
+    p_serve.add_argument(
+        "--log-format", choices=["text", "json"],
+        help="'text' for a terminal, 'json' for a log aggregator (default: text)",
     )
     p_serve.set_defaults(func=cmd_serve)
     return parser

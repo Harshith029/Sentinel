@@ -58,6 +58,7 @@ from sentinel.forensics.span import Span
 from sentinel.labels import AGENT, RETRIEVED_CONTENT, USER, Label
 from sentinel.mcp_proxy.content import mcp_error, result_text, summarize_result
 from sentinel.mcp_proxy.router import DownstreamConnection
+from sentinel.observability import log_allowed, log_blocked, log_injection_flagged
 from sentinel.provenance.graph import ProvenanceGraph
 from sentinel.provenance.model import ProvenanceNode
 from sentinel.shield import InputShield
@@ -216,6 +217,10 @@ class SentinelProxy:
                     self._agent_id, name, trace_id=self._trace_id,
                     parent_span_id=self._root_span_id,
                 )
+                log_blocked(
+                    name, reason="agent quarantined", rule="quarantine",
+                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                )
                 return mcp_error(
                     f"SENTINEL: agent {self._agent_id!r} is quarantined; "
                     f"tool {name!r} refused"
@@ -268,6 +273,12 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     parent_span_id=proposed.span_id,
                 )
+                log_blocked(
+                    name, reason=decision.reason,
+                    rule=decision.matched_rule_id,
+                    trace_id=self._trace_id, agent_id=self._agent_id,
+                    provenance=decision.effective_provenance,
+                )
                 return mcp_error(f"SENTINEL blocked {name!r}: {decision.reason}")
 
             # 3. Allowed: transition telemetry feeds the anomaly model.
@@ -277,6 +288,10 @@ class SentinelProxy:
             )
 
             # 4. Forward across the second MCP hop and tag the RESULT's provenance.
+            log_allowed(
+                name, trace_id=self._trace_id, agent_id=self._agent_id,
+                provenance=decision.effective_provenance,
+            )
             result = await self._downstream.call_tool(name, dict(arguments))
             label = self._result_labels.get(name, self._default_result_label)
             executed = await self._emitter.emit(
@@ -317,6 +332,10 @@ class SentinelProxy:
                     parent_span_id=executed.span_id,
                 )
                 if verdict.attack_detected:
+                    log_injection_flagged(
+                        f"tool_result:{name}", trace_id=self._trace_id,
+                        shield=verdict.shield,
+                    )
                     await self._scorer.record_injection(
                         self._agent_id,
                         target=f"tool_result:{name}",

@@ -123,6 +123,28 @@ dashboard: false              # the bundled UI is a DEMO, opt-in only
 catalogue_strict: true        # refuse catalogues containing injection markers
 ```
 
+### Seeing enforcement
+
+Every decision is logged where you are actually looking — blocks at `WARNING`,
+allowed calls at `INFO`, each carrying the `trace_id` that ties the line back to
+the full forensic record:
+
+```
+23:16:40 INFO    ALLOW  get_customer_record  [trace 2ad33998e093]
+23:16:40 INFO    ALLOW  web_fetch  [trace 2ad33998e093]
+23:16:40 WARNING BLOCK  send_email  rule=block-untrusted-origin  [trace 2ad33998e093]
+```
+
+`sentinel serve --log-format json` emits one JSON object per line for an
+aggregator, and `--log-level WARNING` narrows it to refusals and quarantines.
+
+**Tool arguments are never logged.** The payloads SENTINEL inspects are the very
+secrets it exists to protect, so writing them to a log would move the secret from
+a blocked call into a plaintext file that ships off-box — performing the
+exfiltration that was just prevented. The decision is logged; the data stays in the
+access-controlled forensic store. There is a test asserting the synthetic SSN and
+API key never appear in log output.
+
 Precedence is **CLI flag > environment variable > config file > default**, so a
 container can override a checked-in file. Every key has an env equivalent
 (`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, …) — see [`.env.example`](./.env.example).

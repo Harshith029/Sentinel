@@ -21,6 +21,7 @@ from sentinel.authorization.policy import load_policy
 from sentinel.forensics.emitter import SpanEmitter
 from sentinel.forensics.replay import TraceReplay, replay
 from sentinel.forensics.store import InMemoryForensicStore
+from sentinel.mcp_proxy.content import result_text
 from sentinel.mcp_proxy.proxy import SentinelProxy
 from sentinel.trust.config import load_default_trust_config
 from sentinel.trust.scorer import TrustScorer
@@ -276,3 +277,56 @@ async def test_clean_send_email_without_tainted_lineage_is_allowed() -> None:
     assert h.downstream.outbox == [
         {"to": "team@corp.example", "subject": "hi", "body": "status"}
     ]
+
+
+async def test_anomalous_lineage_is_denied_not_silently_trusted() -> None:
+    """F-12: a lineage we cannot fully compute must not authorize as clean.
+
+    :meth:`ProvenanceGraph.is_tainted` is deliberately fail-closed — a cyclic or
+    dangling ancestry "cannot be PROVEN clean, so it is treated as tainted". The
+    ENFORCEMENT path did not use it. The proxy called ``effective_provenance()``
+    and kept only ``.labels``, dropping ``malformed`` and ``missing``; the engine
+    then derived taint as ``RETRIEVED_CONTENT in provenance``. A lineage whose
+    traversal broke — but whose surviving labels happened not to include
+    RETRIEVED_CONTENT — was therefore authorized as untainted. Observed before
+    the fix: ``prov=['USER','AGENT'] tainted=False -> ALLOW``, and the tool ran.
+
+    That inverts the safety property exactly where it matters: the graph says
+    "unknown" and the enforcement path hears "clean". The corruption must be the
+    ONLY difference from an allowed call, so this runs before any tool has
+    executed — otherwise the first result's RETRIEVED_CONTENT label taints the
+    lineage and blocks the call for an unrelated reason.
+    """
+    async with proxy_session() as h:
+        # Ancestry references a span that is not in the graph: traversal is
+        # incomplete, so provenance can no longer be proven clean. Stands in for
+        # any way ancestry becomes uncomputable — a dangling reference, a cycle,
+        # a truncated or partially-restored graph.
+        h.proxy._frontier = [*h.proxy._frontier, "dangling-ancestor-span"]
+
+        blocked = await h.agent.call_tool(
+            "send_email", {"to": "cfo@corp.example", "subject": "q3", "body": "fine"}
+        )
+        assert blocked.isError is True, "uncomputable provenance was treated as clean"
+        assert "provenance graph anomaly" in result_text(blocked)
+        # Fails CLOSED: nothing reached the downstream tool server.
+        assert h.downstream.executions == []
+
+        # Refused deterministically, before policy was consulted — the record
+        # attributes it to provenance, not to a rule that happened to match.
+        rep = await h.replay()
+        blocks = [s.payload for s in rep.ordered if s.event_type == "ToolBlocked"]
+        assert [b.blocked_by for b in blocks] == ["provenance"]
+        assert not [s for s in rep.ordered if s.event_type == "AuthorizationDecided"]
+
+
+async def test_clean_lineage_still_authorizes_normally() -> None:
+    """The anomaly gate must not become a block-everything: the same call on an
+    intact lineage is still allowed, so the deny above is attributable to the
+    corruption and nothing else."""
+    async with proxy_session() as h:
+        ok = await h.agent.call_tool(
+            "send_email", {"to": "cfo@corp.example", "subject": "q3", "body": "fine"}
+        )
+        assert ok.isError is False
+        assert h.downstream.executions == [("send_email", "cfo@corp.example")]

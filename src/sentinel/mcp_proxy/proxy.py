@@ -241,7 +241,41 @@ class SentinelProxy:
                     derived_from=tuple(self._frontier),
                 )
             )
-            provenance = self._graph.effective_provenance(proposed.span_id).labels
+            lineage = self._graph.effective_provenance(proposed.span_id)
+            if lineage.anomalous:
+                # A cycle or a dangling ancestor means the traversal did not
+                # complete, so this call's provenance is UNKNOWN — not clean.
+                # ProvenanceGraph.is_tainted is fail-closed for exactly this
+                # reason, but the enforcement path reached past it to `.labels`
+                # and the engine then derived taint as `RETRIEVED_CONTENT in
+                # provenance`. A broken lineage whose surviving labels happened
+                # to omit that flag therefore authorized as untrusted-free.
+                #
+                # We refuse before consulting policy: an anomaly means the state
+                # policy would reason over is itself corrupt, so evaluating rules
+                # against it would launder "unknown" into "allowed". This is a
+                # deterministic deny, not a policy decision.
+                reason = (
+                    "provenance graph anomaly: lineage could not be computed "
+                    f"(malformed={lineage.malformed}, missing={len(lineage.missing)})"
+                )
+                await self._emitter.emit(
+                    ToolBlocked(
+                        tool_name=name,
+                        reason=reason,
+                        blocked_by="provenance",
+                        matched_rule_id=None,
+                    ),
+                    trace_id=self._trace_id,
+                    parent_span_id=proposed.span_id,
+                )
+                log_blocked(
+                    name, reason=reason, rule=None,
+                    trace_id=self._trace_id, agent_id=self._agent_id,
+                    provenance=tuple(sorted(lineage.labels)),
+                )
+                return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
+            provenance = lineage.labels
 
             # 2. Authorize (Phase 2) and record the full decision trace.
             call = ToolCall(

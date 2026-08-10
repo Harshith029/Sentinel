@@ -38,7 +38,9 @@ Decision = Literal["ALLOW", "DENY"]
 
 # Which component refused a tool call. DENY-OVERRIDES means several layers can
 # block; recording which one did is core forensic value.
-BlockedBy = Literal["authorization", "input_shield", "trust_scorer", "quarantine"]
+BlockedBy = Literal[
+    "authorization", "input_shield", "trust_scorer", "quarantine", "provenance"
+]
 
 
 class _FrozenPayload(BaseModel):

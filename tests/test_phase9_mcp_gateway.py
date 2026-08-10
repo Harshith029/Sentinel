@@ -49,6 +49,14 @@ pytestmark = [
 
 
 def _free_port() -> int:
+    """Reserve an ephemeral port by binding and releasing it.
+
+    This has a known race — the port is unowned between the close here and
+    uvicorn's bind — but handing uvicorn a pre-bound listening socket instead was
+    measured NOT to fix the teardown hang documented on
+    ``test_real_http_sessions_after_remote_downstream``, so the simpler form is
+    kept rather than carrying an unproven change.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port: int = sock.getsockname()[1]
@@ -92,7 +100,9 @@ class _RunningServer:
     async def __aexit__(self, *exc: object) -> None:
         self._server.should_exit = True
         if self._task is not None:
-            await self._task
+            # Bounded on purpose: a shutdown that never completes must fail
+            # loudly here rather than hang the whole run with no attribution.
+            await asyncio.wait_for(self._task, timeout=30)
 
 
 async def test_external_mcp_client_over_http_is_secured() -> None:
@@ -414,3 +424,47 @@ async def test_remote_http_tool_servers_are_secured(
             assert state.outbox == []
         finally:
             reset_settings_cache()
+
+
+@pytest.mark.xfail(
+    reason="OPEN DEFECT: after the remote-downstream test, a NEW streamable-HTTP "
+           "client blocks while establishing its connection. Recorded, not masked.",
+    raises=TimeoutError,
+    strict=False,
+)
+async def test_real_http_sessions_after_remote_downstream() -> None:
+    """A real-HTTP MCP session must survive a preceding remote-downstream run.
+
+    This test is the record of an OPEN defect, deliberately placed after
+    ``test_remote_http_tool_servers_are_secured`` rather than reordered away from
+    it. What is established so far:
+
+    * The symptom is not a gateway lifecycle leak. A standalone repro runs a
+      gateway in remote-http mode, tears it down, and observes **zero** leaked
+      asyncio tasks; the downstream sessions and the session manager both close.
+    * The blocked task is the test itself, waiting on the MCP client. Wrapping
+      ``initialize()`` in ``wait_for`` did NOT trip the timeout, so the block is
+      in the transport's connection setup, before the MCP handshake.
+    * It is not settings-cache bleed: the second gateway reports
+      ``downstream_mode == "memory"``, not the previous test's remote URLs.
+    * It is not the ``_free_port`` bind/close/rebind race: handing uvicorn a
+      pre-bound listening socket did not fix it.
+
+    The timeout is what keeps this honest — the failure is bounded and named,
+    instead of hanging the suite with no attribution.
+    """
+    manager = RunManager(store=InMemoryForensicStore())
+    app = create_app(manager, enable_mcp_gateway=True)
+
+    async def _drive() -> None:
+        async with _RunningServer(app) as server:
+            for i in range(2):
+                async with streamable_http_client(server.mcp_url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool("get_customer_record", {"id": i})
+                        assert not result.isError, result_text(result)
+
+    await asyncio.wait_for(_drive(), timeout=45)
+    # Each wire session is still its own trace/principal after the churn.
+    assert len({r.agent_id for r in manager.list_runs()}) == 2

@@ -41,9 +41,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import weakref
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from typing import Any, Final
+from uuid import uuid4
 
 import mcp.types as mcp_types
 from mcp import ClientSession
@@ -79,13 +83,46 @@ from sentinel.shield import InputShield
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.mcp_gateway")
 _GATEWAY_NAME: Final[str] = "sentinel"
 _LIVE_USER_INPUT: Final[str] = "(live MCP session over HTTP)"
-# Concurrency cap. A session's proxy, once created, is NEVER replaced or evicted
-# while the gateway lives — evicting a live session would reset its provenance
-# frontier and let a tainted action through on a fresh clean proxy (a laundering
-# bypass). So at capacity we FAIL CLOSED: refuse NEW sessions rather than reset an
-# existing one. (Idle-TTL cleanup of genuinely-closed sessions is a future
-# enhancement; it must only ever drop sessions proven closed, never live ones.)
+# CONCURRENCY cap — not a lifetime quota. A live session's proxy is NEVER
+# replaced or evicted: evicting it would reset its provenance frontier and let a
+# tainted action through on a fresh clean proxy (a laundering bypass). So under
+# pressure we FAIL CLOSED, refusing NEW sessions rather than resetting existing
+# ones. Sessions the transport has FINISHED with are a different matter: they can
+# never make another call, so reclaiming them is safe by construction and is what
+# keeps the cap a measure of concurrency. See :class:`_TrackedSession`.
 _MAX_SESSIONS: Final[int] = 512
+# Backstop for a session the transport never releases (a half-open connection, or
+# a transport-layer leak). Retiring it frees the proxy; it does NOT hand a
+# returning caller a clean one — see ``_retire_idle``.
+_SESSION_IDLE_TTL_SECONDS: Final[float] = 900.0
+
+
+@dataclass
+class _TrackedSession:
+    """Gateway-side state for one live MCP session.
+
+    Held in a :class:`weakref.WeakKeyDictionary` keyed by the ``ServerSession``
+    itself rather than in a plain dict keyed by ``id(session)``. That choice is
+    load-bearing twice over:
+
+    * The entry disappears exactly when the transport drops the session, so the
+      gateway tracks a session for precisely as long as the MCP SDK considers it
+      alive. There is no removal path to forget, and no cleanup task to fall
+      behind. A dead session cannot issue another call, so reclaiming it cannot
+      launder provenance.
+    * A weak key IS the session object, so it cannot collide. ``id()`` is a
+      memory address that CPython recycles: keyed that way, a *new* session
+      landing on a freed address would be handed the *previous* session's proxy —
+      inheriting another principal's trace, frontier and trust.
+
+    ``proxy is None`` marks a RETIRED session: idle past the TTL, its proxy
+    released. A retired session is refused, never re-seeded, so retirement can
+    never become the laundering bypass that eviction would be.
+    """
+
+    agent_id: str
+    proxy: SentinelProxy | None
+    last_used: float
 
 
 def _request_authorized(scope: Scope) -> bool:
@@ -138,10 +175,12 @@ class SentinelGateway:
         *,
         tenant: str = DEFAULT_TENANT,
         max_sessions: int = _MAX_SESSIONS,
+        idle_ttl: float = _SESSION_IDLE_TTL_SECONDS,
     ) -> None:
         self._manager = manager
         self._tenant = tenant
         self._max_sessions = max_sessions
+        self._idle_ttl = idle_ttl
         self._stack = AsyncExitStack()
         self._router: ToolRouter | None = None
         self._cache: tuple[mcp_types.Tool, ...] = ()
@@ -152,9 +191,11 @@ class SentinelGateway:
         self._topology: DownstreamTopology | None = None
         # Pins the approved catalogue at connect; re-checked on tool discovery.
         self._monitor: CatalogueMonitor | None = None
-        # session-id → (session, proxy). The session object is held so its id()
-        # cannot be reused by a different session while we still track it.
-        self._sessions: dict[int, tuple[ServerSession, SentinelProxy]] = {}
+        # Live session → its proxy. Weakly keyed, so an entry lives exactly as
+        # long as the transport's session does (see _TrackedSession).
+        self._sessions: weakref.WeakKeyDictionary[ServerSession, _TrackedSession] = (
+            weakref.WeakKeyDictionary()
+        )
         self._session_lock = asyncio.Lock()
         self._front = self._build_front_server()
         # stateless=False: keep one ServerSession per MCP session so a session's
@@ -392,33 +433,77 @@ class SentinelGateway:
         session's first tool call, so each session is one trace with its own
         provenance frontier and trust.
 
-        Returns ``None`` (caller fails closed) when at capacity for a NEW session.
-        A session that already has a proxy is ALWAYS returned its own proxy — it is
-        never replaced, so its provenance frontier can never be silently reset.
+        Returns ``None`` (caller fails closed) when at capacity for a NEW session,
+        or when the session has been retired. A session that already has a proxy is
+        ALWAYS returned its own proxy — it is never replaced, so its provenance
+        frontier can never be silently reset.
         """
-        session: ServerSession = self._front.request_context.session
-        key = id(session)
+        return await self._proxy_for_session(self._front.request_context.session)
+
+    async def _proxy_for_session(self, session: ServerSession) -> SentinelProxy | None:
+        """:meth:`_proxy_for_current_session` with the session passed explicitly.
+
+        Split out so the session-lifecycle rules can be exercised directly,
+        without standing up an HTTP transport for each session under test.
+        """
+        now = time.monotonic()
         # Fast path: established session, no lock.
-        existing = self._sessions.get(key)
-        if existing is not None:
-            return existing[1]
+        tracked = self._sessions.get(session)
+        if tracked is not None:
+            if tracked.proxy is None:
+                return None  # retired → refuse; never re-seed a clean proxy
+            tracked.last_used = now
+            return tracked.proxy
         async with self._session_lock:
-            existing = self._sessions.get(key)  # re-check under lock
-            if existing is not None:
-                return existing[1]
+            tracked = self._sessions.get(session)  # re-check under lock
+            if tracked is not None:
+                if tracked.proxy is None:
+                    return None
+                tracked.last_used = now
+                return tracked.proxy
             if self._router is None:  # pragma: no cover - set in __aenter__
                 raise RuntimeError("gateway used before __aenter__ connected downstream")
+            self._retire_idle(now)
             # Capacity reached → fail CLOSED. We must NOT evict a live session to
             # make room: that would reset its frontier and let a tainted action
             # through on a fresh, clean proxy (provenance laundering).
-            if len(self._sessions) >= self._max_sessions:
+            if self.active_sessions >= self._max_sessions:
                 return None
+            # Identity is a random session id, not a memory address: it is unique
+            # for the life of the deployment, so a forensic trace can never be
+            # attributed to the wrong principal by address reuse.
+            agent_id = f"live-{uuid4().hex}"
             proxy = self._manager.new_live_proxy(
                 downstream=self._router,
                 cache=self._cache,
-                agent_id=f"live-{key:x}",
+                agent_id=agent_id,
                 tenant=self._tenant,
             )
             await proxy.start(user_input=_LIVE_USER_INPUT)
-            self._sessions[key] = (session, proxy)
+            self._sessions[session] = _TrackedSession(
+                agent_id=agent_id, proxy=proxy, last_used=now
+            )
             return proxy
+
+    @property
+    def active_sessions(self) -> int:
+        """Sessions currently holding a proxy (retired ones don't count)."""
+        return sum(1 for t in self._sessions.values() if t.proxy is not None)
+
+    def _retire_idle(self, now: float) -> None:
+        """Release the proxies of sessions idle past the TTL.
+
+        Only reached when a NEW session needs room, so a healthy gateway never
+        pays for this. Retirement is deliberately not deletion: the entry stays
+        as a tombstone, so if a retired session does come back it is REFUSED
+        rather than handed a fresh, untainted proxy. That is the same reasoning
+        that makes eviction unacceptable — a clean proxy is a laundering bypass —
+        and it is why this can be a safe backstop rather than a new hole.
+        """
+        for tracked in self._sessions.values():
+            if tracked.proxy is not None and now - tracked.last_used >= self._idle_ttl:
+                _LOG.info(
+                    "retiring idle MCP session",
+                    extra={"agent_id": tracked.agent_id, "idle_seconds": now - tracked.last_used},
+                )
+                tracked.proxy = None

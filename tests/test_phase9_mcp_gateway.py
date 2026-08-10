@@ -246,6 +246,82 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
         assert gateway.outbox == []
 
 
+class _FakeSession:
+    """Stands in for a transport ``ServerSession`` (weak-referenceable, unique)."""
+
+
+async def test_closed_sessions_release_capacity() -> None:
+    """F-04: sessions that have ENDED must stop consuming the capacity budget.
+
+    The gateway kept every session it had ever seen in a dict with no removal
+    path, keyed by ``id(session)``. Two consequences, both real:
+
+    * **Permanent exhaustion.** A deployment refused ALL new agent sessions once
+      ``max_sessions`` connections had been *served* — not once that many were
+      concurrent. With the shipped cap of 512 a gateway fronting short client
+      sessions bricks itself, which is total denial of service against the
+      security proxy every agent must route through.
+    * **Recycled identity.** ``id()`` is a memory address and CPython reuses it.
+      With no removal path, a NEW session landing on a freed address was handed
+      the PREVIOUS session's proxy — inheriting another principal's trace,
+      provenance frontier and trust.
+
+    Driven through :meth:`_proxy_for_session` with stand-in session objects
+    rather than real HTTP sessions: the lifecycle rule is about what the gateway
+    does when a session object goes away, so releasing it here is the precise
+    stimulus, and it stays deterministic instead of depending on socket teardown.
+    """
+    manager = RunManager(store=InMemoryForensicStore())
+    gateway = SentinelGateway(manager, max_sessions=2)
+    async with gateway:
+        # Five times the cap, one at a time — concurrency never exceeds one.
+        for _ in range(10):
+            session = _FakeSession()
+            proxy = await gateway._proxy_for_session(session)  # type: ignore[arg-type]
+            assert proxy is not None, "a sequential session was refused at capacity"
+            assert gateway.active_sessions == 1
+            del session  # the transport is done with it
+        assert gateway.active_sessions == 0
+
+        # Every session was a distinct principal, and no identity is a memory
+        # address that a later session could be handed.
+        agent_ids = [r.agent_id for r in manager.list_runs()]
+        assert len(agent_ids) == 10
+        assert len(set(agent_ids)) == 10
+
+        # CONCURRENT sessions still hit the cap and are refused, not evicted:
+        # capacity is about how many are live at once.
+        live = [_FakeSession() for _ in range(3)]
+        proxies = [await gateway._proxy_for_session(s) for s in live]  # type: ignore[arg-type]
+        assert proxies[0] is not None and proxies[1] is not None
+        assert proxies[2] is None, "over-capacity session must fail closed"
+        # The two live sessions keep their own proxies — never swapped or reset.
+        assert await gateway._proxy_for_session(live[0]) is proxies[0]  # type: ignore[arg-type]
+        assert await gateway._proxy_for_session(live[1]) is proxies[1]  # type: ignore[arg-type]
+
+
+async def test_idle_retirement_refuses_rather_than_reseeds() -> None:
+    """An idle session's proxy may be released — but it is never re-seeded.
+
+    Retirement is the backstop for a session the transport never hands back. It
+    must not become the eviction bug in disguise: if a retired session comes
+    back, handing it a FRESH proxy would reset its provenance frontier and let a
+    tainted action through clean. It is refused instead.
+    """
+    manager = RunManager(store=InMemoryForensicStore())
+    gateway = SentinelGateway(manager, max_sessions=1, idle_ttl=0.0)
+    async with gateway:
+        stale = _FakeSession()
+        assert await gateway._proxy_for_session(stale) is not None  # type: ignore[arg-type]
+
+        # A new session arrives; the idle one is retired to make room.
+        fresh = _FakeSession()
+        assert await gateway._proxy_for_session(fresh) is not None  # type: ignore[arg-type]
+
+        # The retired session is refused — NOT given a clean proxy.
+        assert await gateway._proxy_for_session(stale) is None  # type: ignore[arg-type]
+
+
 async def test_mcp_requires_bearer_token_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

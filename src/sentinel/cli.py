@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -68,6 +69,13 @@ dashboard: false
 # prompt-injection markers (tool poisoning). Cross-server tool-name shadowing
 # always fails closed regardless.
 catalogue_strict: true
+
+# SECRETS DO NOT BELONG IN THIS FILE. `api_token` is a valid key here, but this
+# file lives in your repository and is easy to commit by accident. Set it in the
+# environment instead, where your platform's secret store can deliver it:
+#   SENTINEL_API_TOKEN=...
+# The environment wins over this file, so a deployment can override anything set
+# here without editing it.
 """
 
 # config key -> (env var, serializer)
@@ -146,8 +154,48 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
     target.write_text(STARTER_CONFIG, encoding="utf-8")
     print(f"wrote {target}")
+    if _is_committable(target):
+        print(
+            f"warning: {target} is inside a git repository and is not ignored. "
+            "It accepts an api_token; keep secrets in the environment "
+            "(SENTINEL_API_TOKEN) or add this file to .gitignore.",
+            file=sys.stderr,
+        )
     print("next: declare your servers, then run `sentinel check`")
     return 0
+
+
+def _is_committable(target: Path) -> bool:
+    """True when ``target`` sits in a git repo and git is not ignoring it.
+
+    The config accepts an ``api_token``, so a committed copy publishes a
+    credential. Asking git directly is what makes this accurate: it honours
+    global excludes and nested .gitignore files, which reading one file cannot.
+    Any failure (git missing, not a repo) answers False — the warning is a
+    convenience, and guessing wrong would train operators to ignore it.
+    """
+    try:
+        # noqa justification: fixed argv (never a shell), and `--` stops a
+        # path that looks like a flag from being read as one. `git` is resolved
+        # from PATH on purpose — that is the git the operator actually uses.
+        proc = subprocess.run(  # noqa: S603
+            ["git", "check-ignore", "-q", "--", str(target)],  # noqa: S607
+            cwd=target.parent if target.parent.exists() else None,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode == 0:  # git ignores it → safe
+        return False
+    inside = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--is-inside-work-tree"],  # noqa: S607
+        cwd=target.parent if target.parent.exists() else None,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    return inside.returncode == 0 and inside.stdout.strip() == "true"
 
 
 def cmd_check(args: argparse.Namespace) -> int:

@@ -1,5 +1,7 @@
 # Secrets / env
 .env
+# Operator config: accepts an api_token, so it must never be committed.
+sentinel.yaml
 .env.local
 .env.*.local
 *.pem

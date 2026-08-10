@@ -6,6 +6,7 @@ dashboard is OPT-IN rather than the front door.
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -143,3 +144,31 @@ def test_serve_dashboard_is_opt_in() -> None:
     parser = build_parser()
     assert parser.parse_args(["serve"]).dashboard is False
     assert parser.parse_args(["serve", "--dashboard"]).dashboard is True
+
+
+def test_init_warns_when_the_config_could_be_committed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F-13: sentinel.yaml accepts an api_token, so a committed copy leaks it.
+
+    `sentinel init` writes the file straight into the operator's working tree.
+    Nothing there tells them it is credential-bearing, and nothing ignores it —
+    so the natural next step (commit the new config) publishes a bearer token
+    that grants access to the security proxy itself. The starter file now says
+    secrets belong in the environment, and init warns when git would take it.
+    """
+    subprocess.run(  # noqa: S603
+        ["git", "init", "-q"],  # noqa: S607
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    target = tmp_path / "sentinel.yaml"
+
+    assert main(["--config", str(target), "init"]) == 0
+    err = capsys.readouterr().err
+    assert "not ignored" in err and "SENTINEL_API_TOKEN" in err
+    assert "SECRETS DO NOT BELONG IN THIS FILE" in target.read_text(encoding="utf-8")
+
+    # Once git ignores it there is nothing to warn about.
+    (tmp_path / ".gitignore").write_text("sentinel.yaml\n", encoding="utf-8")
+    assert main(["--config", str(target), "init", "--force"]) == 0
+    assert "not ignored" not in capsys.readouterr().err

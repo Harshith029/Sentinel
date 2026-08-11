@@ -197,29 +197,64 @@ _CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
 
 
 def _downstream_http_client() -> httpx.AsyncClient:
-    """An explicitly configured HTTP client for downstream MCP connections.
+    """The HTTP client SENTINEL uses for downstream MCP connections.
 
-    Supplying our own client rather than letting the SDK build a default one is
-    load-bearing for two reasons, both observed rather than assumed:
+    Supplying our own rather than letting the SDK build a default is for two
+    proven reasons, and no others:
 
-    * **A hang becomes an error.** Without it, connecting to an unreachable or
-      black-holed downstream never times out, so a misconfigured URL wedges
-      startup instead of failing with a message the operator can act on.
-    * **It avoids an upstream wedge.** With mcp 1.27.1 on Windows, tearing down a
-      streamable-HTTP client session (which sends the DELETE that
-      ``terminate_on_close`` implies) leaves the process in a state where the NEXT
-      client's ``initialize()`` blocks forever — against a different server, in a
-      different task. A standalone reproducer using only ``mcp`` and ``uvicorn``
-      shows it; passing an explicitly configured client avoids it, as does
-      ``terminate_on_close=False``. See ``docs/upstream-mcp-streamable-http.md``.
+    * **A hang becomes an error.** The SDK default does not bound connect, so a
+      misconfigured or black-holed downstream URL wedges startup instead of
+      failing with something the operator can act on.
+    * **Redirects still work.** The SDK default follows them and an MCP mount
+      commonly answers ``/mcp`` with a 307 to ``/mcp/``, so an explicit client
+      that dropped this would break ordinary servers.
+
+    It is NOT a workaround for the teardown wedge in
+    ``docs/mcp-streamable-http-teardown.md``. An early reading of one standalone
+    run suggested it was; that did not hold under retest.
     """
     return httpx.AsyncClient(
         timeout=httpx.Timeout(None, connect=_CONNECT_TIMEOUT_SECONDS,
                               pool=_CONNECT_TIMEOUT_SECONDS),
-        # The SDK's own default follows redirects; an MCP mount commonly answers
-        # /mcp with a 307 to /mcp/, so dropping this breaks ordinary servers.
         follow_redirects=True,
     )
+
+
+# Whether a closing downstream connection sends the MCP session-termination
+# DELETE. Keeping it True is a deliberate safety choice, not an oversight — see
+# ``docs/mcp-streamable-http-teardown.md``. Skipping the DELETE avoids the
+# teardown wedge, but the SDK server's ``session_idle_timeout`` defaults
+# to None, so a skipped DELETE strands a session on the OPERATOR'S downstream
+# server with nothing to reap it. We will not leak resources on someone else's
+# server to work around a bug in ours.
+_TERMINATE_ON_CLOSE: Final[bool] = True
+
+
+async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLike:
+    """Open ONE downstream MCP session — the single way SENTINEL connects out.
+
+    Both downstream paths route through here (operator-declared
+    ``SENTINEL_MCP_SERVERS`` and the legacy ``SENTINEL_TOOLS_*_URL`` deployment
+    wiring), so connect timeout, redirect policy, HTTP-client ownership and
+    session-termination policy are decided in exactly one place.
+
+    Ownership matters and is easy to get wrong: the SDK closes the HTTP client
+    **only when it created it** (``if not client_provided``). A caller-supplied
+    client is never closed by the SDK, so ours is entered into ``stack`` and
+    closed with the session.
+    """
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    client = await stack.enter_async_context(_downstream_http_client())
+    read, write, _id = await stack.enter_async_context(
+        streamable_http_client(
+            url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE
+        )
+    )
+    session = await stack.enter_async_context(ClientSession(read, write))
+    await session.initialize()
+    return session  # ClientSession satisfies SessionLike
 
 
 async def connect_downstream(
@@ -230,18 +265,10 @@ async def connect_downstream(
     Connections are bound to ``stack``, so the caller owns their lifetime. Fails
     loudly on an unreachable server: a half-wired proxy is worse than no proxy.
     """
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
-
     sessions: dict[str, SessionLike] = {}
     for server in servers:
         try:
-            client = await stack.enter_async_context(_downstream_http_client())
-            read, write, _id = await stack.enter_async_context(
-                streamable_http_client(server.url, http_client=client)
-            )
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
+            session = await open_downstream_session(server.url, stack)
         except Exception as exc:  # noqa: BLE001 - surface any connect failure clearly
             raise DownstreamConfigError(
                 f"downstream server {server.name!r} at {server.url}: "

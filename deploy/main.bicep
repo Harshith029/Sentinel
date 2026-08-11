@@ -120,9 +120,12 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
             // consumed by the remote HTTP-client ToolRouter, which is not wired
             // yet — today the gateway uses in-memory mock tool servers. They are
             // set here so the topology is ready when that router lands.
-            { name: 'SENTINEL_TOOLS_WEB_URL', value: 'http://${prefix}-tools-web' }
-            { name: 'SENTINEL_TOOLS_EMAIL_URL', value: 'http://${prefix}-tools-email' }
-            { name: 'SENTINEL_TOOLS_RECORDS_URL', value: 'http://${prefix}-tools-records' }
+            // Streamable-HTTP MCP endpoints. The /mcp path is REQUIRED: the tool
+            // servers mount their MCP app there, and SENTINEL connects to the URL
+            // verbatim, so omitting it fails discovery at startup.
+            { name: 'SENTINEL_TOOLS_WEB_URL', value: 'http://${prefix}-tools-web/mcp' }
+            { name: 'SENTINEL_TOOLS_EMAIL_URL', value: 'http://${prefix}-tools-email/mcp' }
+            { name: 'SENTINEL_TOOLS_RECORDS_URL', value: 'http://${prefix}-tools-records/mcp' }
           ]
         }
       ]

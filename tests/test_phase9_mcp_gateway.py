@@ -63,26 +63,26 @@ def _bound_listener() -> socket.socket:
     return sock
 
 
-def _mcp_client(url: str):  # type: ignore[no-untyped-def]
-    """Open an MCP client the way production does: with OUR OWN http client.
+@asynccontextmanager
+async def _mcp_client(url: str):  # type: ignore[no-untyped-def]
+    """Open an MCP client and OWN the HTTP client handed to the SDK.
 
-    ``connect_downstream`` supplies an explicitly configured client so that an
-    unreachable downstream fails with a bounded connect timeout instead of
-    hanging startup; the tests use the same configuration so they exercise what
-    ships.
+    The SDK closes the HTTP client only when it created it
+    (``if not client_provided`` in ``streamable_http_client``); a caller-supplied
+    one is never closed. Passing a bare ``httpx.AsyncClient()`` into that
+    parameter therefore leaks a client — and connection pool — per call, so this
+    owns it explicitly.
 
-    This does NOT work around the upstream teardown wedge in
-    ``docs/upstream-mcp-streamable-http.md``. That was an early reading of a
-    single standalone run and it did not hold: the sequence test still wedges
-    with every client here explicitly configured.
+    The explicit client mirrors what ``connect_downstream`` ships: a bounded
+    connect/pool timeout and redirect following. It is NOT a workaround for the
+    teardown wedge in ``docs/mcp-streamable-http-teardown.md``.
     """
-    return streamable_http_client(
-        url,
-        http_client=httpx.AsyncClient(
-            timeout=httpx.Timeout(None, connect=10.0, pool=10.0),
-            follow_redirects=True,  # /mcp -> /mcp/ is a 307
-        ),
-    )
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(None, connect=10.0, pool=10.0),
+        follow_redirects=True,  # /mcp -> /mcp/ is a 307
+    ) as client:
+        async with streamable_http_client(url, http_client=client) as streams:
+            yield streams
 
 
 class _RunningServer:
@@ -475,9 +475,9 @@ async def test_concurrent_runners_get_distinct_working_ports() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Upstream mcp 1.27.1 streamable-HTTP teardown wedge; see "
-           "docs/upstream-mcp-streamable-http.md. strict=True so an XPASS fails "
-           "CI and forces this marker to be removed once upstream is fixed.",
+    reason="UNRESOLVED streamable-HTTP teardown wedge, not yet attributed to "
+           "SENTINEL or upstream; see docs/mcp-streamable-http-teardown.md. "
+           "strict=True so an XPASS fails CI and forces this marker's removal.",
 )
 async def test_real_http_sessions_after_remote_downstream() -> None:
     """The full sequence: remote gateway → teardown → fresh gateway → 2 clients.
@@ -489,7 +489,7 @@ async def test_real_http_sessions_after_remote_downstream() -> None:
 
     Root cause is upstream, not SENTINEL: a standalone reproducer using only
     ``mcp`` and ``uvicorn`` shows it with no SENTINEL code involved
-    (``docs/upstream-mcp-streamable-http.md``). SENTINEL was exposed because
+    (``docs/mcp-streamable-http-teardown.md``). SENTINEL was exposed because
     ``connect_downstream`` let the SDK build its own HTTP client; it now passes an
     explicitly configured one, which both bounds connection establishment and
     avoids the wedge.

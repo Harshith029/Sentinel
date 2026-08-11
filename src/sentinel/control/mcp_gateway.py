@@ -31,11 +31,17 @@ are shared infrastructure behind the proxy (exactly as in a real deployment),
 connected once at startup and preflighted so a transport hiccup can't break tool
 discovery mid-session.
 
-DEMO scope: the downstream tool servers here are the in-memory mock servers from
-``demo/tool_servers.py`` (no real egress). The load-bearing hop this module adds
-is the AGENT↔SENTINEL one — the one that must be REAL for a buyer to put SENTINEL
-in front of their agent. Pointing the proxy at REMOTE tool servers is an
-orthogonal change (the ACA bicep already models them as separate services).
+Downstream selection is config-driven, and all three paths are wired:
+
+* ``SENTINEL_MCP_SERVERS`` — the operator's own MCP servers (the product path);
+* ``SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL`` — the remote example topology the
+  ACA bicep deploys as separate internal apps;
+* neither set — the bundled in-memory example servers (offline demo, no egress).
+
+The remote paths share ONE connection factory
+(:func:`~sentinel.downstream.open_downstream_session`), so connect timeout,
+redirect policy, HTTP-client ownership and MCP session-termination policy cannot
+drift between the deployment wiring and the product path.
 """
 from __future__ import annotations
 
@@ -51,7 +57,6 @@ from uuid import uuid4
 
 import mcp.types as mcp_types
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 from mcp.server.lowlevel import Server
 from mcp.server.session import ServerSession
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -73,6 +78,7 @@ from sentinel.downstream import (
     DownstreamServer,
     DownstreamTopology,
     connect_downstream,
+    open_downstream_session,
     parse_servers,
 )
 from sentinel.mcp_proxy.content import mcp_error
@@ -347,14 +353,12 @@ class SentinelGateway:
                 "SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL for all of them, or unset "
                 "all to use the in-memory mock servers."
             )
-        clients: dict[str, ClientSession] = {}
+        # Same factory as the declared-servers path: one place decides connect
+        # timeout, redirect policy, HTTP-client ownership and termination policy,
+        # so the deployment wiring cannot drift from the product path.
+        clients: dict[str, Any] = {}
         for key in required_keys:
-            read, write, _id = await self._stack.enter_async_context(
-                streamable_http_client(urls[key])
-            )
-            session = await self._stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-            clients[key] = session
+            clients[key] = await open_downstream_session(urls[key], self._stack)
         self._router = ToolRouter(
             {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER}
         )

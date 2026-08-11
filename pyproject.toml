@@ -50,7 +50,10 @@ dependencies = [
     "azure-monitor-opentelemetry>=1.6,<2",
 
     # MCP — official Python SDK (server + client)
-    "mcp>=1.2,<2",
+    # Floor is 1.27: `streamable_http_client(http_client=...)` is required to
+    # bound downstream connect and to dodge the teardown wedge documented in
+    # docs/upstream-mcp-streamable-http.md.
+    "mcp>=1.27,<2",
 
     # OpenAI — exact pin written to versions.lock after resolve
     "openai>=1.50,<3",

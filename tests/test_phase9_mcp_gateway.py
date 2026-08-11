@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -48,27 +49,48 @@ pytestmark = [
 ]
 
 
-def _free_port() -> int:
-    """Reserve an ephemeral port by binding and releasing it.
+def _bound_listener() -> socket.socket:
+    """Bind an ephemeral port and KEEP the listening socket for uvicorn.
 
-    This has a known race — the port is unowned between the close here and
-    uvicorn's bind — but handing uvicorn a pre-bound listening socket instead was
-    measured NOT to fix the teardown hang documented on
-    ``test_real_http_sessions_after_remote_downstream``, so the simpler form is
-    kept rather than carrying an unproven change.
+    Binding, reading the port, closing, and letting uvicorn rebind leaves the port
+    unowned in between, so the OS may hand the same one to another runner started
+    moments later or to an unrelated connection. Handing uvicorn the socket it will
+    actually serve on removes that window; the socket is closed at teardown.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
-    port: int = sock.getsockname()[1]
-    sock.close()
-    return port
+    sock.listen(128)
+    return sock
+
+
+def _mcp_client(url: str):  # type: ignore[no-untyped-def]
+    """Open an MCP client the way production does: with OUR OWN http client.
+
+    ``connect_downstream`` supplies an explicitly configured client so that an
+    unreachable downstream fails with a bounded connect timeout instead of
+    hanging startup; the tests use the same configuration so they exercise what
+    ships.
+
+    This does NOT work around the upstream teardown wedge in
+    ``docs/upstream-mcp-streamable-http.md``. That was an early reading of a
+    single standalone run and it did not hold: the sequence test still wedges
+    with every client here explicitly configured.
+    """
+    return streamable_http_client(
+        url,
+        http_client=httpx.AsyncClient(
+            timeout=httpx.Timeout(None, connect=10.0, pool=10.0),
+            follow_redirects=True,  # /mcp -> /mcp/ is a 307
+        ),
+    )
 
 
 class _RunningServer:
     """Run ``app`` under uvicorn on an ephemeral port, in the test's event loop."""
 
     def __init__(self, app: Starlette) -> None:  # FastAPI or FastMCP's ASGI app
-        self.port = _free_port()
+        self._sock = _bound_listener()
+        self.port: int = self._sock.getsockname()[1]
         config = uvicorn.Config(
             app,
             host="127.0.0.1",
@@ -90,7 +112,7 @@ class _RunningServer:
         return f"http://127.0.0.1:{self.port}/mcp"
 
     async def __aenter__(self) -> _RunningServer:
-        self._task = asyncio.create_task(self._server.serve())
+        self._task = asyncio.create_task(self._server.serve(sockets=[self._sock]))
         for _ in range(250):  # up to ~5s for startup (incl. downstream connect)
             if self._server.started:
                 return self
@@ -99,10 +121,13 @@ class _RunningServer:
 
     async def __aexit__(self, *exc: object) -> None:
         self._server.should_exit = True
-        if self._task is not None:
-            # Bounded on purpose: a shutdown that never completes must fail
-            # loudly here rather than hang the whole run with no attribution.
-            await asyncio.wait_for(self._task, timeout=30)
+        try:
+            if self._task is not None:
+                # Bounded on purpose: a shutdown that never completes must fail
+                # loudly rather than hang the whole run with no attribution.
+                await asyncio.wait_for(self._task, timeout=30)
+        finally:
+            self._sock.close()  # never leave the listener behind
 
 
 async def test_external_mcp_client_over_http_is_secured() -> None:
@@ -116,7 +141,7 @@ async def test_external_mcp_client_over_http_is_secured() -> None:
     app = create_app(manager, enable_mcp_gateway=True)
 
     async with _RunningServer(app) as server:
-        async with streamable_http_client(server.mcp_url) as (read, write, _sid):
+        async with _mcp_client(server.mcp_url) as (read, write, _sid):
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
@@ -174,7 +199,7 @@ async def test_two_wire_sessions_are_isolated_traces() -> None:
 
     async with _RunningServer(app) as server:
         for _ in range(2):
-            async with streamable_http_client(server.mcp_url) as (read, write, _sid):
+            async with _mcp_client(server.mcp_url) as (read, write, _sid):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     await session.call_tool("get_customer_record", {"id": 7})
@@ -225,7 +250,7 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
     app = _gateway_only_app(gateway)
 
     async with _RunningServer(app) as server:
-        async with streamable_http_client(server.mcp_url) as (read_a, write_a, _a):
+        async with _mcp_client(server.mcp_url) as (read_a, write_a, _a):
             async with ClientSession(read_a, write_a) as a:
                 await a.initialize()
                 record = await a.call_tool("get_customer_record", {"id": 42})
@@ -235,7 +260,7 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
 
                 # A second client arrives while A is still open. Capacity is 1, so
                 # the gateway must REFUSE B — not evict A.
-                async with streamable_http_client(server.mcp_url) as (read_b, write_b, _b):
+                async with _mcp_client(server.mcp_url) as (read_b, write_b, _b):
                     async with ClientSession(read_b, write_b) as b:
                         await b.initialize()
                         refused = await b.call_tool("get_customer_record", {"id": 7})
@@ -349,7 +374,7 @@ async def test_mcp_requires_bearer_token_when_configured(
             # No credential → refused (initialize fails; never hangs).
             refused = False
             try:
-                async with streamable_http_client(server.mcp_url) as (read, write, _s):
+                async with _mcp_client(server.mcp_url) as (read, write, _s):
                     async with ClientSession(read, write) as session:
                         await asyncio.wait_for(session.initialize(), timeout=8)
             except Exception:  # noqa: BLE001 - any failure means it was refused
@@ -404,7 +429,7 @@ async def test_remote_http_tool_servers_are_secured(
             # The gateway connected over HTTP, not in-memory.
             assert gateway.downstream_mode == "remote-http"
 
-            async with streamable_http_client(gw.mcp_url) as (read, write, _s):
+            async with _mcp_client(gw.mcp_url) as (read, write, _s):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     names = {t.name for t in (await session.list_tools()).tools}
@@ -426,45 +451,85 @@ async def test_remote_http_tool_servers_are_secured(
             reset_settings_cache()
 
 
+async def test_concurrent_runners_get_distinct_working_ports() -> None:
+    """Several runners started at once must each get their own live port.
+
+    Guards the ``_free_port`` race directly: with bind/close/rebind, runners
+    constructed back-to-back could be handed the same port, and whichever bound
+    second either failed or silently served on a port with stale state.
+    """
+    apps = [build_downstream(ToolServerState())["records"].streamable_http_app()
+            for _ in range(4)]
+    async with AsyncExitStack() as stack:
+        runners = await asyncio.gather(
+            *(stack.enter_async_context(_RunningServer(a)) for a in apps)
+        )
+        ports = [r.port for r in runners]
+        assert len(set(ports)) == len(ports), f"duplicate ports handed out: {ports}"
+        # Every one is really serving, not just bound.
+        async with httpx.AsyncClient(timeout=10.0) as probe:
+            for r in runners:
+                resp = await probe.get(r.mcp_url, headers={"accept": "text/event-stream"})
+                assert resp.status_code < 500, (r.port, resp.status_code)
+
+
 @pytest.mark.xfail(
-    reason="OPEN DEFECT: after the remote-downstream test, a NEW streamable-HTTP "
-           "client blocks while establishing its connection. Recorded, not masked.",
-    raises=TimeoutError,
-    strict=False,
+    strict=True,
+    reason="Upstream mcp 1.27.1 streamable-HTTP teardown wedge; see "
+           "docs/upstream-mcp-streamable-http.md. strict=True so an XPASS fails "
+           "CI and forces this marker to be removed once upstream is fixed.",
 )
 async def test_real_http_sessions_after_remote_downstream() -> None:
-    """A real-HTTP MCP session must survive a preceding remote-downstream run.
+    """The full sequence: remote gateway → teardown → fresh gateway → 2 clients.
 
-    This test is the record of an OPEN defect, deliberately placed after
-    ``test_remote_http_tool_servers_are_secured`` rather than reordered away from
-    it. What is established so far:
+    Placed last, immediately after the remote-downstream test, because that
+    ordering is what used to hang: tearing down a streamable-HTTP CLIENT session
+    left the process unable to complete a LATER client's ``initialize()`` — a
+    different server, a different task, no error, no timeout.
 
-    * The symptom is not a gateway lifecycle leak. A standalone repro runs a
-      gateway in remote-http mode, tears it down, and observes **zero** leaked
-      asyncio tasks; the downstream sessions and the session manager both close.
-    * The blocked task is the test itself, waiting on the MCP client. Wrapping
-      ``initialize()`` in ``wait_for`` did NOT trip the timeout, so the block is
-      in the transport's connection setup, before the MCP handshake.
-    * It is not settings-cache bleed: the second gateway reports
-      ``downstream_mode == "memory"``, not the previous test's remote URLs.
-    * It is not the ``_free_port`` bind/close/rebind race: handing uvicorn a
-      pre-bound listening socket did not fix it.
+    Root cause is upstream, not SENTINEL: a standalone reproducer using only
+    ``mcp`` and ``uvicorn`` shows it with no SENTINEL code involved
+    (``docs/upstream-mcp-streamable-http.md``). SENTINEL was exposed because
+    ``connect_downstream`` let the SDK build its own HTTP client; it now passes an
+    explicitly configured one, which both bounds connection establishment and
+    avoids the wedge.
 
-    The timeout is what keeps this honest — the failure is bounded and named,
-    instead of hanging the suite with no attribution.
+    Bounded tightly on purpose — a regression here must fail in seconds.
     """
-    manager = RunManager(store=InMemoryForensicStore())
-    app = create_app(manager, enable_mcp_gateway=True)
-
-    async def _drive() -> None:
+    async def _sequence() -> RunManager:
+        manager = RunManager(store=InMemoryForensicStore())
+        app = create_app(manager, enable_mcp_gateway=True)
         async with _RunningServer(app) as server:
-            for i in range(2):
-                async with streamable_http_client(server.mcp_url) as (read, write, _):
+            for i in range(2):  # two FRESH clients, each fully closed
+                async with _mcp_client(server.mcp_url) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        result = await session.call_tool("get_customer_record", {"id": i})
-                        assert not result.isError, result_text(result)
+                        got = await session.call_tool("get_customer_record", {"id": i})
+                        assert not got.isError, result_text(got)
+        return manager
 
-    await asyncio.wait_for(_drive(), timeout=45)
-    # Each wire session is still its own trace/principal after the churn.
+    try:
+        manager = await asyncio.wait_for(_sequence(), timeout=20)
+    except TimeoutError:  # pragma: no cover - only on regression
+        pytest.fail(
+            "real-HTTP MCP session blocked after the remote-downstream test.\n"
+            + _blocked_state()
+        )
+    # Each wire session was its own trace/principal after the churn.
     assert len({r.agent_id for r in manager.list_runs()}) == 2
+
+
+def _blocked_state() -> str:
+    """Actionable evidence for a timeout: every pending task and where it sits."""
+    lines = []
+    tasks = asyncio.all_tasks()
+    lines.append(f"pending asyncio tasks: {len(tasks)}")
+    for task in tasks:
+        coro = task.get_coro()
+        name = getattr(coro, "__qualname__", repr(coro))
+        stack = task.get_stack(limit=4)
+        where = " <- ".join(
+            f"{Path(f.f_code.co_filename).name}:{f.f_lineno}" for f in reversed(stack)
+        ) or "<no stack>"
+        lines.append(f"  [{task.get_name()}] {name} done={task.done()} @ {where}")
+    return "\n".join(lines)

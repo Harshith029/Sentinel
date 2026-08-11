@@ -31,8 +31,9 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
+import httpx
 import mcp.types as mcp_types
 
 from sentinel.catalogue import CatalogueIntegrityError, detect_shadowing
@@ -189,6 +190,38 @@ async def build_topology(sessions: Mapping[str, SessionLike]) -> DownstreamTopol
     return DownstreamTopology(router=ToolRouter(routes), catalogues=catalogues)
 
 
+# Bounds CONNECTION ESTABLISHMENT only. Reads are deliberately unbounded: an MCP
+# streamable-HTTP session holds a long-lived GET/SSE stream, and a read timeout
+# would tear down a healthy idle session.
+_CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
+
+
+def _downstream_http_client() -> httpx.AsyncClient:
+    """An explicitly configured HTTP client for downstream MCP connections.
+
+    Supplying our own client rather than letting the SDK build a default one is
+    load-bearing for two reasons, both observed rather than assumed:
+
+    * **A hang becomes an error.** Without it, connecting to an unreachable or
+      black-holed downstream never times out, so a misconfigured URL wedges
+      startup instead of failing with a message the operator can act on.
+    * **It avoids an upstream wedge.** With mcp 1.27.1 on Windows, tearing down a
+      streamable-HTTP client session (which sends the DELETE that
+      ``terminate_on_close`` implies) leaves the process in a state where the NEXT
+      client's ``initialize()`` blocks forever — against a different server, in a
+      different task. A standalone reproducer using only ``mcp`` and ``uvicorn``
+      shows it; passing an explicitly configured client avoids it, as does
+      ``terminate_on_close=False``. See ``docs/upstream-mcp-streamable-http.md``.
+    """
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(None, connect=_CONNECT_TIMEOUT_SECONDS,
+                              pool=_CONNECT_TIMEOUT_SECONDS),
+        # The SDK's own default follows redirects; an MCP mount commonly answers
+        # /mcp with a 307 to /mcp/, so dropping this breaks ordinary servers.
+        follow_redirects=True,
+    )
+
+
 async def connect_downstream(
     servers: Sequence[DownstreamServer], stack: AsyncExitStack
 ) -> DownstreamTopology:
@@ -203,8 +236,9 @@ async def connect_downstream(
     sessions: dict[str, SessionLike] = {}
     for server in servers:
         try:
+            client = await stack.enter_async_context(_downstream_http_client())
             read, write, _id = await stack.enter_async_context(
-                streamable_http_client(server.url)
+                streamable_http_client(server.url, http_client=client)
             )
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()

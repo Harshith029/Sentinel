@@ -65,3 +65,12 @@ uvicorn 0.48.0 · CPython 3.11.9 · Windows 11 (Proactor loop).
 
 **Only Windows has been tested.** No Linux or macOS run has been performed, so
 the platform matrix is one row wide and must not be described as more.
+
+
+## Related: F-02 deployment status
+
+The `/mcp` path fix in `deploy/main.bicep` corrected a URL that could never have
+connected. It does **not** establish Azure deployability. The template has not
+been deployed or smoke-tested, and Key Vault secret consumption, Content
+Safety/OpenAI configuration, Cosmos data-plane RBAC and readiness checks remain
+unverified. `GET /capabilities` reports this under `deployment_verification`.

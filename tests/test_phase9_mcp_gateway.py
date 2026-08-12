@@ -13,6 +13,7 @@ nothing about SENTINEL. To it, SENTINEL is just an MCP server exposing tools.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import socket
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -41,6 +42,12 @@ from sentinel.mcp_proxy.content import result_text
 # This is a real socket integration: a few teardown-time ResourceWarnings from
 # the HTTP stack are environmental noise, not product defects. The suite runs
 # under filterwarnings=error, so scope the ignore tightly to this module.
+# Separate bounds: how long the handshake may take, and how long cleanup may
+# take afterwards. Wrapping both in one number is what let a "20s" regression
+# spend another 30s in server teardown.
+_HANDSHAKE_DEADLINE: float = 8.0
+_CLEANUP_DEADLINE: float = 5.0
+
 pytestmark = [
     pytest.mark.filterwarnings("ignore::ResourceWarning"),
     # anyio in-memory streams emit an unraisable warning when GC'd after the
@@ -88,7 +95,8 @@ async def _mcp_client(url: str):  # type: ignore[no-untyped-def]
 class _RunningServer:
     """Run ``app`` under uvicorn on an ephemeral port, in the test's event loop."""
 
-    def __init__(self, app: Starlette) -> None:  # FastAPI or FastMCP's ASGI app
+    def __init__(self, app: Starlette, *, shutdown_timeout: float = 30.0) -> None:
+        self._shutdown_timeout = shutdown_timeout
         self._sock = _bound_listener()
         self.port: int = self._sock.getsockname()[1]
         config = uvicorn.Config(
@@ -125,7 +133,7 @@ class _RunningServer:
             if self._task is not None:
                 # Bounded on purpose: a shutdown that never completes must fail
                 # loudly rather than hang the whole run with no attribution.
-                await asyncio.wait_for(self._task, timeout=30)
+                await asyncio.wait_for(self._task, timeout=self._shutdown_timeout)
         finally:
             self._sock.close()  # never leave the listener behind
 
@@ -498,25 +506,35 @@ async def test_real_http_sessions_after_remote_downstream() -> None:
     handshake bound is separate from the cleanup bound and task stacks are
     captured BEFORE anything is cancelled.
     """
-    async def _sequence() -> RunManager:
-        manager = RunManager(store=InMemoryForensicStore())
-        app = create_app(manager, enable_mcp_gateway=True)
-        async with _RunningServer(app) as server:
+    manager = RunManager(store=InMemoryForensicStore())
+    app = create_app(manager, enable_mcp_gateway=True)
+
+    async def _sequence() -> None:
+        # Short server-shutdown bound: on the failure path this teardown runs
+        # while the transport is already wedged, and a 30s wait there would turn
+        # an 8s regression signal into a 40s one.
+        async with _RunningServer(app, shutdown_timeout=3.0) as server:
             for i in range(2):  # two FRESH clients, each fully closed
                 async with _mcp_client(server.mcp_url) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         got = await session.call_tool("get_customer_record", {"id": i})
                         assert not got.isError, result_text(got)
-        return manager
 
-    try:
-        manager = await asyncio.wait_for(_sequence(), timeout=20)
-    except TimeoutError:  # pragma: no cover - only on regression
+    task = asyncio.create_task(_sequence())
+    done, _ = await asyncio.wait({task}, timeout=_HANDSHAKE_DEADLINE)
+    if not done:
+        # Snapshot BEFORE cancelling: cancellation rewrites the very stacks that
+        # say where it was stuck.
+        evidence = _blocked_state()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await asyncio.wait_for(task, timeout=_CLEANUP_DEADLINE)
         pytest.fail(
-            "real-HTTP MCP session blocked after the remote-downstream test.\n"
-            + _blocked_state()
+            f"real-HTTP MCP session did not complete within {_HANDSHAKE_DEADLINE}s "
+            f"after the remote-downstream test.\n{evidence}"
         )
+    task.result()  # re-raise anything the sequence itself raised
     # Each wire session was its own trace/principal after the churn.
     assert len({r.agent_id for r in manager.list_runs()}) == 2
 

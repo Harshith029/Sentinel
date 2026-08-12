@@ -49,3 +49,36 @@ jobs:
 
       - name: pytest
         run: python -m pytest -v
+
+  real-mcp-diagnostics:
+    # QUARANTINED. These exercise both remote downstream paths over real TCP, but
+    # two real-HTTP MCP clients in one process wedge on the open teardown defect
+    # (docs/mcp-streamable-http-teardown.md), so each test gets its own process.
+    # Non-blocking until that defect is fixed; at that point drop
+    # continue-on-error, delete the env gate, and fold these into the main job.
+    name: real-MCP diagnostics (quarantined)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" -c versions.lock
+      - name: Run each diagnostic in its own process
+        env:
+          SENTINEL_RUN_REAL_MCP_TESTS: "1"
+        run: |
+          set +e
+          status=0
+          names=$(python -m pytest tests/test_downstream_remote_paths.py             --collect-only -q -p no:cacheprovider 2>/dev/null             | grep '::' | sed 's/.*:://')
+          for name in $names; do
+            echo "--- $name"
+            python -m pytest tests/test_downstream_remote_paths.py -k "$name"               -q -p no:cacheprovider || status=1
+          done
+          exit $status

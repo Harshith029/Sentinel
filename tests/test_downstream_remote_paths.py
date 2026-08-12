@@ -15,8 +15,11 @@ back. Everything here runs a real uvicorn server and a real MCP client.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import socket
 from contextlib import AsyncExitStack
+from typing import Final
 
 import httpx
 import pytest
@@ -29,39 +32,40 @@ from sentinel.control.mcp_gateway import SentinelGateway
 from sentinel.demo.tool_servers import ToolServerState, build_downstream
 from sentinel.downstream import (
     _CONNECT_TIMEOUT_SECONDS,
-    _TERMINATE_ON_CLOSE,
     DownstreamServer,
+    _downstream_http_client,
     connect_downstream,
     open_downstream_session,
 )
 from sentinel.forensics.store import InMemoryForensicStore
 from sentinel.mcp_proxy.content import result_text
 
-# BLOCKED BY AN OPEN DEFECT, NOT BY CHOICE.
+# QUARANTINED DIAGNOSTICS — opt in with SENTINEL_RUN_REAL_MCP_TESTS=1.
 #
-# Every test here PASSES on its own (verified individually: declared 1.78s,
-# legacy 1.71s, partial 3.41s, client-close 0.89s, connect-bound 10.65s,
-# redirect 1.05s). They cannot run together, or alongside the rest of the suite,
-# because the second real-HTTP MCP client in a process wedges — the open defect
-# in docs/mcp-streamable-http-teardown.md. Left unskipped, this module hangs the
-# whole run with no attribution, which is strictly worse than recording it.
+# These are NOT part of passing coverage. Each one passes on its own, but two of
+# them in a process wedge on the open teardown defect
+# (docs/mcp-streamable-http-teardown.md), so they cannot run as a module or
+# alongside the suite. An unconditional skip would have made even
+# ``-k declared`` silently skip, so the gate is an environment variable and the
+# tests really run when you ask for them:
 #
-# This is ALSO new evidence about that defect: these tests tear down SENTINEL's
-# OWN downstream sessions, so the wedge follows open_downstream_session teardown
-# and is not confined to the external test client, as previously supposed.
+#   SENTINEL_RUN_REAL_MCP_TESTS=1 pytest tests/test_downstream_remote_paths.py -k declared
 #
-# Run them one at a time:
-#   pytest tests/test_downstream_remote_paths.py -k declared
+# The `real_mcp` CI job runs them one at a time and is non-blocking until the
+# teardown defect is fixed; at that point delete the gate and fold them in.
 #
-# Remove this skip the moment the teardown defect is fixed; the tests themselves
-# are complete and passing.
+# They are also evidence about that defect: they tear down SENTINEL's OWN
+# downstream sessions, so the wedge follows open_downstream_session teardown and
+# is not confined to the external test client.
+_OPT_IN: Final[bool] = os.getenv("SENTINEL_RUN_REAL_MCP_TESTS") == "1"
+
 pytestmark = [
     pytest.mark.filterwarnings("ignore::ResourceWarning"),
     pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning"),
-    pytest.mark.skip(
-        reason="blocked by the open streamable-HTTP teardown defect "
-               "(docs/mcp-streamable-http-teardown.md); each test passes in "
-               "isolation — run with -k <name>"
+    pytest.mark.skipif(
+        not _OPT_IN,
+        reason="quarantined real-MCP diagnostic; set SENTINEL_RUN_REAL_MCP_TESTS=1 "
+               "and select ONE test (see docs/mcp-streamable-http-teardown.md)",
     ),
 ]
 
@@ -126,7 +130,7 @@ async def test_declared_servers_path_discovers_and_proxies_over_tcp(
             for key, app in servers.items()
         }
         declared = [{"name": key, "url": srv.url} for key, srv in running.items()]
-        monkeypatch.setenv("SENTINEL_MCP_SERVERS", __import__("json").dumps(declared))
+        monkeypatch.setenv("SENTINEL_MCP_SERVERS", json.dumps(declared))
         for var in ("SENTINEL_TOOLS_WEB_URL", "SENTINEL_TOOLS_EMAIL_URL",
                     "SENTINEL_TOOLS_RECORDS_URL"):
             monkeypatch.delenv(var, raising=False)
@@ -259,29 +263,41 @@ async def test_factory_closes_the_http_client_it_was_given() -> None:
             ds.httpx.AsyncClient = original  # type: ignore[misc]
 
 
-async def test_factory_bounds_connect_and_sends_session_termination() -> None:
-    """Connect is bounded, and both paths terminate their MCP session.
+async def test_factory_client_is_configured_with_the_documented_bounds() -> None:
+    """The client handed to the SDK carries the bounds we claim it does.
 
-    An unroutable address is used so the attempt has to time out rather than be
-    refused; without a bound this call would hang indefinitely, which is the
-    failure mode that wedges startup on a misconfigured URL.
+    Asserted on the constructed client rather than by timing a connection: httpx
+    enforces connect timeouts inside its own transport, so a stub transport would
+    bypass the very code under test and a real unroutable address is at the mercy
+    of how the host network answers. This checks the configuration that httpx
+    then enforces, and the behavioural half is covered by
+    ``test_unreachable_downstream_fails_fast_instead_of_hanging``.
     """
-    assert _TERMINATE_ON_CLOSE is True, (
-        "both remote paths must send the MCP session-termination DELETE; the "
-        "SDK server's session_idle_timeout defaults to None, so skipping it "
-        "strands a session on the operator's server"
-    )
+    client = _downstream_http_client()
+    try:
+        assert client.timeout.connect == _CONNECT_TIMEOUT_SECONDS
+        assert client.timeout.pool == _CONNECT_TIMEOUT_SECONDS
+        # Reads MUST stay unbounded: an MCP session holds a long-lived GET/SSE
+        # stream, and a read timeout would tear down a healthy idle session.
+        assert client.timeout.read is None
+        assert client.follow_redirects is True
+    finally:
+        await client.aclose()
 
-    # 203.0.113.0/24 (TEST-NET-3) is reserved and unroutable: connect stalls.
+
+async def test_unreachable_downstream_fails_fast_instead_of_hanging() -> None:
+    """A refused port raises promptly — startup reports, it does not wedge."""
+    dead = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    dead.bind(("127.0.0.1", 0))
+    port = dead.getsockname()[1]
+    dead.close()  # nothing listening: connect is refused
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     async with AsyncExitStack() as stack:
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        with pytest.raises(Exception):  # noqa: B017 - anyio wraps this; asserted below
-            await open_downstream_session("http://203.0.113.1:9/mcp", stack)
-        elapsed = loop.time() - started
-    assert elapsed < _CONNECT_TIMEOUT_SECONDS + 10, (
-        f"connect was not bounded: took {elapsed:.1f}s"
-    )
+        with pytest.raises(Exception):  # noqa: B017 - anyio wraps the transport error
+            await open_downstream_session(f"http://127.0.0.1:{port}/mcp", stack)
+    assert loop.time() - started < _CONNECT_TIMEOUT_SECONDS
 
 
 async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
@@ -314,3 +330,166 @@ async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
         session = await open_downstream_session(srv.url, stack)
         listed = await session.list_tools()
         assert [t.name for t in listed.tools]
+
+
+def _recording_app(app: Starlette, seen: list[tuple[str, str]]) -> Starlette:
+    """Wrap an ASGI app so every HTTP method+path is recorded.
+
+    Lets a test assert what actually went over the wire — an MCP
+    session-termination DELETE — instead of asserting that a constant is True.
+    """
+
+    async def wrapper(scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope["type"] == "http":
+            seen.append((scope["method"], scope["path"]))
+        await app(scope, receive, send)  # type: ignore[operator]
+
+    return wrapper  # type: ignore[return-value]
+
+
+def _declare(monkeypatch: pytest.MonkeyPatch, servers: list[dict[str, str]]) -> None:
+    monkeypatch.setenv("SENTINEL_MCP_SERVERS", json.dumps(servers))
+    for var in ("SENTINEL_TOOLS_WEB_URL", "SENTINEL_TOOLS_EMAIL_URL",
+                "SENTINEL_TOOLS_RECORDS_URL"):
+        monkeypatch.delenv(var, raising=False)
+    reset_settings_cache()
+
+
+def _dead_port() -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port: int = sock.getsockname()[1]
+    sock.close()  # nothing listening here
+    return port
+
+
+async def test_declared_path_sends_session_termination_on_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SENTINEL_MCP_SERVERS: closing the gateway DELETEs the MCP session.
+
+    Observed on the server, not inferred from a constant. Without the DELETE the
+    downstream keeps the session in ``_server_instances`` forever, because the
+    SDK's ``session_idle_timeout`` defaults to None.
+    """
+    seen: list[tuple[str, str]] = []
+    app = _recording_app(_tool_servers()["records"], seen)
+    async with AsyncExitStack() as stack:
+        srv = await stack.enter_async_context(_Server(app))
+        _declare(monkeypatch, [{"name": "records", "url": srv.url}])
+        try:
+            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            async with gateway:
+                assert gateway.downstream_mode == "declared"
+            assert any(m == "DELETE" for m, _ in seen), (
+                f"no session-termination DELETE reached the server; saw {seen}"
+            )
+        finally:
+            reset_settings_cache()
+
+
+async def test_legacy_path_sends_session_termination_on_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SENTINEL_TOOLS_*_URL: the same protocol obligation on the bicep path."""
+    seen: list[tuple[str, str]] = []
+    apps = _tool_servers()
+    async with AsyncExitStack() as stack:
+        running = {}
+        for key, app in apps.items():
+            wrapped = _recording_app(app, seen) if key == "records" else app
+            running[key] = await stack.enter_async_context(_Server(wrapped))
+        monkeypatch.delenv("SENTINEL_MCP_SERVERS", raising=False)
+        for key, var in (("web", "WEB"), ("email", "EMAIL"), ("records", "RECORDS")):
+            monkeypatch.setenv(f"SENTINEL_TOOLS_{var}_URL", running[key].url)
+        reset_settings_cache()
+        try:
+            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            async with gateway:
+                assert gateway.downstream_mode == "remote-http"
+            assert any(m == "DELETE" for m, _ in seen), (
+                f"no session-termination DELETE reached the server; saw {seen}"
+            )
+        finally:
+            reset_settings_cache()
+
+
+async def test_gateway_aenter_failure_closes_already_connected_servers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``__aenter__`` raises on server 2 → server 1's client is already closed.
+
+    The caller never gets to call ``__aexit__``: Python only guarantees it for a
+    context manager whose ``__aenter__`` RETURNED. So this drives ``__aenter__``
+    directly and deliberately never calls ``__aexit__`` — exactly what a failed
+    startup leaves behind.
+    """
+    opened: list[httpx.AsyncClient] = []
+    import sentinel.downstream as ds
+
+    real = ds.httpx.AsyncClient
+
+    def _track(*args, **kwargs):  # type: ignore[no-untyped-def]
+        client = real(*args, **kwargs)
+        opened.append(client)
+        return client
+
+    async with AsyncExitStack() as stack:
+        good = await stack.enter_async_context(_Server(_tool_servers()["records"]))
+        _declare(monkeypatch, [
+            {"name": "records", "url": good.url},
+            {"name": "dead", "url": f"http://127.0.0.1:{_dead_port()}/mcp"},
+        ])
+        monkeypatch.setattr(ds.httpx, "AsyncClient", _track)
+        try:
+            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            with pytest.raises(Exception) as err:  # noqa: B017 - startup surfaces many
+                await gateway.__aenter__()
+            assert "dead" in str(err.value)
+            # __aexit__ is deliberately NOT called.
+            assert opened, "no downstream HTTP client was ever built"
+            assert all(c.is_closed for c in opened), (
+                f"failed startup left HTTP clients open: {[c.is_closed for c in opened]}"
+            )
+        finally:
+            reset_settings_cache()
+
+
+async def test_gateway_aenter_failure_after_connect_closes_everything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A LATER startup failure also unwinds connections that already succeeded.
+
+    Connection failure is not the only way ``__aenter__`` can raise: a poisoned
+    catalogue or a shadowed tool name rejects a downstream that connected
+    perfectly well. Those must clean up too.
+    """
+    opened: list[httpx.AsyncClient] = []
+    import sentinel.control.mcp_gateway as gw_mod
+    import sentinel.downstream as ds
+
+    real = ds.httpx.AsyncClient
+
+    def _track(*args, **kwargs):  # type: ignore[no-untyped-def]
+        client = real(*args, **kwargs)
+        opened.append(client)
+        return client
+
+    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("catalogue rejected at preflight")
+
+    async with AsyncExitStack() as stack:
+        good = await stack.enter_async_context(_Server(_tool_servers()["records"]))
+        _declare(monkeypatch, [{"name": "records", "url": good.url}])
+        monkeypatch.setattr(ds.httpx, "AsyncClient", _track)
+        monkeypatch.setattr(gw_mod, "preflight", _boom)
+        try:
+            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            with pytest.raises(RuntimeError, match="catalogue rejected"):
+                await gateway.__aenter__()
+            assert opened, "downstream connected before preflight, so a client exists"
+            assert all(c.is_closed for c in opened), (
+                "a post-connect startup failure left HTTP clients open"
+            )
+        finally:
+            reset_settings_cache()

@@ -116,6 +116,12 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SENTINEL_ENABLE_MCP_GATEWAY', value: '1' }
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_KEY_VAULT_URI', value: kv.properties.vaultUri }
+            // NOT VERIFIED AS DEPLOYABLE (audit F-02). This template has never
+            // been deployed or smoke-tested. Key Vault secret consumption,
+            // Content Safety / OpenAI configuration, Cosmos data-plane RBAC and
+            // readiness checks are all still open; correct wiring here is not
+            // evidence any of them work. /capabilities reports the same list.
+            //
             // Internal-only DNS for the downstream tool servers. These are live:
             // setting them selects the remote path, which connects over real
             // MCP-over-HTTP through sentinel.downstream.open_downstream_session.

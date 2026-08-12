@@ -418,8 +418,32 @@ class RunManager:
         return self.trust(agent_id)
 
     def capabilities(self) -> dict[str, Any]:
-        """DEMO-vs-AZURE capability matrix (the 'Azure is load-bearing' delta)."""
-        return mode_summary(self._settings)
+        """DEMO-vs-AZURE capability matrix (the 'Azure is load-bearing' delta).
+
+        Carries an explicit UNVERIFIED list. Reporting a service as configured is
+        not the same as reporting it as working, and an operator reading this
+        endpoint to decide whether a deployment is sound deserves to be told the
+        difference rather than left to infer it.
+        """
+        summary = mode_summary(self._settings)
+        summary["deployment_verification"] = {
+            "status": "unverified",
+            "detail": (
+                "The Azure topology has NOT been deployed or smoke-tested. "
+                "Container-app wiring and MCP route paths are correct in the "
+                "template, but that is not evidence of deployability."
+            ),
+            "unverified": [
+                "key-vault-secret-consumption",
+                "content-safety-configuration",
+                "openai-configuration",
+                "cosmos-data-plane-rbac",
+                "readiness-checks",
+                "end-to-end-deployment-smoke-test",
+            ],
+            "tracking": "audit finding F-02",
+        }
+        return summary
 
     # --- multi-tenant policy ---------------------------------------------------
 

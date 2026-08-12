@@ -487,14 +487,16 @@ async def test_real_http_sessions_after_remote_downstream() -> None:
     left the process unable to complete a LATER client's ``initialize()`` — a
     different server, a different task, no error, no timeout.
 
-    Root cause is upstream, not SENTINEL: a standalone reproducer using only
-    ``mcp`` and ``uvicorn`` shows it with no SENTINEL code involved
-    (``docs/mcp-streamable-http-teardown.md``). SENTINEL was exposed because
-    ``connect_downstream`` let the SDK build its own HTTP client; it now passes an
-    explicitly configured one, which both bounds connection establishment and
-    avoids the wedge.
+    The cause is NOT established and is NOT attributed to upstream. A standalone
+    ``mcp``+``uvicorn`` script hung once and then 0/6 on retest, so it is a probe,
+    not evidence. Neither an explicitly configured HTTP client nor
+    ``terminate_on_close=False`` avoids this — both were measured and both still
+    fail. See ``docs/mcp-streamable-http-teardown.md``.
 
-    Bounded tightly on purpose — a regression here must fail in seconds.
+    This records an OPEN defect. It is not coverage of working behaviour.
+    Bounded tightly on purpose: a regression here must fail in seconds, so the
+    handshake bound is separate from the cleanup bound and task stacks are
+    captured BEFORE anything is cancelled.
     """
     async def _sequence() -> RunManager:
         manager = RunManager(store=InMemoryForensicStore())

@@ -30,17 +30,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import Any, Final, Protocol
 
 import httpx
 import mcp.types as mcp_types
 
 from sentinel.catalogue import CatalogueIntegrityError, detect_shadowing
 from sentinel.mcp_proxy.router import ToolRouter
-
-if TYPE_CHECKING:
-    from contextlib import AsyncExitStack
 
 
 class DownstreamConfigError(ValueError):
@@ -221,12 +219,17 @@ def _downstream_http_client() -> httpx.AsyncClient:
 
 
 # Whether a closing downstream connection sends the MCP session-termination
-# DELETE. Keeping it True is a deliberate safety choice, not an oversight — see
-# ``docs/mcp-streamable-http-teardown.md``. Skipping the DELETE avoids the
-# teardown wedge, but the SDK server's ``session_idle_timeout`` defaults
-# to None, so a skipped DELETE strands a session on the OPERATOR'S downstream
-# server with nothing to reap it. We will not leak resources on someone else's
-# server to work around a bug in ours.
+# DELETE. True, for two independent reasons.
+#
+# It is CORRECT: the SDK server's ``session_idle_timeout`` defaults to None, so a
+# server that never receives the DELETE keeps the session forever. Those servers
+# belong to the operator, and we will not strand resources on someone else's
+# server.
+#
+# And there is nothing to trade it against: skipping the DELETE does NOT avoid
+# the teardown wedge in ``docs/mcp-streamable-http-teardown.md``. Measured both
+# ways — set here, the sequence still fails; set on the external client, it still
+# fails.
 _TERMINATE_ON_CLOSE: Final[bool] = True
 
 
@@ -246,14 +249,26 @@ async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLik
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    client = await stack.enter_async_context(_downstream_http_client())
-    read, write, _id = await stack.enter_async_context(
-        streamable_http_client(
-            url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE
+    # Transactional: everything opened here is owned by a LOCAL stack until the
+    # handshake succeeds. A server that fails to connect, or connects and then
+    # fails `initialize()`, must not leave its HTTP client and transport tasks
+    # behind on the caller's long-lived stack — the caller may propagate the
+    # error before it ever gets to close that stack.
+    local = AsyncExitStack()
+    try:
+        client = await local.enter_async_context(_downstream_http_client())
+        read, write, _id = await local.enter_async_context(
+            streamable_http_client(
+                url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE
+            )
         )
-    )
-    session = await stack.enter_async_context(ClientSession(read, write))
-    await session.initialize()
+        session = await local.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+    except BaseException:
+        await local.aclose()  # nothing half-open escapes
+        raise
+    # Handshake succeeded: hand ownership to the caller, intact and in order.
+    stack.push_async_callback(local.pop_all().aclose)
     return session  # ClientSession satisfies SessionLike
 
 

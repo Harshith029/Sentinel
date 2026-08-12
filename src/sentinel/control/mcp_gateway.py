@@ -273,6 +273,20 @@ class SentinelGateway:
         }
 
     async def __aenter__(self) -> SentinelGateway:
+        """Connect the downstream, vet its catalogue, start the session manager.
+
+        All-or-nothing. Python only guarantees ``__aexit__`` for a context manager
+        whose ``__aenter__`` RETURNED, so a failure here — an unreachable server,
+        a poisoned catalogue, a shadowed tool name — would otherwise strand every
+        connection opened before it. Any failure closes the stack and re-raises.
+        """
+        try:
+            return await self._enter()
+        except BaseException:
+            await self._stack.aclose()
+            raise
+
+    async def _enter(self) -> SentinelGateway:
         # Choose the downstream: remote MCP-over-HTTP tool servers if their URLs
         # are configured (the deploy sets them), else the in-process mock servers.
         declared = parse_servers(get_settings().mcp_servers)

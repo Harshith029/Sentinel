@@ -116,10 +116,9 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SENTINEL_ENABLE_MCP_GATEWAY', value: '1' }
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_KEY_VAULT_URI', value: kv.properties.vaultUri }
-            // Internal-only DNS for the downstream tool servers. NOTE: these are
-            // consumed by the remote HTTP-client ToolRouter, which is not wired
-            // yet — today the gateway uses in-memory mock tool servers. They are
-            // set here so the topology is ready when that router lands.
+            // Internal-only DNS for the downstream tool servers. These are live:
+            // setting them selects the remote path, which connects over real
+            // MCP-over-HTTP through sentinel.downstream.open_downstream_session.
             // Streamable-HTTP MCP endpoints. The /mcp path is REQUIRED: the tool
             // servers mount their MCP app there, and SENTINEL connects to the URL
             // verbatim, so omitting it fails discovery at startup.

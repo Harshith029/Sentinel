@@ -1,8 +1,12 @@
-"""Standalone: mcp + uvicorn only. No SENTINEL code.
+"""Standalone probe for the streamable-HTTP teardown wedge: mcp + uvicorn only.
 
 Open and close ONE streamable-HTTP MCP client session, then open a second one
 against a DIFFERENT server. The second initialize() never returns.
-Usage: python upstream_repro.py [first|skip]
+Usage: python docs/mcp_repro_standalone.py [first|skip|noterm|timed]
+
+NOT a reliable reproducer: it hung once and then 0/6 on retest. Kept as a
+probe for the investigation, NOT as evidence of an upstream defect. See
+docs/mcp-streamable-http-teardown.md.
 """
 import asyncio, os, socket, sys, time
 import httpx

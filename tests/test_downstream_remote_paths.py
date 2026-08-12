@@ -276,7 +276,7 @@ async def test_factory_bounds_connect_and_sends_session_termination() -> None:
     async with AsyncExitStack() as stack:
         loop = asyncio.get_running_loop()
         started = loop.time()
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 - anyio wraps this; asserted below
             await open_downstream_session("http://203.0.113.1:9/mcp", stack)
         elapsed = loop.time() - started
     assert elapsed < _CONNECT_TIMEOUT_SECONDS + 10, (
@@ -301,7 +301,7 @@ async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
         srv = await stack.enter_async_context(_Server(servers["records"]))
 
         # Redirects disabled → the handshake cannot complete.
-        with pytest.raises(Exception) as err:
+        with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as err:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(None, connect=10.0), follow_redirects=False
             ) as blind:

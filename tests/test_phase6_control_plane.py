@@ -364,12 +364,12 @@ async def test_no_auth_required_when_token_unset() -> None:
 async def test_mutating_endpoints_require_token_when_set(
     monkeypatch: __import__("pytest").MonkeyPatch,
 ) -> None:
-    """SENTINEL_API_TOKEN gates POST/DELETE; read endpoints stay open.
+    """SENTINEL_API_TOKEN gates EVERY endpoint, reads included.
 
-    A buyer publishing the dashboard behind a reverse proxy needs this so
-    /tenants/{tenant}/policy and /runs can't be hit anonymously. We don't
-    invent a full auth flow — a static token is the SOC2-minimum surface and
-    the upgrade path to OIDC is well-trodden."""
+    Reads were open on the theory that forensic spans are evidence an operator
+    may want to inspect freely. That was wrong: the spans map which tools an
+    agent called and which were blocked — the operator's estate — and one
+    internet-reachable deployment makes that public."""
     monkeypatch.setenv("SENTINEL_API_TOKEN", "s3kret")
     # Settings is lru_cached; force a re-read so the new token actually takes effect.
     from sentinel.config import reset_settings_cache
@@ -382,8 +382,11 @@ async def test_mutating_endpoints_require_token_when_set(
                 no_auth = await client.post("/attack/hero-obvious", json={})
                 assert no_auth.status_code == 401
                 assert no_auth.headers.get("www-authenticate") == "Bearer"
+                # Reads are gated too, not just mutations.
                 listed = await client.get("/runs")
-                assert listed.status_code == 200
+                assert listed.status_code == 401
+                assert (await client.get("/events")).status_code == 401
+                assert (await client.get("/capabilities")).status_code == 401
 
                 # With the token: same call succeeds.
                 ok = await client.post(

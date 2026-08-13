@@ -90,9 +90,10 @@ class Settings(BaseModel):
     api_token: str | None = Field(
         default=None,
         description=(
-            "When set, the control plane requires this token on mutating endpoints "
-            "(POST/DELETE) via Authorization: Bearer <token>. Read endpoints stay "
-            "open. When unset, every endpoint is open (the offline DEMO behaviour)."
+            "Bearer token required on EVERY control-plane endpoint, reads "
+            "included, and on the /mcp wire endpoint. Browsers exchange it for a "
+            "session cookie via POST /auth/session. When unset the service "
+            "refuses to serve unless allow_anonymous is explicitly set."
         ),
     )
 
@@ -127,6 +128,17 @@ class Settings(BaseModel):
             "poisoning) — a supply-chain compromise provenance alone cannot catch. "
             "Set False to downgrade to flag-only triage. Cross-server tool-name "
             "shadowing always fails closed regardless of this setting."
+        ),
+    )
+
+    allow_anonymous: bool = Field(
+        default=False,
+        description=(
+            "Run with NO authentication at all. Off by default so an operator "
+            "cannot expose a SENTINEL deployment simply by forgetting to set a "
+            "token: with neither this nor api_token set, the service refuses to "
+            "serve rather than serving openly. Intended for a local offline demo "
+            "and never for anything reachable from a network."
         ),
     )
 
@@ -176,6 +188,7 @@ def _read_settings_from_env() -> Settings:
         sentinel_tools_records_url=os.environ.get("SENTINEL_TOOLS_RECORDS_URL") or None,
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
+        allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
         mcp_servers=os.environ.get("SENTINEL_MCP_SERVERS") or None,

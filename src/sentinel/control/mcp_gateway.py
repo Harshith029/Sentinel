@@ -134,13 +134,17 @@ class _TrackedSession:
 def _request_authorized(scope: Scope) -> bool:
     """Bearer-token gate for the /mcp wire endpoint.
 
-    Reads ``api_token`` fresh per request (so flipping the env + restart takes
-    effect). When unset → open (DEMO). When set → require an exact-match
-    ``Authorization: Bearer <token>``.
+    Reads settings fresh per request (so changing the env + restarting takes
+    effect). Fail-closed when unconfigured: with no token and no explicit
+    ``SENTINEL_ALLOW_ANONYMOUS``, this refuses. An unauthenticated /mcp is an
+    OPEN TOOL SERVER — anyone who can reach the URL can drive the operator's
+    downstream tools — so forgetting to set a token must not be the same thing
+    as choosing to have none.
     """
-    expected = get_settings().api_token
+    settings = get_settings()
+    expected = settings.api_token
     if expected is None:
-        return True
+        return settings.allow_anonymous
     raw = dict(scope.get("headers") or []).get(b"authorization", b"")
     presented = raw.decode("latin-1")
     token = presented[7:].strip() if presented[:7].lower() == "bearer " else ""

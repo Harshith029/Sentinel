@@ -36,6 +36,11 @@ def _force_demo_mode(
     the working tree.
     """
     monkeypatch.setenv("SENTINEL_DEMO_MODE", "1")
+    # Auth is fail-closed by default: with no token configured the service
+    # refuses to serve. Tests exercise the pipeline, not the gate, so they opt
+    # into anonymous mode explicitly — the same switch an operator must set for
+    # a local demo. Auth itself is covered by tests/test_control_plane_auth.py.
+    monkeypatch.setenv("SENTINEL_ALLOW_ANONYMOUS", "1")
     monkeypatch.setenv(
         "SENTINEL_DATA_DIR", str(tmp_path_factory.mktemp("sentinel_data"))
     )

@@ -30,10 +30,11 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -108,42 +109,83 @@ def _resolve_start_id(request: Request, last_event_id: int) -> int:
     return last_event_id
 
 
-def _expected_token() -> str | None:
-    """The bearer token mutating endpoints expect (or None if auth is disabled).
+SESSION_COOKIE: Final[str] = "sentinel_session"
+_SESSION_MAX_AGE_SECONDS: Final[int] = 12 * 60 * 60
 
-    Resolved fresh on each request rather than cached, so flipping
-    ``SENTINEL_API_TOKEN`` and restarting takes effect. The function is
-    deliberately tiny so the auth posture is a single chokepoint.
+
+def _expected_token() -> str | None:
+    """The bearer token every endpoint expects (None when auth is disabled).
+
+    Resolved fresh per request rather than cached, so changing
+    ``SENTINEL_API_TOKEN`` and restarting takes effect. Deliberately tiny: the
+    auth posture is a single chokepoint.
     """
     return get_settings().api_token
 
 
-def require_write_auth(request: Request) -> None:
-    """Reject mutating requests without a matching bearer token.
+def _anonymous_allowed() -> bool:
+    """Whether running with no authentication has been explicitly requested."""
+    return get_settings().allow_anonymous
 
-    When ``SENTINEL_API_TOKEN`` is unset (the local DEMO default), this is a
-    no-op so existing flows are unchanged. When set, the request must carry
-    ``Authorization: Bearer <token>`` and the token must match exactly. Used
-    as a FastAPI dependency on every mutating endpoint (POST/DELETE on runs,
-    attacks, agents, tenants).
 
-    Read endpoints stay open: forensic spans are evidence the operator may
-    want to inspect without a token (the SOC story).
+def _presented_credential(request: Request) -> str:
+    """The token this request carries, from a header OR the session cookie.
+
+    Two ways in, because two kinds of caller need it:
+
+    * ``Authorization: Bearer <token>`` — API clients, scripts, the CLI.
+    * a ``sentinel_session`` cookie — browsers. This is not decoration: the
+      dashboard's live feed uses ``EventSource``, which cannot send custom
+      headers, so a header-only design leaves the SSE stream either broken or
+      unauthenticated. The cookie is issued by ``POST /auth/session`` in
+      exchange for the bearer token, and is HttpOnly so page scripts (and thus
+      an injected one) cannot read it back out.
+    """
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return request.cookies.get(SESSION_COOKIE, "")
+
+
+def require_auth(request: Request) -> None:
+    """Authenticate EVERY control-plane request — reads included.
+
+    Reads were previously open on the theory that forensic spans are evidence an
+    operator may want to inspect freely. That was wrong twice over: the spans
+    describe which tools an agent called and which were blocked, which is a map
+    of the operator's estate; and one deployment reachable from the internet
+    turns that into public data. Runs, replay, audit, trust, events and SSE all
+    go through here now.
+
+    Fail-closed on misconfiguration. With no token set and no explicit
+    ``SENTINEL_ALLOW_ANONYMOUS``, the service refuses to answer rather than
+    answering openly — forgetting to configure a token must not be the same
+    thing as choosing to have none.
     """
     expected = _expected_token()
     if expected is None:
-        return  # auth disabled; behave exactly as before
-    header = request.headers.get("authorization", "")
-    presented = (
-        header.removeprefix("Bearer ").strip()
-        if header.lower().startswith("bearer ") else ""
-    )
-    if presented != expected:
+        if _anonymous_allowed():
+            return  # explicit local-demo posture
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "SENTINEL is not configured for authentication. Set "
+                "SENTINEL_API_TOKEN to a secret value, or set "
+                "SENTINEL_ALLOW_ANONYMOUS=1 to run with NO authentication "
+                "(local offline demo only — never on a reachable network)."
+            ),
+        )
+    if not compare_digest(_presented_credential(request), expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid or missing bearer token",
+            detail="invalid or missing credential",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+# Mutating endpoints have always required this; the name is kept so the intent
+# reads correctly at each call site. Reads now share the same gate.
+require_write_auth = require_auth
 
 
 def create_app(
@@ -179,7 +221,7 @@ def create_app(
     app.state.manager = mgr
     app.state.gateway = gateway
 
-    @app.post("/runs", dependencies=[Depends(require_write_auth)])
+    @app.post("/runs", dependencies=[Depends(require_auth)])
     async def start_run(body: StartRunRequest) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(
@@ -189,7 +231,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/runs/custom", dependencies=[Depends(require_write_auth)])
+    @app.post("/runs/custom", dependencies=[Depends(require_auth)])
     async def start_custom_run(body: CustomRunRequest) -> dict[str, Any]:
         """Start a user-supplied attack (paste a task / URL / page / attacker).
 
@@ -215,7 +257,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/runs/custom/baseline", dependencies=[Depends(require_write_auth)])
+    @app.post("/runs/custom/baseline", dependencies=[Depends(require_auth)])
     async def custom_baseline(body: CustomRunRequest) -> dict[str, Any]:
         """Run the same custom attack WITHOUT SENTINEL and report what arrived.
 
@@ -238,7 +280,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return await mgr.run_baseline(build)
 
-    @app.post("/attack/{scenario}", dependencies=[Depends(require_write_auth)])
+    @app.post("/attack/{scenario}", dependencies=[Depends(require_auth)])
     async def launch_attack(scenario: str, agent_id: str | None = None) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(scenario, agent_id=agent_id)
@@ -246,7 +288,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/attack/{scenario}/baseline", dependencies=[Depends(require_write_auth)])
+    @app.post("/attack/{scenario}/baseline", dependencies=[Depends(require_auth)])
     async def attack_baseline(scenario: str) -> dict[str, Any]:
         """Run a named scenario WITHOUT SENTINEL — the "before" half of the demo."""
         try:
@@ -255,7 +297,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return await mgr.run_baseline(build)
 
-    @app.get("/runs")
+    @app.get("/runs", dependencies=[Depends(require_auth)])
     async def list_runs() -> dict[str, Any]:
         """Every run the control plane knows about (in-memory + restored)."""
         # Rehydrate persisted runs lazily on the first list — keeps cold-start
@@ -263,14 +305,14 @@ def create_app(
         await mgr.restore_persisted_runs()
         return {"runs": [r.to_payload() for r in mgr.list_runs()]}
 
-    @app.get("/runs/{run_id}")
+    @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
     async def get_run(run_id: str) -> dict[str, Any]:
         record = mgr.get_run(run_id)
         if record is None:
             raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
         return record.to_payload()
 
-    @app.get("/runs/{run_id}/replay")
+    @app.get("/runs/{run_id}/replay", dependencies=[Depends(require_auth)])
     async def get_replay(run_id: str) -> dict[str, Any]:
         record = mgr.get_run(run_id)
         if record is None:
@@ -278,20 +320,20 @@ def create_app(
         rep = await mgr.replay(record.trace_id)
         return _serialize_replay(rep)
 
-    @app.get("/agents/{agent_id}/trust")
+    @app.get("/agents/{agent_id}/trust", dependencies=[Depends(require_auth)])
     async def get_trust(agent_id: str) -> dict[str, Any]:
         return mgr.trust(agent_id)
 
-    @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_write_auth)])
+    @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_auth)])
     async def reset_trust(agent_id: str) -> dict[str, Any]:
         return mgr.reset(agent_id)
 
-    @app.get("/capabilities")
+    @app.get("/capabilities", dependencies=[Depends(require_auth)])
     async def capabilities() -> dict[str, Any]:
         """DEMO-vs-AZURE capability matrix — the 'Azure is load-bearing' delta."""
         return mgr.capabilities()
 
-    @app.get("/downstream")
+    @app.get("/downstream", dependencies=[Depends(require_auth)])
     async def downstream() -> dict[str, Any]:
         """What SENTINEL is protecting: connected servers, discovered tools, defenses.
 
@@ -313,7 +355,7 @@ def create_app(
             }
         return gateway.describe()
 
-    @app.get("/runs/{run_id}/audit")
+    @app.get("/runs/{run_id}/audit", dependencies=[Depends(require_auth)])
     async def get_audit(
         run_id: str, format: str = "json"
     ) -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
@@ -340,11 +382,11 @@ def create_app(
             )
         return {"trace_id": record.trace_id, "alerts": alerts}
 
-    @app.get("/tenants")
+    @app.get("/tenants", dependencies=[Depends(require_auth)])
     async def list_tenants() -> dict[str, Any]:
         return {"tenants": mgr.list_tenants()}
 
-    @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_write_auth)])
+    @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_auth)])
     async def reload_tenant_policy(tenant: str, body: PolicyReloadRequest) -> dict[str, Any]:
         """Hot-reload a tenant's policy on version bump (rejects malformed)."""
         try:
@@ -359,7 +401,7 @@ def create_app(
             "detail": result.detail,
         }
 
-    @app.get("/events")
+    @app.get("/events", dependencies=[Depends(require_auth)])
     async def poll_events(since: int = 0, trace_id: str | None = None) -> dict[str, Any]:
         """Polling fallback: every event after ``since`` (filtered), gap-free."""
         events = mgr.bus.events_since(since)
@@ -370,7 +412,7 @@ def create_app(
             "last_event_id": mgr.bus.last_event_id,
         }
 
-    @app.get("/events/stream")
+    @app.get("/events/stream", dependencies=[Depends(require_auth)])
     async def stream_events(
         request: Request,
         since: int = 0,
@@ -402,7 +444,7 @@ def create_app(
 
         return EventSourceResponse(publisher())
 
-    @app.get("/demo/sanitization")
+    @app.get("/demo/sanitization", dependencies=[Depends(require_auth)])
     async def sanitization_demo() -> dict[str, Any]:
         """Run the REAL StructuredExtractor so the UI can show validation, not
         'AI cleaning': the strict schema, the extracted TYPED value, and the
@@ -433,6 +475,37 @@ def create_app(
                 else "unexpected match",
             },
         }
+
+    @app.post("/auth/session")
+    async def open_session(request: Request, response: Response) -> dict[str, str]:
+        """Exchange a bearer token for an HttpOnly session cookie.
+
+        This is what makes the dashboard workable without weakening anything.
+        ``EventSource`` cannot send an Authorization header, so the live feed
+        would otherwise have to be left unauthenticated or be broken; a cookie
+        is sent automatically on same-origin requests, including SSE.
+
+        HttpOnly so page scripts cannot read the token back out, SameSite=Strict
+        so another origin cannot ride the session, and Secure whenever the
+        request arrived over TLS.
+        """
+        require_auth(request)  # same gate — the cookie is issued, not granted
+        expected = _expected_token()
+        if expected is None:
+            return {"status": "anonymous", "detail": "authentication is disabled"}
+        response.set_cookie(
+            SESSION_COOKIE, expected,
+            httponly=True, samesite="strict",
+            secure=request.url.scheme == "https",
+            max_age=_SESSION_MAX_AGE_SECONDS,
+        )
+        return {"status": "ok"}
+
+    @app.post("/auth/logout")
+    async def close_session(response: Response) -> dict[str, str]:
+        """Drop the session cookie. Deliberately needs no credential."""
+        response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict")
+        return {"status": "ok"}
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

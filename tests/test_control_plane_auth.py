@@ -25,7 +25,9 @@ from sentinel.control.app import SESSION_COOKIE, create_app
 from sentinel.control.manager import RunManager
 from sentinel.forensics.store import InMemoryForensicStore
 
-TOKEN = "test-token-not-a-real-secret"
+# noqa justification: a fixed literal is the point — the tests assert that
+# this exact value is required and that anything else is refused.
+TOKEN = "test-token-not-a-real-secret"  # noqa: S105
 
 # Every route that serves operator data. /healthz and / stay open on purpose:
 # a load balancer must be able to probe liveness, and the dashboard shell has to

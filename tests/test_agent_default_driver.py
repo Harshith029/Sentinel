@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
-from sentinel.demo.llm_driver import (
+from whence.demo.driver import ScriptedAgentDriver, ToolInvocation
+from whence.demo.llm_driver import (
     LLMAgentDriver,
     SusceptibleStubModel,
     build_live_model,
     default_agent_driver,
 )
-from sentinel.demo.scenario import run_demo_session
-from sentinel.demo.tool_servers import EVASION_URL
+from whence.demo.scenario import run_demo_session
+from whence.demo.tool_servers import EVASION_URL
 
 CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
 
@@ -54,7 +54,7 @@ def test_local_openai_compatible_endpoint_needs_no_paid_key(
 
 async def test_llm_path_blocks_induced_exfiltration_offline() -> None:
     # Drive the REAL agent loop with the offline stand-in: it reads the poisoned
-    # page and is induced to send_email — which SENTINEL must block.
+    # page and is induced to send_email — which Whence must block.
     driver = LLMAgentDriver(
         SusceptibleStubModel(poisoned_url=EVASION_URL), task="research the promo page"
     )

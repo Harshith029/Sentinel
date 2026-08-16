@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from sentinel.forensics.events import (
+from whence.forensics.events import (
     AuthorizationDecided,
     RuleEvaluation,
     ToolCallProposed,
 )
-from sentinel.forensics.span import Span
-from sentinel.forensics.store import (
+from whence.forensics.span import Span
+from whence.forensics.store import (
     ForensicIntegrityError,
     ForensicStore,
     InMemoryForensicStore,

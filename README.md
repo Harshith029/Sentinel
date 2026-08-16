@@ -1,28 +1,28 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="680">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/banner.png" alt="Whence — provenance-aware security for AI agents" width="680">
 
-[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/sentinel-prox/)
-[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/sentinel-prox/)
-[![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/Sentinel/ci.yml?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=CI)](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/whence?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/whence/)
+[![Python](https://img.shields.io/pypi/pyversions/whence?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/whence/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/Whence/ci.yml?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=CI)](https://github.com/Harshith029/Whence/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/LICENSE-MIT-3B82F6?style=for-the-badge&labelColor=0B1220)](./LICENSE)
-[![Live demo](https://img.shields.io/badge/DEMO-LIVE-6366F1?style=for-the-badge&labelColor=0B1220)](https://sentinel-i63x.onrender.com)
+[![Live demo](https://img.shields.io/badge/DEMO-LIVE-6366F1?style=for-the-badge&labelColor=0B1220)](https://whence-i63x.onrender.com)
 
 [![tests](https://img.shields.io/badge/TESTS-370%20PASSING-22D3EE?style=for-the-badge&labelColor=0B1220)](./tests)
 [![mypy](https://img.shields.io/badge/MYPY-STRICT-3B82F6?style=for-the-badge&labelColor=0B1220)](http://mypy-lang.org/)
 [![ruff](https://img.shields.io/badge/LINT-RUFF-3B82F6?style=for-the-badge&labelColor=0B1220)](https://github.com/astral-sh/ruff)
-[![no eval](https://img.shields.io/badge/CODEBASE-NO%20EVAL-22D3EE?style=for-the-badge&labelColor=0B1220)](./src/sentinel/authorization/ast.py)
+[![no eval](https://img.shields.io/badge/CODEBASE-NO%20EVAL-22D3EE?style=for-the-badge&labelColor=0B1220)](./src/whence/authorization/ast.py)
 
 **Stop prompt-injection attacks at the action layer — where the damage happens.**
 
 </div>
 
-SENTINEL sits between your agent and your MCP tool servers, tracks where every byte of
+Whence sits between your agent and your MCP tool servers, tracks where every byte of
 context came from, and refuses actions whose data originated in untrusted content —
 **even when the attack slipped past your content filter**.
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/dashboard.png" alt="SENTINEL blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/dashboard.png" alt="Whence blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
 <br>
 <sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
 Layer-1 filter <b>misses</b> the obfuscated injection — the action is refused anyway,
@@ -30,18 +30,40 @@ because its lineage traces back to untrusted content.</i></sub>
 </div>
 
 ```bash
-pip install sentinel-prox    # imports and CLI are both `sentinel`
-sentinel init             # write sentinel.yaml
-sentinel check            # validate config, connect to your servers, vet their tools
-sentinel scaffold > policy.yaml
-sentinel serve            # your agent points at http://127.0.0.1:8765/mcp
+pip install whence    # imports and CLI are both `whence`
+whence init             # write whence.yaml
+whence check            # validate config, connect to your servers, vet their tools
+whence scaffold > policy.yaml
+whence serve            # your agent points at http://127.0.0.1:8765/mcp
 ```
 
-Your agent needs **no code changes**: point its MCP endpoint at SENTINEL instead of
+Your agent needs **no code changes**: point its MCP endpoint at Whence instead of
 directly at your tool servers. Interception is guaranteed by topology, not by asking
 the agent to cooperate.
 
 ---
+
+## Renamed from SENTINEL (v0.2.0)
+
+The project was called SENTINEL. That name collides with three products in this
+exact category — Microsoft Sentinel (SIEM), HashiCorp Sentinel (policy engine)
+and SentinelOne (EDR) — which is bad for search, bad for buyers, and a trademark
+risk. `whence` means "from where", which is the question this tool answers about
+every byte your agent acts on.
+
+Migration is mechanical and breaking:
+
+| Before | After |
+|---|---|
+| `pip install sentinel-prox` | `pip install whence` |
+| `sentinel serve` | `whence serve` |
+| `import sentinel` | `import whence` |
+| `SENTINEL_*` env vars | `WHENCE_*` env vars |
+| `sentinel.yaml` | `whence.yaml` |
+
+Rename your environment variables when you upgrade — the old `SENTINEL_` prefix
+is not read, so a stale `SENTINEL_API_TOKEN` leaves the service unconfigured, and
+an unconfigured deployment now refuses to serve rather than serving openly.
 
 ## Status and known limitations
 
@@ -59,8 +81,8 @@ Read this before deploying anything.
 | Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
 
-`SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
-With neither it nor `SENTINEL_ALLOW_ANONYMOUS=1` set, the service refuses to
+`WHENCE_API_TOKEN` must be set for any deployment reachable from a network.
+With neither it nor `WHENCE_ALLOW_ANONYMOUS=1` set, the service refuses to
 serve rather than serving openly.
 
 
@@ -77,17 +99,17 @@ Content filters scan the words. Microsoft's own Prompt Shields documentation say
 "may not catch all attack vectors" and recommends additional validation layers.
 **The gap: security is applied to the words, while the damage is done by the actions.**
 
-SENTINEL closes it by judging an action on **where its data came from**, not on how
+Whence closes it by judging an action on **where its data came from**, not on how
 the request was phrased.
 
 ## What it protects against
 
-| Attack | How SENTINEL stops it |
+| Attack | How Whence stops it |
 |---|---|
 | **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied — regardless of phrasing, so obfuscation doesn't help |
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
 | **Tool poisoning** | Tool descriptions *and* input schemas are scanned at connect; a poisoned catalogue is refused |
-| **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
+| **Cross-server shadowing** | Two servers claiming one tool name fails closed — Whence won't guess which is authoritative |
 | **Rug pulls** | The catalogue is fingerprinted at approval and re-checked; post-approval mutation is detected |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
 | **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
@@ -96,20 +118,20 @@ Every decision becomes an immutable, replayable forensic record, exportable as
 SIEM-ready JSONL.
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/outbox-diff.png" alt="The same attack with and without SENTINEL: without it the SSN and API key reach the attacker; with it the email is never sent" width="820">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/outbox-diff.png" alt="The same attack with and without Whence: without it the SSN and API key reach the attacker; with it the email is never sent" width="820">
 <br>
-<sub><i>The same attack, run twice. Without SENTINEL the customer's SSN and API key reach
+<sub><i>The same attack, run twice. Without Whence the customer's SSN and API key reach
 the attacker's inbox; with it, the email is never sent.</i></sub>
 </div>
 
 ## How it works
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through SENTINEL, which traces origins, authorizes, contains, and records" width="760">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through Whence, which traces origins, authorizes, contains, and records" width="760">
 </div>
 
 ```
- your agent  ──MCP──▶  SENTINEL  ──MCP──▶  your MCP servers
+ your agent  ──MCP──▶  Whence  ──MCP──▶  your MCP servers
                           │
        1. trace      label the origin of everything the agent has seen
        2. authorize  policy decides each call using that lineage (deny-overrides)
@@ -136,13 +158,13 @@ deny-overrides, and **unknown tools are default-denied**.
 
 ## Configuration
 
-`sentinel.yaml` (created by `sentinel init`):
+`whence.yaml` (created by `whence init`):
 
 ```yaml
-servers:                      # YOUR MCP servers — SENTINEL ships no tools
+servers:                      # YOUR MCP servers — Whence ships no tools
   - name: github
     url: https://mcp.example/gh
-policy: ./policy.yaml         # your rules; generate with `sentinel scaffold`
+policy: ./policy.yaml         # your rules; generate with `whence scaffold`
 host: 127.0.0.1
 port: 8765
 dashboard: false              # the bundled UI is a DEMO, opt-in only
@@ -161,10 +183,10 @@ the full forensic record:
 23:16:40 WARNING BLOCK  send_email  rule=block-untrusted-origin  [trace 2ad33998e093]
 ```
 
-`sentinel serve --log-format json` emits one JSON object per line for an
+`whence serve --log-format json` emits one JSON object per line for an
 aggregator, and `--log-level WARNING` narrows it to refusals and quarantines.
 
-**Tool arguments are never logged.** The payloads SENTINEL inspects are the very
+**Tool arguments are never logged.** The payloads Whence inspects are the very
 secrets it exists to protect, so writing them to a log would move the secret from
 a blocked call into a plaintext file that ships off-box — performing the
 exfiltration that was just prevented. The decision is logged; the data stays in the
@@ -173,11 +195,11 @@ API key never appear in log output.
 
 Precedence is **CLI flag > environment variable > config file > default**, so a
 container can override a checked-in file. Every key has an env equivalent
-(`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, …) — see [`.env.example`](./.env.example).
+(`WHENCE_MCP_SERVERS`, `WHENCE_POLICY_FILE`, …) — see [`.env.example`](./.env.example).
 
 ### Writing policy
 
-Rules are **deny-only**: a call is allowed when no deny rule matches. `sentinel
+Rules are **deny-only**: a call is allowed when no deny rule matches. `whence
 scaffold` emits every discovered tool explicitly denied, with its description and a
 recommended starting rule, so you edit rather than invent.
 
@@ -202,16 +224,16 @@ and config values.
 ## Deployment
 
 ```bash
-docker build -t sentinel -f deploy/Dockerfile .
-docker run --rm -p 8765:8765 -v $(pwd)/sentinel.yaml:/app/sentinel.yaml sentinel
+docker build -t whence -f deploy/Dockerfile .
+docker run --rm -p 8765:8765 -v $(pwd)/whence.yaml:/app/whence.yaml whence
 ```
 
-Put your tool servers on an internal network reachable **only** by SENTINEL — that
+Put your tool servers on an internal network reachable **only** by Whence — that
 topology is what makes interception unbypassable. An Azure Container Apps blueprint
 (internal-ingress tool servers, KEDA scaling, managed identity, Cosmos persistence)
 is in [`deploy/`](./deploy).
 
-Gate the endpoint on any public deploy with `SENTINEL_API_TOKEN`.
+Gate the endpoint on any public deploy with `WHENCE_API_TOKEN`.
 
 ## Try the demo
 
@@ -219,14 +241,14 @@ A bundled demo shows the whole pipeline on a scripted attack — useful for seei
 a block looks like, but **not** the product surface:
 
 ```bash
-sentinel serve --dashboard     # → http://localhost:8765
+whence serve --dashboard     # → http://localhost:8765
 ```
 
-Hosted: **https://sentinel-i63x.onrender.com** (free tier — first load may take ~50 s
+Hosted: **https://whence-i63x.onrender.com** (free tier — first load may take ~50 s
 to wake). It runs in **anonymous demo mode with authentication disabled**, so treat
 it as a public sandbox, not as an example of a secured deployment: everything in it
 is synthetic and anyone can drive it. A real deployment must set
-`SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
+`WHENCE_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
 attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
 anyway. All demo data is synthetic — the record is a labelled fake
 (SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
@@ -244,7 +266,7 @@ ollama serve && ollama pull llama3.2
 export OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2
 ```
 
-## What SENTINEL does *not* protect against
+## What Whence does *not* protect against
 
 Stating the boundary precisely is what separates a security product from a demo.
 
@@ -290,7 +312,7 @@ pytest, ruff, mypy, gitleaks, and the Azure SDKs for Python. Thank you to their
 maintainers.
 
 **AI tools used in development:** Claude Code (Anthropic) and GitHub Copilot.
-SENTINEL also *integrates* Azure OpenAI (attack classification) and Azure AI Content
+Whence also *integrates* Azure OpenAI (attack classification) and Azure AI Content
 Safety / Prompt Shields (Layer-1 screening) as optional components.
 
 Originally built for the Microsoft Build AI Hackathon 2026 — *Security in the Agentic

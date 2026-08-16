@@ -1,4 +1,4 @@
-# Render.com blueprint — one-click live deploy of the SENTINEL demo.
+# Render.com blueprint — one-click live deploy of the Whence demo.
 #
 # Free tier: the service sleeps after ~15 min of inactivity and cold-starts in
 # under a minute on the next request. The dashboard, the one-click attacks, and
@@ -6,12 +6,12 @@
 # `make serve` runs locally). All data is synthetic; nothing real is sent.
 services:
   - type: web
-    name: sentinel
+    name: whence
     runtime: docker
     plan: free
     dockerfilePath: ./deploy/Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
     envVars:
-      - key: SENTINEL_DEMO_MODE
+      - key: WHENCE_DEMO_MODE
         value: "1"

@@ -1,6 +1,6 @@
 """Arbitrary user-configured downstream MCP servers: parsing + discovery.
 
-Offline and deterministic. Proves SENTINEL can proxy servers it has never seen —
+Offline and deterministic. Proves Whence can proxy servers it has never seen —
 routing built from discovery, not a hardcoded map — while failing closed on the
 cross-server shadowing attack and keeping unknown tools unauthorized.
 """
@@ -9,10 +9,10 @@ from __future__ import annotations
 import mcp.types as mcp_types
 import pytest
 
-from sentinel.authorization.engine import AuthorizationEngine
-from sentinel.authorization.policy import load_default_policy
-from sentinel.catalogue import CatalogueIntegrityError
-from sentinel.downstream import (
+from whence.authorization.engine import AuthorizationEngine
+from whence.authorization.policy import load_default_policy
+from whence.catalogue import CatalogueIntegrityError
+from whence.downstream import (
     DownstreamConfigError,
     DownstreamServer,
     build_topology,
@@ -86,7 +86,7 @@ def test_rejects_invalid_config(raw: str, match: str) -> None:
 # --- discovery builds routing dynamically -------------------------------------
 
 async def test_routing_is_built_from_discovery_not_a_hardcoded_map() -> None:
-    # Tools SENTINEL has never heard of, on servers it has never seen.
+    # Tools Whence has never heard of, on servers it has never seen.
     topology = await build_topology(
         {
             "github": FakeSession(tool("create_issue"), tool("list_repos")),
@@ -141,7 +141,7 @@ async def test_discovered_tools_are_still_default_denied() -> None:
     assert "create_issue" in topology.tool_names
 
     engine = AuthorizationEngine(load_default_policy())
-    from sentinel.authorization.engine import ToolCall
+    from whence.authorization.engine import ToolCall
 
     decision = engine.authorize(ToolCall(name="create_issue", arguments={}))
     assert decision.decision == "DENY"

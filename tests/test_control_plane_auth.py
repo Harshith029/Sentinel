@@ -20,10 +20,10 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 
-from sentinel.config import reset_settings_cache
-from sentinel.control.app import SESSION_COOKIE, create_app
-from sentinel.control.manager import RunManager
-from sentinel.forensics.store import InMemoryForensicStore
+from whence.config import reset_settings_cache
+from whence.control.app import SESSION_COOKIE, create_app
+from whence.control.manager import RunManager
+from whence.forensics.store import InMemoryForensicStore
 
 # noqa justification: a fixed literal is the point — the tests assert that
 # this exact value is required and that anything else is refused.
@@ -74,16 +74,16 @@ async def test_unconfigured_service_refuses_to_serve() -> None:
     """No token and no explicit anonymous opt-in → refuse, do not serve openly.
 
     This is the shape of the real incident: a public deployment with
-    SENTINEL_API_TOKEN simply never set. Answering openly makes forgetting to
+    WHENCE_API_TOKEN simply never set. Answering openly makes forgetting to
     configure auth identical to choosing to have none, and the operator gets no
     signal at all. Refusing is loud, and the message says exactly which switch
     to set.
     """
-    async with _client(SENTINEL_API_TOKEN="", SENTINEL_ALLOW_ANONYMOUS="0") as client:
+    async with _client(WHENCE_API_TOKEN="", WHENCE_ALLOW_ANONYMOUS="0") as client:
         for path in GUARDED_READS:
             response = await client.get(path)
             assert response.status_code == 503, f"{path} served while unconfigured"
-            assert "SENTINEL_API_TOKEN" in response.json()["detail"]
+            assert "WHENCE_API_TOKEN" in response.json()["detail"]
 
         # Mutations too.
         assert (await client.post("/runs", json={"scenario": "hero-obvious"})).status_code == 503
@@ -94,7 +94,7 @@ async def test_unconfigured_service_refuses_to_serve() -> None:
 
 async def test_explicit_anonymous_mode_still_works_for_the_local_demo() -> None:
     """The offline demo is preserved, but only when asked for by name."""
-    async with _client(SENTINEL_API_TOKEN="", SENTINEL_ALLOW_ANONYMOUS="1") as client:
+    async with _client(WHENCE_API_TOKEN="", WHENCE_ALLOW_ANONYMOUS="1") as client:
         assert (await client.get("/runs")).status_code == 200
         assert (await client.get("/capabilities")).status_code == 200
 
@@ -102,7 +102,7 @@ async def test_explicit_anonymous_mode_still_works_for_the_local_demo() -> None:
 async def test_reads_require_a_credential_when_a_token_is_set() -> None:
     """Every data route refuses an anonymous caller, and accepts a valid token."""
     async with _client(
-        SENTINEL_API_TOKEN=TOKEN, SENTINEL_ALLOW_ANONYMOUS="0"
+        WHENCE_API_TOKEN=TOKEN, WHENCE_ALLOW_ANONYMOUS="0"
     ) as client:
         for path in GUARDED_READS:
             anonymous = await client.get(path)
@@ -128,7 +128,7 @@ async def test_sse_stream_is_gated_and_reachable_by_a_browser() -> None:
     Without it the honest options would be an open stream or a broken dashboard.
     """
     async with _client(
-        SENTINEL_API_TOKEN=TOKEN, SENTINEL_ALLOW_ANONYMOUS="0"
+        WHENCE_API_TOKEN=TOKEN, WHENCE_ALLOW_ANONYMOUS="0"
     ) as client:
         # No credential: the stream is refused like everything else.
         assert (await client.get("/events/stream")).status_code == 401
@@ -159,7 +159,7 @@ async def test_sse_stream_is_gated_and_reachable_by_a_browser() -> None:
 async def test_session_cookie_cannot_be_forged() -> None:
     """A made-up cookie value is refused — the cookie is not a bypass."""
     async with _client(
-        SENTINEL_API_TOKEN=TOKEN, SENTINEL_ALLOW_ANONYMOUS="0"
+        WHENCE_API_TOKEN=TOKEN, WHENCE_ALLOW_ANONYMOUS="0"
     ) as client:
         client.cookies.set(SESSION_COOKIE, "not-the-token")
         assert (await client.get("/runs")).status_code == 401
@@ -170,6 +170,6 @@ async def test_liveness_and_shell_stay_reachable(path: str) -> None:
     """Deliberately open: the platform probes one, the browser loads the other
     before it has any credential to present."""
     async with _client(
-        SENTINEL_API_TOKEN=TOKEN, SENTINEL_ALLOW_ANONYMOUS="0"
+        WHENCE_API_TOKEN=TOKEN, WHENCE_ALLOW_ANONYMOUS="0"
     ) as client:
         assert (await client.get(path)).status_code in (200, 404)

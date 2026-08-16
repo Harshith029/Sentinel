@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sentinel.forensics.events import (
+from whence.forensics.events import (
     EVENT_TYPES,
     AgentQuarantined,
     AuthorizationDecided,
@@ -16,7 +16,7 @@ from sentinel.forensics.events import (
     ToolExecuted,
     TrustUpdated,
 )
-from sentinel.forensics.span import Span
+from whence.forensics.span import Span
 
 ALL_PAYLOADS = [
     InputReceived(origin_label="USER", content="hello"),

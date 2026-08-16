@@ -1,4 +1,4 @@
-# Competitive positioning: where SENTINEL actually stands out
+# Competitive positioning: where Whence actually stands out
 
 Market + literature research (July 2026). Companion to
 [`SCOPING_arbitrary_mcp_servers.md`](./SCOPING_arbitrary_mcp_servers.md) — **this research
@@ -42,7 +42,7 @@ is the effective architecture, and that orchestration-layer enforcement is "effe
 model-independent" (arXiv 2511.20920). *Unsafe by Flow* (arXiv 2605.07836) documents the
 bidirectional data-flow risks that make this urgent.
 
-**This is precisely SENTINEL's architecture**: gateway-position enforcement + provenance/taint
+**This is precisely Whence's architecture**: gateway-position enforcement + provenance/taint
 + model independence. The differentiator is not "we secure MCP" — it is **information flow
 control**, which the category does not ship.
 
@@ -54,7 +54,7 @@ capability/provenance metadata attached to values, data + control flow extracted
 trusted query, policy enforced **before each tool call**. Result: **77% of AgentDojo tasks
 solved with provable security**, vs 84% undefended.
 
-| | CaMeL | SENTINEL |
+| | CaMeL | Whence |
 |---|---|---|
 | Core idea | provenance/capabilities on values | provenance set over transitive lineage |
 | Enforcement point | custom interpreter inside the agent | **network proxy at the MCP boundary** |
@@ -64,7 +64,7 @@ solved with provable security**, vs 84% undefended.
 
 **Our defensible edge vs CaMeL: deployability.** CaMeL requires rearchitecting the agent into
 a dual-LLM interpreter pattern — a research architecture, hard to retrofit onto an existing
-product. SENTINEL gets the same class of guarantee by *topology*, with an unmodified agent.
+product. Whence gets the same class of guarantee by *topology*, with an unmodified agent.
 That is the commercially important difference, and it is real.
 
 **Their edge over us: evidence.** They have a number. We have a demo. See §4.
@@ -77,7 +77,7 @@ That is the commercially important difference, and it is real.
 scores 69% benign utility, dropping to 45% under attack, with ASR up to 53.1% on the
 canonical "Important message" attack; CaMeL reports 77% with provable security.
 
-Running SENTINEL against AgentDojo would convert the pitch from *"watch this demo block an
+Running Whence against AgentDojo would convert the pitch from *"watch this demo block an
 attack"* into *"ASR reduced from X% to Y% at Z% utility cost, on the benchmark everyone
 publishes against."* That is the difference between an impressive prototype and a credible
 security product — and it is directly comparable to a Google DeepMind result.
@@ -95,7 +95,7 @@ The research resolves it:
 - Single-server taint tracking is a **demo**.
 - **Multi-server** taint propagation is the documented, unmet market need — the exact
   capability MCPHunt says "no mechanism currently prevents."
-- Proxying arbitrary downstream servers is not just plumbing: it is **what turns SENTINEL into
+- Proxying arbitrary downstream servers is not just plumbing: it is **what turns Whence into
   the cross-server information-flow-control layer nobody ships.**
 
 So the two workstreams are the same workstream. Recommendation: build it — and frame it as

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import asyncio
 
-from sentinel.forensics.emitter import SpanEmitter
-from sentinel.forensics.events import InputReceived, ToolCallProposed
-from sentinel.forensics.span import Span
-from sentinel.forensics.store import ForensicStore, InMemoryForensicStore
+from whence.forensics.emitter import SpanEmitter
+from whence.forensics.events import InputReceived, ToolCallProposed
+from whence.forensics.span import Span
+from whence.forensics.store import ForensicStore, InMemoryForensicStore
 
 TRACE_A = "a" * 32
 TRACE_B = "b" * 32

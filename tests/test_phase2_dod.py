@@ -13,20 +13,20 @@ from decimal import Decimal
 
 import pytest
 
-from sentinel.authorization.engine import AuthorizationEngine, ToolCall
-from sentinel.authorization.policy import (
+from whence.authorization.engine import AuthorizationEngine, ToolCall
+from whence.authorization.policy import (
     PolicyLoadError,
     load_default_policy,
     load_policy,
 )
-from sentinel.forensics.emitter import SpanEmitter
-from sentinel.forensics.events import AuthorizationDecided
-from sentinel.forensics.replay import replay
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.labels import Label
-from sentinel.provenance.graph import ProvenanceGraph
-from sentinel.provenance.model import ProvenanceNode
-from sentinel.provenance.sanitizer import DecimalAmountSchema, StructuredExtractor
+from whence.forensics.emitter import SpanEmitter
+from whence.forensics.events import AuthorizationDecided
+from whence.forensics.replay import replay
+from whence.forensics.store import InMemoryForensicStore
+from whence.labels import Label
+from whence.provenance.graph import ProvenanceGraph
+from whence.provenance.model import ProvenanceNode
+from whence.provenance.sanitizer import DecimalAmountSchema, StructuredExtractor
 
 CONFIG: dict[str, object] = {
     "allowed_domains": ["corp.example"],

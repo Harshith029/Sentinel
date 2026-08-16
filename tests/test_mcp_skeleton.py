@@ -1,7 +1,7 @@
 """Phase 1 DoD: the thin MCP skeleton round-trips a no-op call emitting spans.
 
 Uses the official MCP in-memory transport, nested twice to build the real
-two-hop topology:  agent client → SENTINEL proxy server → downstream tool server.
+two-hop topology:  agent client → Whence proxy server → downstream tool server.
 Asserting against real ``Tool`` / ``CallToolResult`` shapes is the whole point —
 Phase 2 provenance is then designed against the wire protocol, not a stand-in.
 """
@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 
-from sentinel.forensics.emitter import SpanEmitter
-from sentinel.forensics.events import ToolCallProposed, ToolExecuted
-from sentinel.forensics.replay import replay
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.labels import RETRIEVED_CONTENT
-from sentinel.mcp_proxy.skeleton import SentinelProxySkeleton, make_downstream_server
-from sentinel.redaction import redact_text
+from whence.forensics.emitter import SpanEmitter
+from whence.forensics.events import ToolCallProposed, ToolExecuted
+from whence.forensics.replay import replay
+from whence.forensics.store import InMemoryForensicStore
+from whence.labels import RETRIEVED_CONTENT
+from whence.mcp_proxy.skeleton import WhenceProxySkeleton, make_downstream_server
+from whence.redaction import redact_text
 
 
 async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
@@ -26,7 +26,7 @@ async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
     downstream = make_downstream_server()
     async with connect(downstream) as downstream_client:
         await downstream_client.initialize()
-        proxy = SentinelProxySkeleton(
+        proxy = WhenceProxySkeleton(
             downstream=downstream_client, emitter=emitter, trace_id=trace_id
         )
         async with connect(proxy.server) as agent_client:
@@ -77,7 +77,7 @@ async def test_skeleton_two_calls_emit_two_proposal_execution_pairs() -> None:
     downstream = make_downstream_server()
     async with connect(downstream) as downstream_client:
         await downstream_client.initialize()
-        proxy = SentinelProxySkeleton(
+        proxy = WhenceProxySkeleton(
             downstream=downstream_client, emitter=emitter, trace_id=trace_id
         )
         async with connect(proxy.server) as agent_client:

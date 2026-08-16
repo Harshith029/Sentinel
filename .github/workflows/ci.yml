@@ -72,7 +72,7 @@ jobs:
           pip install -e ".[dev]" -c versions.lock
       - name: Run each diagnostic in its own process
         env:
-          SENTINEL_RUN_REAL_MCP_TESTS: "1"
+          WHENCE_RUN_REAL_MCP_TESTS: "1"
         run: |
           set +e
           status=0

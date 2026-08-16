@@ -19,12 +19,12 @@ fails fast with a full pending-task dump instead of hanging CI.
 ## What is NOT established
 
 * **Not attributed to upstream.** `docs/mcp_repro_standalone.py` (only `mcp` and
-  `uvicorn`, no SENTINEL code) hung once, which an earlier draft treated as proof
+  `uvicorn`, no Whence code) hung once, which an earlier draft treated as proof
   the defect was upstream. On retest it hangs **0 out of 6** runs. A
   non-deterministic reproducer is not an attribution, so no upstream issue has
   been filed and none should be until the script reproduces reliably.
 * **`terminate_on_close=False` is not a workaround.** The standalone script
-  suggested it; the suite refutes it. Setting it on SENTINEL's downstream
+  suggested it; the suite refutes it. Setting it on Whence's downstream
   connections leaves the sequence failing (3/3), and setting it on the external
   test client leaves it failing too.
 * **An explicit `httpx.AsyncClient` is not a workaround.** The suite wedges with
@@ -32,9 +32,9 @@ fails fast with a full pending-task dump instead of hanging CI.
 
 ## What IS established
 
-* The trigger is not SENTINEL's downstream connections: flipping their
+* The trigger is not Whence's downstream connections: flipping their
   termination policy changes nothing.
-* SENTINEL's gateway does not leak tasks on teardown — a standalone run entered a
+* Whence's gateway does not leak tasks on teardown — a standalone run entered a
   remote-mode gateway, tore it down, and observed **zero** leaked asyncio tasks.
 * It is not settings-cache bleed: the second gateway reports
   `downstream_mode == "memory"`, not the previous test's remote URLs.
@@ -45,7 +45,7 @@ fails fast with a full pending-task dump instead of hanging CI.
 Independent of the wedge, skipping the session-termination DELETE is unsafe here.
 `StreamableHTTPSessionManager.session_idle_timeout` defaults to `None`, so a
 server that never receives the DELETE keeps the session in `_server_instances`
-**forever**. Those servers belong to the operator, not to us. SENTINEL will not
+**forever**. Those servers belong to the operator, not to us. Whence will not
 strand resources on someone else's server to work around a defect in its own
 process.
 

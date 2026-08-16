@@ -9,7 +9,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from sentinel.toolservers.web_fetch import FetchResult, fetch_url, validate_target
+from whence.toolservers.web_fetch import FetchResult, fetch_url, validate_target
 
 
 def _resolver(mapping: dict[str, list[str]]):

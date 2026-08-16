@@ -1,12 +1,12 @@
-"""Phase 10 — a real agent tool-use LOOP, with SENTINEL as the backstop.
+"""Phase 10 — a real agent tool-use LOOP, with Whence as the backstop.
 
 These tests run the genuine agentic loop (:class:`LLMAgentDriver`): the model is
-asked to do a task, it discovers tools, calls them THROUGH SENTINEL, sees the
+asked to do a task, it discovers tools, calls them THROUGH Whence, sees the
 results, and decides what to do next. The decision to exfiltrate is the *model's*
 (here a faithful offline stand-in that is induced by the poisoned page content) —
-SENTINEL is what stops the resulting action. This is the missing half of the
+Whence is what stops the resulting action. This is the missing half of the
 ScriptedAgentDriver story: not "we force the bad call", but "the agent is tricked
-into the bad call and SENTINEL blocks it anyway."
+into the bad call and Whence blocks it anyway."
 
 The live-model path (`OpenAIModelClient`) is credential-gated; its response
 parsing is tested here against a faithful fake of the OpenAI response shape, and
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from sentinel.config import Settings
-from sentinel.demo.llm_driver import (
+from whence.config import Settings
+from whence.demo.llm_driver import (
     LiveAgentUnavailable,
     LLMAgentDriver,
     LLMToolCall,
@@ -26,10 +26,10 @@ from sentinel.demo.llm_driver import (
     SusceptibleStubModel,
     build_live_model,
 )
-from sentinel.demo.scenario import HERO_USER_INPUT, run_demo_session
-from sentinel.demo.tool_servers import CLEAN_URL, EVASION_URL, OBVIOUS_URL
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.mcp_proxy.content import result_text
+from whence.demo.scenario import HERO_USER_INPUT, run_demo_session
+from whence.demo.tool_servers import CLEAN_URL, EVASION_URL, OBVIOUS_URL
+from whence.forensics.store import InMemoryForensicStore
+from whence.mcp_proxy.content import result_text
 
 
 async def _drive(stub: SusceptibleStubModel) -> tuple[LLMAgentDriver, object]:
@@ -48,10 +48,10 @@ async def test_llm_loop_obvious_exfiltration_is_blocked() -> None:
     # The MODEL autonomously issued the kill chain (not a scripted transcript).
     assert stub.issued == ["get_customer_record", "web_fetch", "send_email"]
 
-    # The induced send_email came back as a clean SENTINEL block to the agent.
+    # The induced send_email came back as a clean Whence block to the agent.
     blocked = [r for r in result.driver_results if r.isError]
     assert blocked, "expected a blocked tool result"
-    assert any("SENTINEL blocked" in result_text(r) for r in blocked)
+    assert any("Whence blocked" in result_text(r) for r in blocked)
 
     # Nothing was exfiltrated, and only the allowed reads hit the downstream.
     assert result.outbox == []
@@ -85,7 +85,7 @@ async def test_llm_loop_evasion_variant_still_blocked() -> None:
     assert page_scans and page_scans[0].attack_detected is False
 
     # ...but the action was blocked anyway, and nothing left the building.
-    assert any("SENTINEL blocked" in result_text(r) for r in result.driver_results if r.isError)
+    assert any("Whence blocked" in result_text(r) for r in result.driver_results if r.isError)
     assert result.outbox == []
     assert result.payloads("ToolBlocked")
 

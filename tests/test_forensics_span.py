@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sentinel.forensics.events import ToolCallProposed
-from sentinel.forensics.span import Span
+from whence.forensics.events import ToolCallProposed
+from whence.forensics.span import Span
 
 VALID_TRACE = "a" * 32
 VALID_SPAN = "b" * 16
@@ -41,7 +41,7 @@ def test_root_span_has_no_parent() -> None:
         "a" * 33,        # too long
         "A" * 32,        # uppercase (W3C is lowercase)
         "g" * 32,        # non-hex
-        "0" * 32,        # all-zero sentinel
+        "0" * 32,        # all-zero whence
         "",
     ],
 )
@@ -57,7 +57,7 @@ def test_bad_trace_id_rejected(bad_trace: str) -> None:
         "b" * 17,        # too long
         "B" * 16,        # uppercase
         "z" * 16,        # non-hex
-        "0" * 16,        # all-zero sentinel
+        "0" * 16,        # all-zero whence
     ],
 )
 def test_bad_span_id_rejected(bad_span: str) -> None:
@@ -66,7 +66,7 @@ def test_bad_span_id_rejected(bad_span: str) -> None:
 
 
 def test_all_zero_ids_rejected_for_both_trace_and_span() -> None:
-    # Explicit, self-documenting case: the W3C all-zero sentinel is the "no
+    # Explicit, self-documenting case: the W3C all-zero whence is the "no
     # trace / no span" marker and must be rejected for BOTH id fields.
     with pytest.raises(ValidationError):
         _span(trace_id="0" * 32)

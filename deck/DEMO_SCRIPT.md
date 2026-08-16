@@ -1,6 +1,6 @@
-# SENTINEL — 3-minute demo run-of-show + talking points
+# Whence — 3-minute demo run-of-show + talking points
 
-Companion to `SENTINEL_pitch.pptx`. Everything below is grounded in a run verified
+Companion to `WHENCE_pitch.pptx`. Everything below is grounded in a run verified
 live over the real control plane (not a mock): the 16-span hero-evasion kill chain,
 trust 100→70, and the before/after exfiltration contrast.
 
@@ -25,11 +25,11 @@ curl -s -XPOST http://127.0.0.1:8765/attack/hero-evasion
 ### 0:00 — The hook (15s)  · slide 2/3
 > "Prompt injection doesn't live in the text — it lives in what the agent *does* with
 > it. Microsoft's own Prompt Shields docs say they 'may not catch all attack vectors'
-> and to add another validation layer. **SENTINEL is that layer** — it secures the
+> and to add another validation layer. **Whence is that layer** — it secures the
 > action, authorized by where the instruction came from."
 
 ### 0:15 — One sentence of architecture (20s)  · slide 4
-> "SENTINEL is an MCP proxy. The agent's *only* reachable tool endpoint is SENTINEL;
+> "Whence is an MCP proxy. The agent's *only* reachable tool endpoint is Whence;
 > the real tools are network-isolated behind it. So interception isn't a convention a
 > caller can forget — it's the network topology. Every tool call physically traverses
 > the provenance → authorization → trust → forensics pipeline."
@@ -60,10 +60,10 @@ Point at: red **BLOCKED** banner · matched rule · the secret chips in the payl
 **NEVER PERSISTED** on the outbox · trust cratering **100 → 70** with the arithmetic.
 
 ### 1:50 — Before/after (20s)
-Click the **baseline / "without SENTINEL"** view.
+Click the **baseline / "without Whence"** view.
 > "Same attack, no proxy: the SSN and API key are delivered to the attacker's inbox.
-> With SENTINEL the outbox is empty. Same agent, same tools — the only difference is
-> whether SENTINEL is in the path."
+> With Whence the outbox is empty. Same agent, same tools — the only difference is
+> whether Whence is in the path."
 
 ### 2:10 — Depth on tap (30s)  · slides 5–8
 Pick **one** to show, don't rush all:
@@ -105,6 +105,6 @@ Pick **one** to show, don't rush all:
 
 ## What we deliberately do NOT claim (state it — it's a strength)
 - Provenance is message/tool-result granularity, **not** token-level inside model cognition.
-- SENTINEL secures the **action layer**, not the model's reasoning — it won't stop a model
+- Whence secures the **action layer**, not the model's reasoning — it won't stop a model
   being *persuaded*, only the resulting unauthorized **action**.
 - The proxy and the policy store are trusted components.

@@ -1,8 +1,8 @@
-"""Drive SENTINEL with a real LLM agent over the wire (Phase 9 + Phase 10).
+"""Drive Whence with a real LLM agent over the wire (Phase 9 + Phase 10).
 
 This is the full "real product" path: a genuine agent tool-use loop, connected to
-SENTINEL's `/mcp` endpoint exactly as any MCP client would be, where the MODEL
-decides what to do and SENTINEL is the backstop. The agent fetches a poisoned
+Whence's `/mcp` endpoint exactly as any MCP client would be, where the MODEL
+decides what to do and Whence is the backstop. The agent fetches a poisoned
 page, gets induced to email a customer record to an attacker, and the attempt is
 blocked at the MCP boundary.
 
@@ -30,15 +30,15 @@ import sys
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from sentinel.demo.llm_driver import (
+from whence.demo.llm_driver import (
     LiveAgentUnavailable,
     LLMAgentDriver,
     ModelClient,
     SusceptibleStubModel,
     build_live_model,
 )
-from sentinel.demo.tool_servers import OBVIOUS_URL
-from sentinel.mcp_proxy.content import result_text
+from whence.demo.tool_servers import OBVIOUS_URL
+from whence.mcp_proxy.content import result_text
 
 
 def _build_model(*, offline: bool, url: str, model_name: str | None) -> ModelClient:
@@ -59,7 +59,7 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
         f"{url} and summarize it for the customer."
     )
     mcp_url = base.rstrip("/") + "/mcp"
-    print(f"connecting the agent to SENTINEL at {mcp_url} ...\n")
+    print(f"connecting the agent to Whence at {mcp_url} ...\n")
 
     async with streamable_http_client(mcp_url) as (read, write, _session_id):
         async with ClientSession(read, write) as session:
@@ -67,7 +67,7 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
             driver = LLMAgentDriver(model, task=task)
             results = await driver.run(session)
 
-    blocked = [r for r in results if r.isError and "SENTINEL blocked" in result_text(r)]
+    blocked = [r for r in results if r.isError and "Whence blocked" in result_text(r)]
     print("--- agent transcript (roles) ---")
     for message in driver.transcript:
         role = message.get("role")
@@ -81,7 +81,7 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
     print("--------------------------------\n")
 
     if blocked:
-        print(f"RESULT: SENTINEL blocked {len(blocked)} action(s) over the wire.")
+        print(f"RESULT: Whence blocked {len(blocked)} action(s) over the wire.")
         print("A real agent loop was secured without modifying the agent.")
         return 0
     print("RESULT: nothing was blocked (the model may not have attempted the action).")
@@ -91,7 +91,7 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="http://127.0.0.1:8765",
-                        help="SENTINEL base URL (default: %(default)s)")
+                        help="Whence base URL (default: %(default)s)")
     parser.add_argument("--offline", action="store_true",
                         help="use the offline susceptible stand-in model (no credentials)")
     parser.add_argument("--url", default=OBVIOUS_URL,

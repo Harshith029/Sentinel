@@ -1,4 +1,4 @@
-"""Run a custom attack scenario against a running SENTINEL control plane.
+"""Run a custom attack scenario against a running Whence control plane.
 
 Example use:
 
@@ -14,13 +14,13 @@ Example use:
 
 The script does three things and prints them all:
 
-1. POST /runs/custom/baseline  — runs WITHOUT Sentinel; the outbox arrives.
-2. POST /runs/custom           — runs WITH Sentinel; the send_email blocks.
+1. POST /runs/custom/baseline  — runs WITHOUT Whence; the outbox arrives.
+2. POST /runs/custom           — runs WITH Whence; the send_email blocks.
 3. GET  /runs/{id}/audit       — fetches the SIEM-shaped JSONL audit trail.
 
 Together those three show what a security buyer wants to see: the breach
-in the baseline, the block with Sentinel, and the audit record they'd hand
-to a SOC analyst. No agent-code modification is required to drop Sentinel
+in the baseline, the block with Whence, and the audit record they'd hand
+to a SOC analyst. No agent-code modification is required to drop Whence
 in — the proxy intercepts at the MCP message boundary.
 """
 from __future__ import annotations
@@ -82,7 +82,7 @@ def main() -> int:
                         help="comma-separated allow-list passed into the policy")
     args = parser.parse_args()
 
-    token = os.environ.get("SENTINEL_API_TOKEN") or None
+    token = os.environ.get("WHENCE_API_TOKEN") or None
     spec: dict[str, object] = {
         "task": args.task,
         "poisoned_url": args.poisoned_url,
@@ -93,10 +93,10 @@ def main() -> int:
     }
 
     try:
-        # --- 1. Baseline (no Sentinel) — the breach view ----------------
+        # --- 1. Baseline (no Whence) — the breach view ----------------
         baseline = _post_json(args.base, "/runs/custom/baseline", spec, token=token)
         print("=" * 72)
-        print("1) WITHOUT Sentinel - baseline outbox:")
+        print("1) WITHOUT Whence - baseline outbox:")
         print("-" * 72)
         outbox = baseline.get("outbox") or []
         if outbox:
@@ -109,14 +109,14 @@ def main() -> int:
         else:
             print("  (empty — your scenario doesn't include a send_email)")
 
-        # --- 2. With Sentinel — the block view --------------------------
+        # --- 2. With Whence — the block view --------------------------
         started = _post_json(args.base, "/runs/custom", spec, token=token)
         trace_id = str(started["trace_id"])
         _wait_for_completion(args.base, trace_id)
         replay = _get_json(args.base, f"/runs/{trace_id}/replay")
         print()
         print("=" * 72)
-        print("2) WITH Sentinel - trace", trace_id[:16] + "...:")
+        print("2) WITH Whence - trace", trace_id[:16] + "...:")
         print("-" * 72)
         blocks = [
             s for s in replay["ordered"]

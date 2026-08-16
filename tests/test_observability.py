@@ -1,6 +1,6 @@
 """Security decisions must be visible to the operator — and must not leak payloads.
 
-The second half is the load-bearing one: the arguments SENTINEL inspects are the
+The second half is the load-bearing one: the arguments Whence inspects are the
 very secrets it exists to protect, so writing them to a log would perform the
 exfiltration the proxy just blocked.
 """
@@ -10,10 +10,10 @@ import io
 import json
 import logging
 
-from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
-from sentinel.demo.scenario import run_demo_session
-from sentinel.demo.tool_servers import SYNTHETIC_SECRET_MARKERS
-from sentinel.observability import (
+from whence.demo.driver import ScriptedAgentDriver, ToolInvocation
+from whence.demo.scenario import run_demo_session
+from whence.demo.tool_servers import SYNTHETIC_SECRET_MARKERS
+from whence.observability import (
     configure_logging,
     log_allowed,
     log_blocked,
@@ -107,6 +107,6 @@ async def test_logs_never_contain_the_secrets_being_protected() -> None:
 
 def test_logging_is_off_until_configured() -> None:
     """A library import must not hijack the host application's logging."""
-    logging.getLogger("sentinel").handlers.clear()
+    logging.getLogger("whence").handlers.clear()
     # Should not raise, and should not print anywhere we control.
     log_allowed("t", trace_id="e" * 32, agent_id="a", provenance=())

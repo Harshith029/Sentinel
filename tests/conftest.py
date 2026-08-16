@@ -1,4 +1,4 @@
-"""Pytest configuration shared across SENTINEL tests."""
+"""Pytest configuration shared across Whence tests."""
 from __future__ import annotations
 
 import copy
@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from sentinel.forensics.events import EventPayload, ToolCallProposed
-from sentinel.forensics.span import Span
-from sentinel.forensics.store import (
+from whence.forensics.events import EventPayload, ToolCallProposed
+from whence.forensics.span import Span
+from whence.forensics.store import (
     CosmosForensicStore,
     ForensicStore,
     InMemoryForensicStore,
@@ -31,18 +31,18 @@ def _force_demo_mode(
     only the agent driver differs. For unit tests, demo mode is mandatory so
     that CI and laptops never depend on cloud credentials.
 
-    We also point ``SENTINEL_DATA_DIR`` at a per-test tmp dir so the default
+    We also point ``WHENCE_DATA_DIR`` at a per-test tmp dir so the default
     SQLite store the control plane uses never leaks across tests or polutes
     the working tree.
     """
-    monkeypatch.setenv("SENTINEL_DEMO_MODE", "1")
+    monkeypatch.setenv("WHENCE_DEMO_MODE", "1")
     # Auth is fail-closed by default: with no token configured the service
     # refuses to serve. Tests exercise the pipeline, not the gate, so they opt
     # into anonymous mode explicitly — the same switch an operator must set for
     # a local demo. Auth itself is covered by tests/test_control_plane_auth.py.
-    monkeypatch.setenv("SENTINEL_ALLOW_ANONYMOUS", "1")
+    monkeypatch.setenv("WHENCE_ALLOW_ANONYMOUS", "1")
     monkeypatch.setenv(
-        "SENTINEL_DATA_DIR", str(tmp_path_factory.mktemp("sentinel_data"))
+        "WHENCE_DATA_DIR", str(tmp_path_factory.mktemp("whence_data"))
     )
     # The default agent path is a REAL LLM when a credential is configured. Clear
     # any live-model env the developer may have set, so tests deterministically use
@@ -125,7 +125,7 @@ def store(
         return InMemoryForensicStore()
     if request.param == "cosmos":
         return CosmosForensicStore(FakeAsyncCosmosContainer())
-    db_dir = tmp_path_factory.mktemp("sentinel_sqlite_store")
+    db_dir = tmp_path_factory.mktemp("whence_sqlite_store")
     return SqliteForensicStore(db_dir / "spans.db")
 
 

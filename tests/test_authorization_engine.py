@@ -4,8 +4,8 @@ from __future__ import annotations
 import textwrap
 from decimal import Decimal
 
-from sentinel.authorization.engine import AuthorizationEngine, ToolCall
-from sentinel.authorization.policy import load_policy
+from whence.authorization.engine import AuthorizationEngine, ToolCall
+from whence.authorization.policy import load_policy
 
 # A two-rule tool used to demonstrate short-circuiting precedence.
 _POLICY = load_policy(

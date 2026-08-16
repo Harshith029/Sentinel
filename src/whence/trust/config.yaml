@@ -1,0 +1,19 @@
+# Whence trust-scorer configuration (BUILD_SPEC §Phase 3).
+#
+# THE ONE FILE. Every tunable number the scorer uses lives here — none are
+# inlined in business logic. Penalty deltas are computed from these weights plus
+# the add-one smoothed transition probability; the arithmetic is recorded in each
+# TrustUpdated span so there are no bare numbers anywhere.
+window_size: 50              # N: how many recent transitions define "normal"
+starting_score: 100          # every agent starts fully trusted
+quarantine_threshold: 40     # below this score → quarantine
+
+# Probability-based penalty: a transition is penalized only to the extent its
+# smoothed probability falls BELOW uniform chance (1/V). Expected traffic costs
+# nothing; the most surprising transition costs up to this much.
+max_transition_penalty: 25
+
+# Hard-signal penalties (fixed): applied when the authorization engine BLOCKS a
+# call, or when Layer-1 injection scanning flags an attack.
+blocked_call_penalty: 30
+injection_detected_penalty: 50

@@ -3,7 +3,7 @@
 Decision material for the product conversation. **No code has been written for this** —
 the codebase is frozen on this topic pending the decision.
 
-Premise (from the product correction): SENTINEL should not ship email/record tools.
+Premise (from the product correction): Whence should not ship email/record tools.
 It secures the operator's **own** downstream MCP servers. The bundled `web` / `email` /
 `records` servers are examples/demos, not product surface.
 
@@ -65,8 +65,8 @@ C is a bigger product bet and can wait.
 
 Roughly a day, low risk, additive:
 
-1. **Config**: replace `SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL` with a list of downstream
-   servers (`SENTINEL_MCP_SERVERS` as JSON/YAML, or a config file: `[{name, url}]`).
+1. **Config**: replace `WHENCE_TOOLS_{WEB,EMAIL,RECORDS}_URL` with a list of downstream
+   servers (`WHENCE_MCP_SERVERS` as JSON/YAML, or a config file: `[{name, url}]`).
    Keep the old three vars working as a deprecated alias so nothing breaks.
 2. **Discovery**: on connect, `list_tools()` each server and build the `tool -> session`
    routing map dynamically. Replaces `TOOL_TO_SERVER`.
@@ -83,13 +83,13 @@ Roughly a day, low risk, additive:
 1. Is the product **the proxy alone** (operator brings all tools), or proxy + a small set of
    blessed reference integrations?
 2. Who authors policy — the operator, or do we ship starter templates? (§3)
-3. Multi-tenant: is one SENTINEL instance per operator, or one instance serving many
+3. Multi-tenant: is one Whence instance per operator, or one instance serving many
    tenants' downstream servers? The policy registry already supports per-tenant namespacing,
    but *connection* topology currently assumes one downstream set per process.
 4. Does the hosted demo keep the example servers, while the distributed product ships without them?
 
 ## 6. What NOT to do (settled)
 
-- Do **not** ship real `send_email` / `get_customer_record` tools — SENTINEL is not a tool vendor.
+- Do **not** ship real `send_email` / `get_customer_record` tools — Whence is not a tool vendor.
 - Do **not** weaken default-deny to make onboarding smoother.
 - Do **not** infer tool risk automatically (see §3-C: operator-declared only).

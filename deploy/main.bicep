@@ -1,11 +1,11 @@
-// SENTINEL — Azure Container Apps deployment (BUILD_SPEC §Phase 8).
+// Whence — Azure Container Apps deployment (BUILD_SPEC §Phase 8).
 //
 // TOPOLOGY PROOF (the thesis enforced by network shape, not by hope):
-//   * `sentinel` proxy/control-plane/dashboard  -> ingress.external = TRUE  (the
+//   * `whence` proxy/control-plane/dashboard  -> ingress.external = TRUE  (the
 //     ONLY publicly reachable endpoint; the agent can reach nothing else).
 //   * tool servers (web / email / records)       -> ingress.external = FALSE (no
 //     external ingress; reachable ONLY from inside the ACA environment, i.e.
-//     ONLY by SENTINEL). They have no public FQDN.
+//     ONLY by Whence). They have no public FQDN.
 // KEDA HTTP-concurrency scaler on the proxy. System-assigned managed identity +
 // Key Vault RBAC for secret resolution. Cosmos partitioned by trace_id.
 
@@ -13,7 +13,7 @@
 param location string = resourceGroup().location
 
 @description('Resource name prefix')
-param prefix string = 'sentinel'
+param prefix string = 'whence'
 
 @description('Container image (proxy/control-plane/dashboard + tool servers)')
 param image string
@@ -63,8 +63,8 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
 }
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
   parent: cosmos
-  name: 'sentinel'
-  properties: { resource: { id: 'sentinel' } }
+  name: 'whence'
+  properties: { resource: { id: 'whence' } }
 }
 resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
   parent: cosmosDb
@@ -88,8 +88,8 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// --- SENTINEL: the ONLY externally-reachable endpoint ---
-resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
+// --- Whence: the ONLY externally-reachable endpoint ---
+resource whence 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${prefix}-proxy'
   location: location
   identity: { type: 'SystemAssigned' } // system-assigned managed identity (explicit)
@@ -105,15 +105,15 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'sentinel'
+          name: 'whence'
           image: image
           resources: { cpu: json('0.5'), memory: '1Gi' }
           env: [
-            { name: 'SENTINEL_DEMO_MODE', value: string(demoMode ? 1 : 0) }
+            { name: 'WHENCE_DEMO_MODE', value: string(demoMode ? 1 : 0) }
             // Expose the real /mcp wire endpoint (the image already defaults to
             // create_gateway_app; this makes the intent explicit and survives an
             // image that uses create_app).
-            { name: 'SENTINEL_ENABLE_MCP_GATEWAY', value: '1' }
+            { name: 'WHENCE_ENABLE_MCP_GATEWAY', value: '1' }
             { name: 'AZURE_COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
             { name: 'AZURE_KEY_VAULT_URI', value: kv.properties.vaultUri }
             // NOT VERIFIED AS DEPLOYABLE (audit F-02). This template has never
@@ -124,13 +124,13 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
             //
             // Internal-only DNS for the downstream tool servers. These are live:
             // setting them selects the remote path, which connects over real
-            // MCP-over-HTTP through sentinel.downstream.open_downstream_session.
+            // MCP-over-HTTP through whence.downstream.open_downstream_session.
             // Streamable-HTTP MCP endpoints. The /mcp path is REQUIRED: the tool
-            // servers mount their MCP app there, and SENTINEL connects to the URL
+            // servers mount their MCP app there, and Whence connects to the URL
             // verbatim, so omitting it fails discovery at startup.
-            { name: 'SENTINEL_TOOLS_WEB_URL', value: 'http://${prefix}-tools-web/mcp' }
-            { name: 'SENTINEL_TOOLS_EMAIL_URL', value: 'http://${prefix}-tools-email/mcp' }
-            { name: 'SENTINEL_TOOLS_RECORDS_URL', value: 'http://${prefix}-tools-records/mcp' }
+            { name: 'WHENCE_TOOLS_WEB_URL', value: 'http://${prefix}-tools-web/mcp' }
+            { name: 'WHENCE_TOOLS_EMAIL_URL', value: 'http://${prefix}-tools-email/mcp' }
+            { name: 'WHENCE_TOOLS_RECORDS_URL', value: 'http://${prefix}-tools-records/mcp' }
           ]
         }
       ]
@@ -148,13 +148,13 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// Grant SENTINEL's managed identity read access to Key Vault secrets (RBAC).
+// Grant Whence's managed identity read access to Key Vault secrets (RBAC).
 resource kvRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, sentinel.id, kvSecretsUserRole)
+  name: guid(kv.id, whence.id, kvSecretsUserRole)
   scope: kv
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRole)
-    principalId: sentinel.identity.principalId
+    principalId: whence.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -168,7 +168,7 @@ resource tools 'Microsoft.App/containerApps@2024-03-01' = [for t in toolServers:
     managedEnvironmentId: env.id
     configuration: {
       ingress: {
-        external: false // <-- NO external ingress: reachable only from SENTINEL
+        external: false // <-- NO external ingress: reachable only from Whence
         targetPort: 8000
         transport: 'http'
       }
@@ -178,10 +178,10 @@ resource tools 'Microsoft.App/containerApps@2024-03-01' = [for t in toolServers:
         {
           name: 'toolserver'
           image: image
-          command: [ 'python', '-m', 'sentinel.demo.toolserver_main' ]
+          command: [ 'python', '-m', 'whence.demo.toolserver_main' ]
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           env: [
-            { name: 'SENTINEL_TOOL_SERVER', value: t }
+            { name: 'WHENCE_TOOL_SERVER', value: t }
             { name: 'PORT', value: '8000' }
           ]
         }
@@ -191,5 +191,5 @@ resource tools 'Microsoft.App/containerApps@2024-03-01' = [for t in toolServers:
   }
 }]
 
-output sentinelUrl string = 'https://${sentinel.properties.configuration.ingress.fqdn}'
+output whenceUrl string = 'https://${whence.properties.configuration.ingress.fqdn}'
 output toolServersExternal bool = false // proof: tool servers are never public

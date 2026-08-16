@@ -15,9 +15,9 @@ from mcp.client.session import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 
-from sentinel.demo.driver import CallbackAgentDriver, ScriptedAgentDriver
-from sentinel.demo.preflight import PreflightError, preflight
-from sentinel.demo.scenario import (
+from whence.demo.driver import CallbackAgentDriver, ScriptedAgentDriver
+from whence.demo.preflight import PreflightError, preflight
+from whence.demo.scenario import (
     DemoResult,
     hero_steps,
     run_demo_session,
@@ -25,12 +25,12 @@ from sentinel.demo.scenario import (
     run_privilege_violation,
     run_trust_collapse,
 )
-from sentinel.demo.tool_servers import (
+from whence.demo.tool_servers import (
     ATTACKER_ADDRESS,
     OBVIOUS_URL,
     SYNTHETIC_SECRET_MARKERS,
 )
-from sentinel.mcp_proxy.content import result_text
+from whence.mcp_proxy.content import result_text
 
 
 def _injection(result: DemoResult, target: str) -> object:

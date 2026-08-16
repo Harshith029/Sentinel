@@ -16,15 +16,15 @@ from mcp.client.session import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 
-from sentinel.authorization.engine import AuthorizationEngine
-from sentinel.authorization.policy import load_policy
-from sentinel.forensics.emitter import SpanEmitter
-from sentinel.forensics.replay import TraceReplay, replay
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.mcp_proxy.content import result_text
-from sentinel.mcp_proxy.proxy import SentinelProxy
-from sentinel.trust.config import load_default_trust_config
-from sentinel.trust.scorer import TrustScorer
+from whence.authorization.engine import AuthorizationEngine
+from whence.authorization.policy import load_policy
+from whence.forensics.emitter import SpanEmitter
+from whence.forensics.replay import TraceReplay, replay
+from whence.forensics.store import InMemoryForensicStore
+from whence.mcp_proxy.content import result_text
+from whence.mcp_proxy.proxy import WhenceProxy
+from whence.trust.config import load_default_trust_config
+from whence.trust.scorer import TrustScorer
 
 # A Phase-4 policy. It EXTENDS the §2B canonical set with `web_fetch` (a read
 # tool with no deny rules) — deliberately NOT mutating the Phase-2 default.yaml,
@@ -61,7 +61,7 @@ class Downstream:
     """Mock tool servers with an observable execution log + email outbox.
 
     The execution log is the ground truth for "did this tool actually run
-    downstream?" — the non-bypassability test compares it against SENTINEL spans.
+    downstream?" — the non-bypassability test compares it against Whence spans.
     """
 
     executions: list[tuple[str, object]] = field(default_factory=list)
@@ -99,7 +99,7 @@ class Downstream:
 class Harness:
     agent: ClientSession
     store: InMemoryForensicStore
-    proxy: SentinelProxy
+    proxy: WhenceProxy
     downstream: Downstream
 
     async def replay(self) -> TraceReplay:
@@ -110,7 +110,7 @@ class Harness:
 async def proxy_session(
     *, user_input: str = "do the task", agent_id: str = "agent-1"
 ) -> AsyncIterator[Harness]:
-    """Wire the full topology: agent client → SENTINEL proxy → downstream tools."""
+    """Wire the full topology: agent client → Whence proxy → downstream tools."""
     store = InMemoryForensicStore()
     emitter = SpanEmitter(store)
     engine = AuthorizationEngine(load_policy(PHASE4_POLICY))
@@ -119,7 +119,7 @@ async def proxy_session(
 
     async with connect(downstream.server()) as tool_client:
         await tool_client.initialize()
-        proxy = SentinelProxy(
+        proxy = WhenceProxy(
             downstream=tool_client,
             emitter=emitter,
             engine=engine,
@@ -148,7 +148,7 @@ async def test_allowed_tool_roundtrips_and_executes_downstream() -> None:
 
     # It actually ran on the downstream server...
     assert h.downstream.executions == [("web_fetch", "https://corp.example/p")]
-    # ...and left a full SENTINEL span trail.
+    # ...and left a full Whence span trail.
     rep = await h.replay()
     assert [p.decision for p in _of_type(rep, "AuthorizationDecided")] == ["ALLOW"]  # type: ignore[attr-defined]
     assert len(_of_type(rep, "ToolExecuted")) == 1
@@ -161,7 +161,7 @@ async def test_blocked_tool_returns_clean_mcp_error() -> None:
         result = await h.agent.call_tool("delete_record", {"id": 7})
         # Clean MCP error at the message boundary, not a transport exception.
         assert result.isError is True
-        assert "SENTINEL blocked" in result.content[0].text
+        assert "Whence blocked" in result.content[0].text
         assert "delete_record" in result.content[0].text
 
     assert h.downstream.executions == []  # never reached downstream
@@ -171,9 +171,9 @@ async def test_blocked_tool_returns_clean_mcp_error() -> None:
     assert blocked.matched_rule_id == "never"  # type: ignore[attr-defined]
 
 
-# --- DoD: NO tool ever executes without a SENTINEL span (the architecture lock)
+# --- DoD: NO tool ever executes without a Whence span (the architecture lock)
 
-async def test_no_tool_executes_without_a_sentinel_span() -> None:
+async def test_no_tool_executes_without_a_whence_span() -> None:
     async with proxy_session(user_input="mixed run") as h:
         # one allowed, two blocked (delete_record always; send_email tainted + bad domain)
         await h.agent.call_tool("web_fetch", {"url": "https://corp.example/a"})
@@ -220,7 +220,7 @@ async def test_non_foundry_client_is_secured_identically() -> None:
 
         denied = await h.agent.call_tool("delete_record", {"id": 1})
         assert denied.isError is True
-        assert "SENTINEL blocked" in denied.content[0].text
+        assert "Whence blocked" in denied.content[0].text
 
         allowed = await h.agent.call_tool("web_fetch", {"url": "https://corp.example/x"})
         assert allowed.isError is False

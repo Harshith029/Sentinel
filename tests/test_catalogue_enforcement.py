@@ -9,9 +9,9 @@ from __future__ import annotations
 import mcp.types as mcp_types
 import pytest
 
-from sentinel.demo.preflight import PreflightError, preflight
-from sentinel.mcp_proxy.router import ToolRouter
-from sentinel.shield import InputShield
+from whence.demo.preflight import PreflightError, preflight
+from whence.mcp_proxy.router import ToolRouter
+from whence.shield import InputShield
 
 SHIELD = InputShield(demo_mode=True)
 

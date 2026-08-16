@@ -1,7 +1,7 @@
 # Secrets / env
 .env
 # Operator config: accepts an api_token, so it must never be committed.
-sentinel.yaml
+whence.yaml
 .env.local
 .env.*.local
 *.pem
@@ -64,3 +64,7 @@ sdk_verification_dump.json
 # Phase 0 gitleaks test plants this file at runtime; the fixture cleans it up,
 # but belt-and-braces: never let it slip into a commit.
 _phase0_planted_secret_DELETE_ME.txt
+
+# Scratch dependency dump from a dependency audit; never part of the repo.
+.audit-deps/
+deck/snapshots/

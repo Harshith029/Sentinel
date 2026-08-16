@@ -1,11 +1,11 @@
 """Both SUPPORTED remote downstream paths, over real TCP, plus the contract of
 the single connection factory they share.
 
-SENTINEL reaches downstream MCP servers two ways, and both are shipped:
+Whence reaches downstream MCP servers two ways, and both are shipped:
 
-* ``SENTINEL_MCP_SERVERS`` — the operator declares their own servers. This is
+* ``WHENCE_MCP_SERVERS`` — the operator declares their own servers. This is
   the product path.
-* ``SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL`` — the example topology the ACA
+* ``WHENCE_TOOLS_{WEB,EMAIL,RECORDS}_URL`` — the example topology the ACA
   bicep deploys as separate internal apps.
 
 Parsing tests do not cover either of them: they prove a JSON string becomes a
@@ -26,21 +26,21 @@ import pytest
 import uvicorn
 from starlette.applications import Starlette
 
-from sentinel.config import reset_settings_cache
-from sentinel.control.manager import RunManager
-from sentinel.control.mcp_gateway import SentinelGateway
-from sentinel.demo.tool_servers import ToolServerState, build_downstream
-from sentinel.downstream import (
+from whence.config import reset_settings_cache
+from whence.control.manager import RunManager
+from whence.control.mcp_gateway import WhenceGateway
+from whence.demo.tool_servers import ToolServerState, build_downstream
+from whence.downstream import (
     _CONNECT_TIMEOUT_SECONDS,
     DownstreamServer,
     _downstream_http_client,
     connect_downstream,
     open_downstream_session,
 )
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.mcp_proxy.content import result_text
+from whence.forensics.store import InMemoryForensicStore
+from whence.mcp_proxy.content import result_text
 
-# QUARANTINED DIAGNOSTICS — opt in with SENTINEL_RUN_REAL_MCP_TESTS=1.
+# QUARANTINED DIAGNOSTICS — opt in with WHENCE_RUN_REAL_MCP_TESTS=1.
 #
 # These are NOT part of passing coverage. Each one passes on its own, but two of
 # them in a process wedge on the open teardown defect
@@ -49,22 +49,22 @@ from sentinel.mcp_proxy.content import result_text
 # ``-k declared`` silently skip, so the gate is an environment variable and the
 # tests really run when you ask for them:
 #
-#   SENTINEL_RUN_REAL_MCP_TESTS=1 pytest tests/test_downstream_remote_paths.py -k declared
+#   WHENCE_RUN_REAL_MCP_TESTS=1 pytest tests/test_downstream_remote_paths.py -k declared
 #
 # The `real_mcp` CI job runs them one at a time and is non-blocking until the
 # teardown defect is fixed; at that point delete the gate and fold them in.
 #
-# They are also evidence about that defect: they tear down SENTINEL's OWN
+# They are also evidence about that defect: they tear down Whence's OWN
 # downstream sessions, so the wedge follows open_downstream_session teardown and
 # is not confined to the external test client.
-_OPT_IN: Final[bool] = os.getenv("SENTINEL_RUN_REAL_MCP_TESTS") == "1"
+_OPT_IN: Final[bool] = os.getenv("WHENCE_RUN_REAL_MCP_TESTS") == "1"
 
 pytestmark = [
     pytest.mark.filterwarnings("ignore::ResourceWarning"),
     pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning"),
     pytest.mark.skipif(
         not _OPT_IN,
-        reason="quarantined real-MCP diagnostic; set SENTINEL_RUN_REAL_MCP_TESTS=1 "
+        reason="quarantined real-MCP diagnostic; set WHENCE_RUN_REAL_MCP_TESTS=1 "
                "and select ONE test (see docs/mcp-streamable-http-teardown.md)",
     ),
 ]
@@ -117,7 +117,7 @@ def _tool_servers() -> dict[str, Starlette]:
 async def test_declared_servers_path_discovers_and_proxies_over_tcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SENTINEL_MCP_SERVERS: real discovery and a real proxied call.
+    """WHENCE_MCP_SERVERS: real discovery and a real proxied call.
 
     The generic path is what an operator actually uses, and it had no integration
     coverage — only unit tests over ``parse_servers``. Those cannot show that
@@ -130,14 +130,14 @@ async def test_declared_servers_path_discovers_and_proxies_over_tcp(
             for key, app in servers.items()
         }
         declared = [{"name": key, "url": srv.url} for key, srv in running.items()]
-        monkeypatch.setenv("SENTINEL_MCP_SERVERS", json.dumps(declared))
-        for var in ("SENTINEL_TOOLS_WEB_URL", "SENTINEL_TOOLS_EMAIL_URL",
-                    "SENTINEL_TOOLS_RECORDS_URL"):
+        monkeypatch.setenv("WHENCE_MCP_SERVERS", json.dumps(declared))
+        for var in ("WHENCE_TOOLS_WEB_URL", "WHENCE_TOOLS_EMAIL_URL",
+                    "WHENCE_TOOLS_RECORDS_URL"):
             monkeypatch.delenv(var, raising=False)
         reset_settings_cache()
         try:
             manager = RunManager(store=InMemoryForensicStore())
-            gateway = SentinelGateway(manager)
+            gateway = WhenceGateway(manager)
             async with gateway:
                 assert gateway.downstream_mode == "declared"
                 # Discovery really crossed the wire.
@@ -160,7 +160,7 @@ async def test_declared_servers_path_discovers_and_proxies_over_tcp(
 async def test_legacy_tools_url_path_discovers_and_proxies_over_tcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SENTINEL_TOOLS_*_URL: the topology the bicep deploys, over real TCP.
+    """WHENCE_TOOLS_*_URL: the topology the bicep deploys, over real TCP.
 
     This is the path ``deploy/main.bicep`` wires, so it must be exercised as
     deployed — including the ``/mcp`` suffix the template now sets, whose absence
@@ -172,13 +172,13 @@ async def test_legacy_tools_url_path_discovers_and_proxies_over_tcp(
             key: await stack.enter_async_context(_Server(app))
             for key, app in servers.items()
         }
-        monkeypatch.delenv("SENTINEL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("WHENCE_MCP_SERVERS", raising=False)
         for key, var in (("web", "WEB"), ("email", "EMAIL"), ("records", "RECORDS")):
-            monkeypatch.setenv(f"SENTINEL_TOOLS_{var}_URL", running[key].url)
+            monkeypatch.setenv(f"WHENCE_TOOLS_{var}_URL", running[key].url)
         reset_settings_cache()
         try:
             manager = RunManager(store=InMemoryForensicStore())
-            gateway = SentinelGateway(manager)
+            gateway = WhenceGateway(manager)
             async with gateway:
                 assert gateway.downstream_mode == "remote-http"
                 proxy = gateway._manager.new_live_proxy(  # noqa: SLF001
@@ -249,7 +249,7 @@ async def test_factory_closes_the_http_client_it_was_given() -> None:
             opened.append(client)
             return client
 
-        import sentinel.downstream as ds
+        import whence.downstream as ds
 
         original = ds.httpx.AsyncClient
         ds.httpx.AsyncClient = _track  # type: ignore[misc,assignment]
@@ -348,9 +348,9 @@ def _recording_app(app: Starlette, seen: list[tuple[str, str]]) -> Starlette:
 
 
 def _declare(monkeypatch: pytest.MonkeyPatch, servers: list[dict[str, str]]) -> None:
-    monkeypatch.setenv("SENTINEL_MCP_SERVERS", json.dumps(servers))
-    for var in ("SENTINEL_TOOLS_WEB_URL", "SENTINEL_TOOLS_EMAIL_URL",
-                "SENTINEL_TOOLS_RECORDS_URL"):
+    monkeypatch.setenv("WHENCE_MCP_SERVERS", json.dumps(servers))
+    for var in ("WHENCE_TOOLS_WEB_URL", "WHENCE_TOOLS_EMAIL_URL",
+                "WHENCE_TOOLS_RECORDS_URL"):
         monkeypatch.delenv(var, raising=False)
     reset_settings_cache()
 
@@ -366,7 +366,7 @@ def _dead_port() -> int:
 async def test_declared_path_sends_session_termination_on_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SENTINEL_MCP_SERVERS: closing the gateway DELETEs the MCP session.
+    """WHENCE_MCP_SERVERS: closing the gateway DELETEs the MCP session.
 
     Observed on the server, not inferred from a constant. Without the DELETE the
     downstream keeps the session in ``_server_instances`` forever, because the
@@ -378,7 +378,7 @@ async def test_declared_path_sends_session_termination_on_close(
         srv = await stack.enter_async_context(_Server(app))
         _declare(monkeypatch, [{"name": "records", "url": srv.url}])
         try:
-            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            gateway = WhenceGateway(RunManager(store=InMemoryForensicStore()))
             async with gateway:
                 assert gateway.downstream_mode == "declared"
             assert any(m == "DELETE" for m, _ in seen), (
@@ -391,7 +391,7 @@ async def test_declared_path_sends_session_termination_on_close(
 async def test_legacy_path_sends_session_termination_on_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SENTINEL_TOOLS_*_URL: the same protocol obligation on the bicep path."""
+    """WHENCE_TOOLS_*_URL: the same protocol obligation on the bicep path."""
     seen: list[tuple[str, str]] = []
     apps = _tool_servers()
     async with AsyncExitStack() as stack:
@@ -399,12 +399,12 @@ async def test_legacy_path_sends_session_termination_on_close(
         for key, app in apps.items():
             wrapped = _recording_app(app, seen) if key == "records" else app
             running[key] = await stack.enter_async_context(_Server(wrapped))
-        monkeypatch.delenv("SENTINEL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("WHENCE_MCP_SERVERS", raising=False)
         for key, var in (("web", "WEB"), ("email", "EMAIL"), ("records", "RECORDS")):
-            monkeypatch.setenv(f"SENTINEL_TOOLS_{var}_URL", running[key].url)
+            monkeypatch.setenv(f"WHENCE_TOOLS_{var}_URL", running[key].url)
         reset_settings_cache()
         try:
-            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            gateway = WhenceGateway(RunManager(store=InMemoryForensicStore()))
             async with gateway:
                 assert gateway.downstream_mode == "remote-http"
             assert any(m == "DELETE" for m, _ in seen), (
@@ -425,7 +425,7 @@ async def test_gateway_aenter_failure_closes_already_connected_servers(
     startup leaves behind.
     """
     opened: list[httpx.AsyncClient] = []
-    import sentinel.downstream as ds
+    import whence.downstream as ds
 
     real = ds.httpx.AsyncClient
 
@@ -442,7 +442,7 @@ async def test_gateway_aenter_failure_closes_already_connected_servers(
         ])
         monkeypatch.setattr(ds.httpx, "AsyncClient", _track)
         try:
-            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            gateway = WhenceGateway(RunManager(store=InMemoryForensicStore()))
             with pytest.raises(Exception) as err:  # noqa: B017 - startup surfaces many
                 await gateway.__aenter__()
             assert "dead" in str(err.value)
@@ -465,8 +465,8 @@ async def test_gateway_aenter_failure_after_connect_closes_everything(
     perfectly well. Those must clean up too.
     """
     opened: list[httpx.AsyncClient] = []
-    import sentinel.control.mcp_gateway as gw_mod
-    import sentinel.downstream as ds
+    import whence.control.mcp_gateway as gw_mod
+    import whence.downstream as ds
 
     real = ds.httpx.AsyncClient
 
@@ -484,7 +484,7 @@ async def test_gateway_aenter_failure_after_connect_closes_everything(
         monkeypatch.setattr(ds.httpx, "AsyncClient", _track)
         monkeypatch.setattr(gw_mod, "preflight", _boom)
         try:
-            gateway = SentinelGateway(RunManager(store=InMemoryForensicStore()))
+            gateway = WhenceGateway(RunManager(store=InMemoryForensicStore()))
             with pytest.raises(RuntimeError, match="catalogue rejected"):
                 await gateway.__aenter__()
             assert opened, "downstream connected before preflight, so a client exists"

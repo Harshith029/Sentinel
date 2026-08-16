@@ -12,12 +12,12 @@ from collections import deque
 
 import pytest
 
-from sentinel.forensics.emitter import SpanEmitter
-from sentinel.forensics.replay import replay
-from sentinel.forensics.span import Span
-from sentinel.forensics.store import InMemoryForensicStore
-from sentinel.trust.config import TrustConfig, load_default_trust_config
-from sentinel.trust.scorer import (
+from whence.forensics.emitter import SpanEmitter
+from whence.forensics.replay import replay
+from whence.forensics.span import Span
+from whence.forensics.store import InMemoryForensicStore
+from whence.trust.config import TrustConfig, load_default_trust_config
+from whence.trust.scorer import (
     START,
     TrustScorer,
     transition_penalty,

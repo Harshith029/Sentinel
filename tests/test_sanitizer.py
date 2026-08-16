@@ -4,9 +4,9 @@ from __future__ import annotations
 import itertools
 from decimal import Decimal
 
-from sentinel.provenance.graph import ProvenanceGraph
-from sentinel.provenance.model import ProvenanceNode
-from sentinel.provenance.sanitizer import (
+from whence.provenance.graph import ProvenanceGraph
+from whence.provenance.model import ProvenanceNode
+from whence.provenance.sanitizer import (
     DecimalAmountSchema,
     IsoDateSchema,
     StructuredExtractor,

@@ -1,5 +1,5 @@
-<svg width="128" height="128" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SENTINEL logo">
-  <title>SENTINEL</title>
+<svg width="128" height="128" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WHENCE logo">
+  <title>WHENCE</title>
   <!-- Shield: the proxy boundary. Stroked (not filled) so the mark reads on both
        light and dark GitHub themes without a background plate. -->
   <path d="M32 3.5 L57 13.5 V31 C57 45.5 45.5 56.5 32 60.5 C18.5 56.5 7 45.5 7 31 V13.5 Z"

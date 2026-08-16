@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/banner.png" alt="Whence — provenance-aware security for AI agents" width="680">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/banner.svg" alt="Whence — provenance-aware security for AI agents" width="680">
 
 [![PyPI](https://img.shields.io/pypi/v/whence?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/whence/)
 [![Python](https://img.shields.io/pypi/pyversions/whence?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/whence/)
@@ -127,7 +127,7 @@ the attacker's inbox; with it, the email is never sent.</i></sub>
 ## How it works
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through Whence, which traces origins, authorizes, contains, and records" width="760">
+<img src="https://raw.githubusercontent.com/Harshith029/Whence/main/assets/architecture.svg" alt="Architecture: the agent reaches its tools only through Whence, which traces origins, authorizes, contains, and records" width="760">
 </div>
 
 ```

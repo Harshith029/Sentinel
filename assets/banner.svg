@@ -1,5 +1,5 @@
-<svg width="720" height="200" viewBox="0 0 720 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SENTINEL — provenance-aware security for AI agents">
-  <title>SENTINEL — provenance-aware security for AI agents</title>
+<svg width="720" height="200" viewBox="0 0 720 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WHENCE — provenance-aware security for AI agents">
+  <title>WHENCE — provenance-aware security for AI agents</title>
   <defs>
     <!-- Cyan -> indigo. Saturated enough to carry the mark on either GitHub theme,
          without needing a background plate that would fight the page. -->
@@ -34,7 +34,7 @@
   <!-- Wordmark: heavy and wide-tracked. The previous thin weight read as washed
        out at README scale; weight is what gives the mark presence. -->
   <text x="152" y="96" font-family="'Segoe UI Black', 'Arial Black', 'Segoe UI', Helvetica, sans-serif"
-        font-size="56" font-weight="900" letter-spacing="6.5" fill="url(#wm)">SENTINEL</text>
+        font-size="56" font-weight="900" letter-spacing="6.5" fill="url(#wm)">WHENCE</text>
 
   <rect x="155" y="112" width="452" height="2.5" rx="1.25" fill="url(#rule)"/>
 

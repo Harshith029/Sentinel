@@ -169,3 +169,27 @@ class StructuredExtractor:
             cleared_from=tainted.span_id,
         )
         return SanitizedValue(node=cleared, value=extracted)
+
+
+# --- schema registry ----------------------------------------------------------
+#
+# Policy names a schema as a STRING (``declassify: {schema: decimal_amount}``),
+# so the string has to resolve to a real validator. The registry is closed on
+# purpose: an operator can only select from schemas that ship with Whence and
+# have been reviewed. Letting policy name an arbitrary import path would make
+# the trust boundary configurable by whoever can write policy, which is exactly
+# the thing declassification must not become.
+_SCHEMAS: dict[str, ExtractionSchema] = {
+    DecimalAmountSchema().name: DecimalAmountSchema(),
+    IsoDateSchema().name: IsoDateSchema(),
+}
+
+
+def schema_names() -> tuple[str, ...]:
+    """Every schema a policy may name, for validation and error messages."""
+    return tuple(sorted(_SCHEMAS))
+
+
+def get_schema(name: str) -> ExtractionSchema:
+    """Resolve a policy-declared schema name. Raises ``KeyError`` if unknown."""
+    return _SCHEMAS[name]

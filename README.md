@@ -75,7 +75,7 @@ Read this before deploying anything.
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested |
 | Authentication | Every endpoint gated; fails closed when unconfigured |
-| Declassification (`StructuredExtractor`) | **Not wired into enforcement** — taint never clears in a live proxy |
+| Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | **Not implemented** — trust and quarantine reset when a session reconnects |
 | Multi-tenant isolation | **Not implemented** — a valid credential sees everything |
 | Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
@@ -144,13 +144,22 @@ unioned over an action's transitive `derived_from` ancestry — computed by a re
 cycle-safe graph walk, not a mutable flag. An action is tainted iff
 `RETRIEVED_CONTENT` is in that set.
 
-`StructuredExtractor` implements declassification — strict schema validation
-produces a fresh SYSTEM-trust value with no inherited ancestry, and a sanitized
-value cannot launder a tainted sibling because recombination re-taints. **It is
-not yet wired into the enforcement path.** Today it is reachable only through the
-`/demo/sanitization` endpoint, so in a running proxy taint never clears. Until
-that lands, treat conservative tainting as absolute: once a lineage touches
-retrieved content, every downstream action inherits it.
+Taint clears exactly one way: **declassification**, declared per tool in policy.
+
+```yaml
+tools:
+  read_price:
+    declassify:
+      schema: decimal_amount   # output crosses the boundary only if it validates
+    rules: []
+```
+
+`StructuredExtractor` then validates that tool's output against the named schema.
+On a match the value starts fresh at SYSTEM trust with no inherited ancestry; on
+a mismatch it stays exactly as tainted as it was. Opt-in per tool, so a tool with
+no `declassify` block can never clear taint, and the schema registry is closed —
+policy names a reviewed schema or the policy fails to load. A cleared value
+cannot launder a tainted sibling, because recombination re-taints.
 
 Policy compiles to a **typed condition AST** and is evaluated by tree-walk;
 there is no `eval` anywhere in the codebase. Rules are deny-only with
@@ -276,11 +285,11 @@ Stating the boundary precisely is what separates a security product from a demo.
   being *persuaded* — it stops the resulting unauthorized **action**.
 - The proxy and the policy store are **trusted** components.
 - One trace is handled by one proxy instance; horizontal scaling is *across* traces.
-- **Conservative tainting is intentional**, but currently has no escape hatch in
-  the enforcement path: declassification exists (`StructuredExtractor`) and is
-  demonstrated, yet a live proxy cannot clear taint. Policies must therefore
-  allow tainted actions explicitly, or the workflow stops. Wiring declassification
-  into enforcement is the top open item.
+- **Conservative tainting is intentional.** The escape hatch is declassification,
+  declared per tool in policy, and it is deliberately narrow: syntactic schema
+  validation only. Taint saturation is the correct bias for action-layer
+  security, so clearing it must be something an operator opts into for a
+  specific tool and a specific shape of value.
 - **Sanitization is syntactic, not semantic.** A schema-valid `{"price": 999999}` is
   well-formed but still subject to argument-level rules such as an amount cap.
 

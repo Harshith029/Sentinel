@@ -24,16 +24,17 @@ never re-parses or sees raw strings.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from whence.authorization.ast import Predicate
 from whence.authorization.parser import PolicyParseError, parse_condition
+from whence.provenance.sanitizer import schema_names
 
 
 class PolicyLoadError(ValueError):
@@ -64,10 +65,34 @@ class _RuleDoc(BaseModel):
         return self
 
 
+class _DeclassifyDoc(BaseModel):
+    """Opt-in declassification for ONE tool's output.
+
+    Naming a schema here says: this tool's result may cross the trust boundary
+    IF it validates as that schema, and only as the typed value the schema
+    extracts. It is deliberately per-tool and deliberately explicit — a global
+    or implicit rule would turn taint-clearing into laundering.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_name: str = Field(alias="schema")
+
+    @model_validator(mode="after")
+    def _schema_is_known(self) -> _DeclassifyDoc:
+        if self.schema_name not in schema_names():
+            raise ValueError(
+                f"unknown declassification schema {self.schema_name!r}; "
+                f"available: {', '.join(schema_names())}"
+            )
+        return self
+
+
 class _ToolDoc(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rules: list[_RuleDoc]
+    declassify: _DeclassifyDoc | None = None
 
 
 class _PolicyDoc(BaseModel):
@@ -97,6 +122,13 @@ class CompiledRule:
 class CompiledPolicy:
     policy_version: int
     tools: dict[str, tuple[CompiledRule, ...]]
+    # tool name -> declassification schema name. Absent means this tool's output
+    # can never clear taint, which is the default for every tool.
+    declassifiers: dict[str, str] = field(default_factory=dict)
+
+    def declassifier_for(self, tool_name: str) -> str | None:
+        """The schema a tool's output may be declassified by, if policy allows it."""
+        return self.declassifiers.get(tool_name)
 
     def rules_for(self, tool_name: str) -> tuple[CompiledRule, ...] | None:
         """Rules for ``tool_name``, or ``None`` if the tool is unknown (→ default-deny)."""
@@ -105,6 +137,11 @@ class CompiledPolicy:
 
 def _compile(doc: _PolicyDoc) -> CompiledPolicy:
     tools: dict[str, tuple[CompiledRule, ...]] = {}
+    declassifiers: dict[str, str] = {
+        name: tool_doc.declassify.schema_name
+        for name, tool_doc in doc.tools.items()
+        if tool_doc.declassify is not None
+    }
     for tool_name, tool_doc in doc.tools.items():
         compiled: list[CompiledRule] = []
         for rule in tool_doc.rules:
@@ -124,7 +161,9 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
                     CompiledRule(id=rule.id, deny_always=False, condition=condition)
                 )
         tools[tool_name] = tuple(compiled)
-    return CompiledPolicy(policy_version=doc.policy_version, tools=tools)
+    return CompiledPolicy(
+        policy_version=doc.policy_version, tools=tools, declassifiers=declassifiers
+    )
 
 
 def load_policy(text: str) -> CompiledPolicy:

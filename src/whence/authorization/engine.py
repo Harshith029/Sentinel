@@ -90,6 +90,15 @@ class AuthorizationEngine:
     def policy_version(self) -> int:
         return self._policy.policy_version
 
+    def declassifier_for(self, tool_name: str) -> str | None:
+        """The declassification schema policy allows for a tool's output.
+
+        Declassification is a POLICY decision, not a proxy one, so the engine
+        owns it alongside authorization: the same document that says what a tool
+        may do says whether its output may cross the trust boundary.
+        """
+        return self._policy.declassifier_for(tool_name)
+
     def authorize(self, call: ToolCall) -> AuthorizationResult:
         provenance = _sorted_provenance(call.provenance)
         rules = self._policy.rules_for(call.name)

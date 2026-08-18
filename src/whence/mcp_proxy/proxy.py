@@ -61,6 +61,7 @@ from whence.mcp_proxy.router import DownstreamConnection
 from whence.observability import log_allowed, log_blocked, log_injection_flagged
 from whence.provenance.graph import ProvenanceGraph
 from whence.provenance.model import ProvenanceNode
+from whence.provenance.sanitizer import StructuredExtractor, get_schema
 from whence.shield import InputShield
 from whence.trust.scorer import TrustScorer
 
@@ -108,6 +109,8 @@ class WhenceProxy:
         self._downstream = downstream
         self._emitter = emitter
         self._engine = engine
+        # Policy decides WHETHER a tool may declassify; this performs it.
+        self._sanitizer = StructuredExtractor()
         self._scorer = scorer
         self._agent_id = agent_id
         self._trace_id = trace_id
@@ -328,10 +331,38 @@ class WhenceProxy:
             )
             result = await self._downstream.call_tool(name, dict(arguments))
             label = self._result_labels.get(name, self._default_result_label)
+
+            # 4b. DECLASSIFICATION (§4.4), the only way taint ever clears.
+            #
+            # Opt-in per tool, declared in POLICY rather than decided here: the
+            # same document that says what a tool may do says whether its output
+            # may cross the trust boundary, and for which schema. Without this
+            # the taint model has no escape hatch — every lineage that ever
+            # touched retrieved content stays tainted forever, so operators must
+            # either permit tainted actions outright or watch the workflow stop.
+            #
+            # Fail-closed in both directions: a tool with no declared schema can
+            # never clear taint, and a declared schema that does not MATCH leaves
+            # the result exactly as tainted as it was.
+            cleared_from: str | None = None
+            schema_name = self._engine.declassifier_for(name)
+            if schema_name is not None:
+                source = ProvenanceNode(
+                    span_id=proposed.span_id, label=label, derived_from=()
+                )
+                sanitized = self._sanitizer.sanitize(
+                    source, get_schema(schema_name), content=result_text(result)
+                )
+                if sanitized is not None:
+                    label = self._sanitizer.output_label
+                    cleared_from = proposed.span_id
+
             executed = await self._emitter.emit(
                 ToolExecuted(
                     tool_name=name,
                     arguments=dict(arguments),
+                    # Records the OUTCOME: an operator reading the trail sees
+                    # SYSTEM here exactly when a value was declassified.
                     result_label=label,
                     result_summary=summarize_result(result),
                 ),
@@ -339,12 +370,16 @@ class WhenceProxy:
                 parent_span_id=proposed.span_id,
             )
             # The result becomes part of what the agent has observed: add it to
-            # the graph and the frontier so future calls derive from it.
+            # the graph and the frontier so future calls derive from it. A
+            # declassified value starts FRESH — derived_from is empty, so the
+            # walk never reaches its tainted origin, and cleared_from records
+            # that origin for audit without making it an ancestor.
             self._graph.add(
                 ProvenanceNode(
                     span_id=executed.span_id,
                     label=label,
-                    derived_from=(proposed.span_id,),
+                    derived_from=() if cleared_from else (proposed.span_id,),
+                    cleared_from=cleared_from,
                 )
             )
             self._frontier.append(executed.span_id)

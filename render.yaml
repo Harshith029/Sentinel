@@ -15,3 +15,21 @@ services:
     envVars:
       - key: WHENCE_DEMO_MODE
         value: "1"
+      # This blueprint deploys a PUBLIC SANDBOX with synthetic data, so it runs
+      # without authentication ON PURPOSE — and now has to say so. Whence is
+      # fail-closed: with neither a token nor this flag it refuses to serve
+      # rather than serving openly, which is what stops a real deployment from
+      # being exposed by an omission. That protection is only meaningful if the
+      # demo declares its posture instead of inheriting it by accident.
+      #
+      # DO NOT COPY THIS INTO A REAL DEPLOYMENT. Drop this key and set
+      # WHENCE_API_TOKEN instead (Render can mint one for you):
+      #
+      #   - key: WHENCE_API_TOKEN
+      #     generateValue: true
+      #
+      # Anonymous mode leaves /mcp open, so anyone who can reach the URL can
+      # drive the tools behind it. Here they are in-memory mocks with no egress;
+      # in front of your own MCP servers they would not be.
+      - key: WHENCE_ALLOW_ANONYMOUS
+        value: "1"

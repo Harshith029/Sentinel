@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 
-from whence.control.app import create_app
-from whence.control.manager import RunManager
+from sentinel.control.app import create_app
+from sentinel.control.manager import RunManager
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ async def test_dashboard_is_served() -> None:
         # Load-bearing IA must be present in the markup. Match case-insensitively
         # so a visual-craft restyle (e.g. sentence-case headings) cannot break it.
         body = resp.text.lower()
-        assert "whence" in body
+        assert "sentinel" in body
         assert "launch attack" in body
         assert "never persisted" in body
         assert "view full lineage (dag)" in body

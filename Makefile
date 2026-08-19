@@ -1,4 +1,4 @@
-# Whence developer Makefile.
+# SENTINEL developer Makefile.
 #
 # Targets are intentionally tiny shims — the real logic is in pyproject.toml,
 # pre-commit config, and CI. `make test` is the canonical entry point Phase 0
@@ -17,7 +17,7 @@ endif
 .PHONY: help test test-unit lint typecheck install hooks gitleaks-scan clean dashboard serve
 
 help:
-	@echo "Whence — developer targets"
+	@echo "SENTINEL — developer targets"
 	@echo ""
 	@echo "  make install       — create .venv and install dev extras"
 	@echo "  make hooks         — install the pre-commit git hook"
@@ -30,10 +30,10 @@ help:
 	@echo "  make clean         — remove caches and build artifacts"
 
 dashboard:  ## Phase 7: serve the live dashboard + control plane at http://127.0.0.1:8765
-	$(PY) -m uvicorn whence.control.app:create_app --factory --host 127.0.0.1 --port 8765
+	$(PY) -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
 
 serve:  ## Phase 9: serve the dashboard + control plane + REAL /mcp wire transport
-	$(PY) -m uvicorn whence.control.app:create_gateway_app --factory --host 127.0.0.1 --port 8765
+	$(PY) -m uvicorn sentinel.control.app:create_gateway_app --factory --host 127.0.0.1 --port 8765
 
 install:
 	python -m venv .venv

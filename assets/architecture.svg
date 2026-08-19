@@ -1,5 +1,5 @@
-<svg width="820" height="300" viewBox="0 0 820 300" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture: the agent reaches its tools only through WHENCE">
-  <title>WHENCE architecture</title>
+<svg width="820" height="300" viewBox="0 0 820 300" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture: the agent reaches its tools only through SENTINEL">
+  <title>SENTINEL architecture</title>
   <!-- Stroked, transparent-background boxes so the diagram reads on both the light
        and dark GitHub themes without a background plate. -->
   <style>
@@ -21,14 +21,14 @@
   <text class="sub"  x="98" y="147" text-anchor="middle">Foundry · Claude · GPT</text>
   <text class="sub"  x="98" y="163" text-anchor="middle">or anything MCP</text>
 
-  <!-- agent -> whence -->
+  <!-- agent -> sentinel -->
   <line x1="188" y1="134" x2="242" y2="134" stroke="#38BDF8" stroke-width="1.8"/>
   <path d="M242 134 l-8 -4.5 v9 z" fill="#38BDF8"/>
   <text class="edge" x="215" y="124" text-anchor="middle">MCP</text>
 
-  <!-- whence -->
+  <!-- sentinel -->
   <rect class="core" x="248" y="34" width="324" height="212" rx="10"/>
-  <text class="core-hdr" x="272" y="62">WHENCE</text>
+  <text class="core-hdr" x="272" y="62">SENTINEL</text>
 
   <text class="num"  x="274" y="100">1</text>
   <text class="step" x="296" y="100">Trace</text>
@@ -46,7 +46,7 @@
   <text class="step" x="296" y="208">Record</text>
   <text class="desc" x="378" y="208">replayable forensic evidence</text>
 
-  <!-- whence -> tools -->
+  <!-- sentinel -> tools -->
   <line x1="578" y1="134" x2="632" y2="134" stroke="#38BDF8" stroke-width="1.8"/>
   <path d="M632 134 l-8 -4.5 v9 z" fill="#38BDF8"/>
   <text class="edge" x="605" y="124" text-anchor="middle">MCP</text>
@@ -55,7 +55,7 @@
   <rect class="box" x="638" y="86" width="168" height="96" rx="8"/>
   <text class="hdr" x="722" y="126" text-anchor="middle">YOUR MCP</text>
   <text class="hdr" x="722" y="145" text-anchor="middle">SERVERS</text>
-  <text class="sub" x="722" y="166" text-anchor="middle">reachable only via WHENCE</text>
+  <text class="sub" x="722" y="166" text-anchor="middle">reachable only via SENTINEL</text>
 
   <text class="note" x="410" y="278" text-anchor="middle">Interception is guaranteed by network topology — nothing in the agent to forget, disable, or bypass.</text>
 </svg>

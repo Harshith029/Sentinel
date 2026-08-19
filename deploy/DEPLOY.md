@@ -1,11 +1,11 @@
-# Whence — deployment
+# SENTINEL — deployment
 
 ## Local bring-up (fresh clone → whole system up, DEMO MODE)
 
 **Option A — Docker (no Python needed):**
 ```bash
-docker build -t whence -f deploy/Dockerfile .
-docker run --rm -p 8765:8765 whence
+docker build -t sentinel -f deploy/Dockerfile .
+docker run --rm -p 8765:8765 sentinel
 # open http://localhost:8765  →  click "Launch attack"
 ```
 
@@ -16,7 +16,7 @@ python -m venv .venv
 make dashboard                                     # serves http://127.0.0.1:8765
 ```
 
-Either way the **whole system** comes up in DEMO MODE: the Whence proxy, the
+Either way the **whole system** comes up in DEMO MODE: the SENTINEL proxy, the
 control plane, the dashboard, and the three mock tool servers (in-memory MCP
 transport). The security pipeline (provenance → authorization → trust → forensics)
 is identical to production — only the integrations in the capability matrix degrade.
@@ -27,18 +27,18 @@ is identical to production — only the integrations in the capability matrix de
 then deploy:
 
 ```bash
-az group create -n whence-rg -l eastus
-az acr create -n <acr> -g whence-rg --sku Basic
-az acr build -r <acr> -t whence:1.0 -f deploy/Dockerfile .
-az deployment group create -g whence-rg -f deploy/main.bicep \
-  -p image=<acr>.azurecr.io/whence:1.0 demoMode=false
+az group create -n sentinel-rg -l eastus
+az acr create -n <acr> -g sentinel-rg --sku Basic
+az acr build -r <acr> -t sentinel:1.0 -f deploy/Dockerfile .
+az deployment group create -g sentinel-rg -f deploy/main.bicep \
+  -p image=<acr>.azurecr.io/sentinel:1.0 demoMode=false
 ```
 
 What the bicep encodes (the parts that matter):
 
 | Concern | How it is enforced |
 |---|---|
-| **Topology / thesis** | `whencey` has `ingress.external = true` (the ONLY public endpoint). The three `whence-tools-*` apps have `ingress.external = false` — **no external ingress**, reachable only inside the ACA environment, i.e. only by Whence. |
+| **Topology / thesis** | `sentinely` has `ingress.external = true` (the ONLY public endpoint). The three `sentinel-tools-*` apps have `ingress.external = false` — **no external ingress**, reachable only inside the ACA environment, i.e. only by SENTINEL. |
 | **Autoscale** | KEDA **HTTP-concurrency** scaler on the proxy (`name: http-concurrency`, `concurrentRequests: 50`). |
 | **Identity** | `identity: SystemAssigned` on the proxy + a Key Vault **Secrets User** RBAC role assignment to that principal (explicit, not implicit). |
 | **Secrets** | Key Vault with `enableRbacAuthorization: true`; Cosmos with `disableLocalAuth: true` (identity-only). |
@@ -60,7 +60,7 @@ Therefore:
 - **NOT executed end-to-end here:** a live Foundry agent run, live Prompt Shields
   calls, live Azure OpenAI calls, and the live MCP-over-HTTP transport between the
   proxy and the internal tool-server apps. These require a live subscription +
-  credentials and the HTTP-MCP exposure of Whence's MCP server.
+  credentials and the HTTP-MCP exposure of SENTINEL's MCP server.
 
 The stage demo runs on **DEMO MODE**, which is fully exercised (219+ tests, the
 hero attack verified in a real browser). Only the agent **driver** differs between

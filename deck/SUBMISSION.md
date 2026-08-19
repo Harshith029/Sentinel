@@ -1,4 +1,4 @@
-# Whence — submission writeup (paste-ready)
+# SENTINEL — submission writeup (paste-ready)
 
 For the Microsoft Build AI Hackathon 2026 — *Security in the Agentic Future*.
 Copy the sections below into the submission form. Everything here is grounded in
@@ -11,7 +11,7 @@ Provenance-aware security for agentic AI — block prompt-injection *actions* at
 tool boundary, even when content filters miss the payload.
 
 ## Elevator pitch (≈250 chars)
-Whence is an MCP proxy that authorizes every tool call against the *provenance*
+SENTINEL is an MCP proxy that authorizes every tool call against the *provenance*
 of everything it derived from. An instruction hidden in a fetched web page can't
 drive a high-risk action — the email carrying a stolen SSN is blocked, even when
 the injection evades the shield.
@@ -29,7 +29,7 @@ agent's risk lives in the causal path from instruction-origin to action — not 
 the text of either.** So secure the action, using where it came from.
 
 ## What it does
-Whence is a **Model Context Protocol (MCP) proxy** that sits between an agent
+SENTINEL is a **Model Context Protocol (MCP) proxy** that sits between an agent
 and its tools. To the agent it looks like an MCP server; to the real tool servers
 it's an MCP client. **Every tool call physically traverses it — interception is
 guaranteed by network topology, not by code wrapping**, so it secures any
@@ -79,7 +79,7 @@ driver and integrations change.**
 ## Accomplishments we're proud of
 - A formal, testable provenance model (set-union + membership taint predicate) with
   a real DAG walk.
-- **Topology-guaranteed interception** — no tool executes without a Whence span
+- **Topology-guaranteed interception** — no tool executes without a SENTINEL span
   (asserted by tests).
 - The evasion variant: the shield misses, authorization still blocks.
 - **277 tests passing, `mypy --strict` clean, `ruff` clean, zero `eval`, green CI.**
@@ -115,5 +115,5 @@ non-functional `sk-synthetic-DO-NOT-USE` key). `send_email` writes to an in-memo
 outbox sink — nothing is ever sent. No real PII is processed or persisted; secrets
 in dev live in a gitignored `.env`, with a `gitleaks` pre-commit hook.
 
-**Repo:** https://github.com/Harshith029/Whence
+**Repo:** https://github.com/Harshith029/SENTINEL
 **Run it:** `make dashboard` → http://localhost:8765 → click **Launch attack**.

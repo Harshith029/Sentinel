@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from whence.provenance.graph import ProvenanceGraph
-from whence.provenance.model import ProvenanceNode
+from sentinel.provenance.graph import ProvenanceGraph
+from sentinel.provenance.model import ProvenanceNode
 
 
 def _node(span_id: str, label: str, *parents: str) -> ProvenanceNode:

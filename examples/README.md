@@ -1,28 +1,28 @@
-# Whence examples — plug your own agent into the pipeline
+# SENTINEL examples — plug your own agent into the pipeline
 
 This directory is the integration-onboarding path for someone who already has
 an MCP-speaking agent (Claude / Foundry / GPT / a custom client) and wants to
-sit Whence in front of it. The canned hero demo proves the pipeline; the
+sit SENTINEL in front of it. The canned hero demo proves the pipeline; the
 examples here let you point that pipeline at *your* tools and *your*
 attacks.
 
 If you only want the canned demo, you don't need any of this — run
 `make dashboard` and click **Launch hero attack**. Read on only when you
-want Whence to secure something real.
+want SENTINEL to secure something real.
 
 ## 1. The integration shape (what changes, what doesn't)
 
-Whence is an **MCP proxy**. To your agent it presents as an MCP server; to
+SENTINEL is an **MCP proxy**. To your agent it presents as an MCP server; to
 your real tool servers it is an MCP client. Every tool call physically
 traverses it.
 
 - **Your agent code doesn't change.** It still speaks MCP. It now talks to
-  Whence's MCP endpoint instead of your tool server's.
+  SENTINEL's MCP endpoint instead of your tool server's.
 - **Your tool servers don't change.** They still speak MCP. They are now
-  reachable only from Whence (network-isolate them so this is enforced by
+  reachable only from SENTINEL (network-isolate them so this is enforced by
   topology, not hope).
 - **You define one YAML policy.** It says which arguments to which tools are
-  allowed against which provenance sets. Whence parses it into a typed AST
+  allowed against which provenance sets. SENTINEL parses it into a typed AST
   at load time (never `eval`) and rejects malformed YAML before it can match.
 
 Most of the work in onboarding is writing the policy and verifying it does
@@ -33,7 +33,7 @@ what you think; the wiring is a few config lines.
 As of v1.x:
 
 - **MCP-over-HTTP transport for the proxy server itself now ships** (Phase 9).
-  Run `make serve` and Whence exposes its MCP server at `http://localhost:8765/mcp`.
+  Run `make serve` and SENTINEL exposes its MCP server at `http://localhost:8765/mcp`.
   Any external MCP client connects there and is secured by the same pipeline —
   proven over a real socket in `tests/test_phase9_mcp_gateway.py`. This is the
   endpoint a live Foundry agent registers as its `server_url`.
@@ -42,20 +42,20 @@ As of v1.x:
   Foundry-registration helper is correct against the installed SDK but has not
   been smoke-tested against a real Foundry project (no Azure subscription in the
   build environment). The *downstream* hop now also supports **remote tool servers
-  over HTTP** — set `WHENCE_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway
+  over HTTP** — set `SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway
   connects to them instead of the in-memory mocks (tested over real sockets).
 
 So the *currently shipping* integration paths are:
 
 a. **Connect a real MCP client over HTTP** to `/mcp` (`make serve`), e.g.
-   `python examples/connect_over_http.py` — see §3a. This is the "put Whence
+   `python examples/connect_over_http.py` — see §3a. This is the "put SENTINEL
    in front of your agent" path.
 b. **Run the canned hero scenarios** via `POST /attack/{scenario}`.
 c. **Run your own scripted attack** via `POST /runs/custom` (the dashboard's
    "Your attack" tab is the UI for this).
 d. **Drive the pipeline from a Python test** by importing
-   `whence.demo.scenario.run_demo_session` with any
-   `whence.demo.driver.AgentDriver`. This is the seam an LLM-backed agent
+   `sentinel.demo.scenario.run_demo_session` with any
+   `sentinel.demo.driver.AgentDriver`. This is the seam an LLM-backed agent
    plugs into; over the wire, that same agent just points at `/mcp`.
 
 ## 3a. Connecting a real MCP client over the wire (`make serve`)
@@ -66,13 +66,13 @@ python examples/connect_over_http.py    # a real mcp client drives the hero atta
 ```
 
 `connect_over_http.py` uses the upstream `mcp` SDK's HTTP client — **no
-Whence-specific code** — to connect to `/mcp`, list tools, and run the hero
+SENTINEL-specific code** — to connect to `/mcp`, list tools, and run the hero
 kill chain. The poisoned-lineage `send_email` comes back `isError=True` with
-`Whence blocked …`. Swap in your own client the same way; to your agent,
-Whence is just an MCP tool server. Each connection is its own `live-mcp` trace
+`SENTINEL blocked …`. Swap in your own client the same way; to your agent,
+SENTINEL is just an MCP tool server. Each connection is its own `live-mcp` trace
 on the dashboard.
 
-For a **real LLM agent loop** (the model decides; Whence is the backstop):
+For a **real LLM agent loop** (the model decides; SENTINEL is the backstop):
 
 ```bash
 OPENAI_API_KEY=sk-... python examples/run_live_agent.py   # a real model, tricked → BLOCKED
@@ -103,9 +103,9 @@ curl -X POST http://localhost:8765/runs/custom \
 Watch the trace by hitting `/events/stream?follow=true&trace_id=<id>`, or
 open the dashboard which does it for you. For the "before" view, the
 identical body to `POST /runs/custom/baseline` returns what the outbox
-*would* contain if Whence weren't there.
+*would* contain if SENTINEL weren't there.
 
-## 4. The "without Whence" baseline (the contrast a buyer needs)
+## 4. The "without SENTINEL" baseline (the contrast a buyer needs)
 
 ```bash
 curl -X POST http://localhost:8765/attack/hero-obvious/baseline -d '{}' \
@@ -127,7 +127,7 @@ Returns:
 }
 ```
 
-The same call routed *through* Whence produces an empty outbox + a
+The same call routed *through* SENTINEL produces an empty outbox + a
 `ToolBlocked` span with rule `block-untrusted-origin`. That contrast is the
 demo — the dashboard renders the two outboxes side by side.
 
@@ -146,7 +146,7 @@ to Splunk / Datadog / your SIEM of choice.
 
 ## 6. Optional auth
 
-Set `WHENCE_API_TOKEN=<a-long-random-string>` and the mutating endpoints
+Set `SENTINEL_API_TOKEN=<a-long-random-string>` and the mutating endpoints
 (`POST /runs*`, `POST /attack/*`, `POST /tenants/*/policy`,
 `POST /agents/*/reset`) require:
 
@@ -164,16 +164,16 @@ launching scenarios.
 
 - ~~Streamable-HTTP MCP transport for the proxy server~~ — **shipped (Phase 9).**
   `make serve` exposes it at `/mcp`; `examples/connect_over_http.py` drives it.
-  The `MCPTool` Foundry helper in `src/whence/demo/foundry.py` registers this
+  The `MCPTool` Foundry helper in `src/sentinel/demo/foundry.py` registers this
   endpoint as its `server_url`.
 - ~~A live-LLM agent driver~~ — **shipped as a loop (Phase 10).**
-  `whence.demo.llm_driver.LLMAgentDriver` runs a real tool-use loop; the model
-  decides the actions, Whence is the backstop. `examples/run_live_agent.py` drives
+  `sentinel.demo.llm_driver.LLMAgentDriver` runs a real tool-use loop; the model
+  decides the actions, SENTINEL is the backstop. `examples/run_live_agent.py` drives
   it over `/mcp` with a real model (`OPENAI_API_KEY` / Azure OpenAI) or the offline
   stand-in (`--offline`). What's left is calling an actual hosted model (the path is
   wired + fail-loud) and a multi-step planner for extra realism.
 - **Remote downstream tool servers** — *shipped*: set
-  `WHENCE_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway connects to your tool
+  `SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway connects to your tool
   servers over MCP-over-HTTP instead of the mocks. A fully data-driven
   `tools.yaml` registry (arbitrary tools, not the fixed three) is the next step.
 - **More sanitizers** — beyond `DecimalAmountSchema` / `IsoDateSchema`. The

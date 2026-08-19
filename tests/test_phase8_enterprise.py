@@ -8,16 +8,16 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 
-from whence.authorization.policy import PolicyLoadError
-from whence.authorization.registry import DEFAULT_TENANT, PolicyRegistry
-from whence.classifier.attack_classifier import AttackClassifier, BlockedAttempt
-from whence.config import Settings
-from whence.control.app import create_app
-from whence.control.capabilities import mode_summary
-from whence.control.manager import RunManager
-from whence.demo.foundry import (
+from sentinel.authorization.policy import PolicyLoadError
+from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry
+from sentinel.classifier.attack_classifier import AttackClassifier, BlockedAttempt
+from sentinel.config import Settings
+from sentinel.control.app import create_app
+from sentinel.control.capabilities import mode_summary
+from sentinel.control.manager import RunManager
+from sentinel.demo.foundry import (
     PROXIED_TOOLS,
-    build_whence_mcp_tool,
+    build_sentinel_mcp_tool,
     foundry_registration_summary,
 )
 
@@ -150,18 +150,18 @@ async def test_generality_surfaced_in_dashboard() -> None:
 # --- Foundry registration is SDK-correct (verified against azure-ai-projects) -
 
 def test_foundry_mcp_tool_registration_constructs() -> None:
-    tool = build_whence_mcp_tool(server_url="https://whence.example/mcp")
-    assert tool.server_label == "whence"
+    tool = build_sentinel_mcp_tool(server_url="https://sentinel.example/mcp")
+    assert tool.server_label == "sentinel"
     assert "web_fetch" in PROXIED_TOOLS and "send_email" in PROXIED_TOOLS
 
-    summary = foundry_registration_summary(server_url="https://whence.example/mcp")
+    summary = foundry_registration_summary(server_url="https://sentinel.example/mcp")
     assert summary["sdk_constructed"] is True
     assert summary["require_approval"] == "never"
 
 
 def test_phase4_policy_still_loads() -> None:
     # sanity: the inline Phase-4-style extended policy still compiles via load_policy
-    from whence.authorization.policy import load_policy
+    from sentinel.authorization.policy import load_policy
 
     policy = load_policy(
         textwrap.dedent(

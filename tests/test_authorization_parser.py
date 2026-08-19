@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from whence.authorization.ast import (
+from sentinel.authorization.ast import (
     And,
     Comparison,
     LabelLiteral,
@@ -15,7 +15,7 @@ from whence.authorization.ast import (
     SetLiteral,
     Variable,
 )
-from whence.authorization.parser import PolicyParseError, parse_condition
+from sentinel.authorization.parser import PolicyParseError, parse_condition
 
 
 def test_parses_provenance_membership() -> None:

@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from whence.config import Settings, get_settings, reset_settings_cache
-from whence.tracing import (
+from sentinel.config import Settings, get_settings, reset_settings_cache
+from sentinel.tracing import (
     get_tracer,
     init_tracing,
     new_span_id_hex,
@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_demo_mode_default_true_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("WHENCE_DEMO_MODE", raising=False)
+    monkeypatch.delenv("SENTINEL_DEMO_MODE", raising=False)
     reset_settings_cache()
     s = get_settings()
     assert s.demo_mode is True
@@ -39,22 +39,22 @@ def test_demo_mode_default_true_when_env_unset(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.parametrize("raw", ["0", "false", "FALSE", "no", "off"])
 def test_demo_mode_false_values(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
-    monkeypatch.setenv("WHENCE_DEMO_MODE", raw)
+    monkeypatch.setenv("SENTINEL_DEMO_MODE", raw)
     reset_settings_cache()
     assert get_settings().demo_mode is False
 
 
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
 def test_demo_mode_true_values(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
-    monkeypatch.setenv("WHENCE_DEMO_MODE", raw)
+    monkeypatch.setenv("SENTINEL_DEMO_MODE", raw)
     reset_settings_cache()
     assert get_settings().demo_mode is True
 
 
 def test_demo_mode_bad_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WHENCE_DEMO_MODE", "maybe")
+    monkeypatch.setenv("SENTINEL_DEMO_MODE", "maybe")
     reset_settings_cache()
-    with pytest.raises(ValueError, match="WHENCE_DEMO_MODE"):
+    with pytest.raises(ValueError, match="SENTINEL_DEMO_MODE"):
         get_settings()
 
 
@@ -72,7 +72,7 @@ def test_settings_is_frozen() -> None:
 def test_tracer_initializes_and_produces_span() -> None:
     reset_tracing_for_tests()
     init_tracing()
-    tracer = get_tracer("whence.tests")
+    tracer = get_tracer("sentinel.tests")
     with tracer.start_as_current_span("smoke") as span:
         ctx = span.get_span_context()
         assert ctx.trace_id != 0

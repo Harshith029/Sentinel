@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from whence.config import Settings
-from whence.control import manager as mgr
-from whence.forensics.store import CosmosForensicStore, SqliteForensicStore
-from whence.shield import InputShield
+from sentinel.config import Settings
+from sentinel.control import manager as mgr
+from sentinel.forensics.store import CosmosForensicStore, SqliteForensicStore
+from sentinel.shield import InputShield
 
 
 def test_default_store_selects_cosmos_when_azure_configured(
@@ -30,7 +30,7 @@ def test_default_store_selects_cosmos_when_azure_configured(
 def test_default_store_uses_sqlite_without_cosmos(
     monkeypatch: pytest.MonkeyPatch, tmp_path: object
 ) -> None:
-    monkeypatch.setenv("WHENCE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path))
     demo = Settings(demo_mode=True)  # no AZURE_COSMOS_ENDPOINT
     assert isinstance(mgr._default_store(demo), SqliteForensicStore)
 

@@ -1,4 +1,4 @@
-# Whence — SDK Verification (Phase 0 artifact)
+# SENTINEL — SDK Verification (Phase 0 artifact)
 
 This file records facts CONFIRMED against the actually-installed SDKs in
 `versions.lock`, per BUILD_SPEC §3 / Phase 0 kickoff item 4. It is the live
@@ -69,7 +69,7 @@ Sample wire output (from `MCPTool(...).as_dict()`):
 
 ```json
 {
-  "server_label": "whence",
+  "server_label": "sentinel",
   "server_url": "http://localhost:8765/mcp",
   "allowed_tools": ["web_fetch", "send_email", "..."],
   "require_approval": "never",
@@ -107,7 +107,7 @@ Sample wire output (from `MCPTool(...).as_dict()`):
 
 We MUST always pass an explicit non-empty list of tool names to
 `allowed_tools`, matching spec §6 ("ENUMERATE proxied tools explicitly").
-Whence therefore registers the exact tool set it intends the protected agent
+SENTINEL therefore registers the exact tool set it intends the protected agent
 to reach. Any future code path that wants "all tools" must pass the full list —
 never `[]`. A linter / runtime assertion in Phase 4 enforces this.
 

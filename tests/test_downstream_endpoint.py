@@ -1,4 +1,4 @@
-"""The /downstream endpoint: what Whence is actually protecting, made visible.
+"""The /downstream endpoint: what SENTINEL is actually protecting, made visible.
 
 The product's strongest properties (which servers are connected, which tools were
 discovered, which catalogue defenses are active) were previously invisible to an
@@ -9,10 +9,10 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from whence.control.app import create_app
-from whence.control.manager import RunManager
-from whence.control.mcp_gateway import WhenceGateway
-from whence.forensics.store import InMemoryForensicStore
+from sentinel.control.app import create_app
+from sentinel.control.manager import RunManager
+from sentinel.control.mcp_gateway import SentinelGateway
+from sentinel.forensics.store import InMemoryForensicStore
 
 
 def _manager() -> RunManager:
@@ -45,12 +45,12 @@ async def test_dashboard_renders_the_downstream_panel() -> None:
 async def test_describes_connected_downstream_and_active_defenses() -> None:
     manager = _manager()
     try:
-        async with WhenceGateway(manager) as gateway:
+        async with SentinelGateway(manager) as gateway:
             described = gateway.describe()
     finally:
         await manager.aclose()
 
-    # bundled example topology (no WHENCE_MCP_SERVERS declared in tests)
+    # bundled example topology (no SENTINEL_MCP_SERVERS declared in tests)
     assert described["mode"] == "memory"
     assert described["declared"] is False
     assert described["tool_count"] >= 4
@@ -67,13 +67,13 @@ async def test_describes_connected_downstream_and_active_defenses() -> None:
 async def test_poisoning_mode_reflects_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from whence.config import reset_settings_cache
+    from sentinel.config import reset_settings_cache
 
-    monkeypatch.setenv("WHENCE_CATALOGUE_STRICT", "0")
+    monkeypatch.setenv("SENTINEL_CATALOGUE_STRICT", "0")
     reset_settings_cache()
     manager = _manager()
     try:
-        async with WhenceGateway(manager) as gateway:
+        async with SentinelGateway(manager) as gateway:
             assert gateway.describe()["checks"]["tool_poisoning"] == "flag-only"
     finally:
         await manager.aclose()

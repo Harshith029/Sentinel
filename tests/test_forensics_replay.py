@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from whence.forensics.emitter import SpanEmitter
-from whence.forensics.events import InputReceived, ToolCallProposed, ToolExecuted
-from whence.forensics.replay import build_replay, replay
-from whence.forensics.span import Span
-from whence.forensics.store import ForensicStore
+from sentinel.forensics.emitter import SpanEmitter
+from sentinel.forensics.events import InputReceived, ToolCallProposed, ToolExecuted
+from sentinel.forensics.replay import build_replay, replay
+from sentinel.forensics.span import Span
+from sentinel.forensics.store import ForensicStore
 
 TRACE_A = "a" * 32
 

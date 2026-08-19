@@ -1,7 +1,7 @@
 """Declassification is wired into the enforcement path (audit F-09).
 
 `StructuredExtractor` has always existed and been tested in isolation, but the
-proxy never called it, so in a running Whence taint NEVER cleared. That is not a
+proxy never called it, so in a running SENTINEL taint NEVER cleared. That is not a
 missing nicety: without an escape hatch, every lineage that once touched
 retrieved content stays tainted forever, and an operator must either permit
 tainted actions outright or watch the workflow stop. The taint model only works
@@ -20,16 +20,16 @@ import textwrap
 
 import pytest
 
-from whence.authorization.engine import AuthorizationEngine
-from whence.authorization.policy import PolicyLoadError, load_policy
-from whence.forensics.emitter import SpanEmitter
-from whence.forensics.replay import replay
-from whence.forensics.store import InMemoryForensicStore
-from whence.labels import RETRIEVED_CONTENT, SYSTEM
-from whence.mcp_proxy.content import result_text
-from whence.mcp_proxy.proxy import WhenceProxy
-from whence.trust.config import load_default_trust_config
-from whence.trust.scorer import TrustScorer
+from sentinel.authorization.engine import AuthorizationEngine
+from sentinel.authorization.policy import PolicyLoadError, load_policy
+from sentinel.forensics.emitter import SpanEmitter
+from sentinel.forensics.replay import replay
+from sentinel.forensics.store import InMemoryForensicStore
+from sentinel.labels import RETRIEVED_CONTENT, SYSTEM
+from sentinel.mcp_proxy.content import result_text
+from sentinel.mcp_proxy.proxy import SentinelProxy
+from sentinel.trust.config import load_default_trust_config
+from sentinel.trust.scorer import TrustScorer
 
 # `read_price` may declassify: its output crosses the boundary only if it
 # validates as a lone decimal. `read_page` may not, so it always taints.
@@ -68,11 +68,11 @@ class _Downstream:
         )
 
 
-def _proxy(responses: dict[str, str]) -> tuple[WhenceProxy, InMemoryForensicStore]:
+def _proxy(responses: dict[str, str]) -> tuple[SentinelProxy, InMemoryForensicStore]:
     store = InMemoryForensicStore()
     emitter = SpanEmitter(store)
     return (
-        WhenceProxy(
+        SentinelProxy(
             downstream=_Downstream(responses),
             emitter=emitter,
             engine=AuthorizationEngine(load_policy(POLICY)),

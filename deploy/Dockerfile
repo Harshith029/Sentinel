@@ -1,15 +1,15 @@
-# Whence container image (BUILD_SPEC §Phase 8).
+# SENTINEL container image (BUILD_SPEC §Phase 8).
 #
 # One image serves three roles via the run command:
-#   * Whence proxy + control plane + dashboard  (default CMD, external ingress)
-#   * a mock tool server                          (CMD: python -m whence.demo.toolserver_main)
+#   * SENTINEL proxy + control plane + dashboard  (default CMD, external ingress)
+#   * a mock tool server                          (CMD: python -m sentinel.demo.toolserver_main)
 # In Azure Container Apps the tool-server replicas run with INTERNAL ingress only.
 FROM python:3.11-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    WHENCE_DEMO_MODE=1
+    SENTINEL_DEMO_MODE=1
 
 WORKDIR /app
 
@@ -29,17 +29,17 @@ RUN python -m pip install --upgrade pip setuptools wheel \
 
 # Run as non-root. /data is the writable home of the SQLite forensic store —
 # /app is root-owned, so the default ./var path would fail for uid 10001.
-RUN useradd --create-home --uid 10001 whence \
- && mkdir -p /data && chown whence /data
-ENV WHENCE_DATA_DIR=/data
-USER whence
+RUN useradd --create-home --uid 10001 sentinel \
+ && mkdir -p /data && chown sentinel /data
+ENV SENTINEL_DATA_DIR=/data
+USER sentinel
 
 EXPOSE 8765
 
 # Default role: the FULL product — control plane + dashboard + the real /mcp wire
 # gateway (create_gateway_app), so the deployed app is the same thing `make serve`
-# runs locally. Gate /mcp with WHENCE_API_TOKEN on any public deploy.
-# Run through the CLI (the product interface), so a mounted /app/whence.yaml is
-# honoured exactly as it is locally: `docker run -v $(pwd)/whence.yaml:/app/whence.yaml`.
+# runs locally. Gate /mcp with SENTINEL_API_TOKEN on any public deploy.
+# Run through the CLI (the product interface), so a mounted /app/sentinel.yaml is
+# honoured exactly as it is locally: `docker run -v $(pwd)/sentinel.yaml:/app/sentinel.yaml`.
 # Without one it serves with defaults, which is what the hosted demo does.
-CMD ["whence", "serve", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["sentinel", "serve", "--host", "0.0.0.0", "--port", "8765"]

@@ -1,13 +1,13 @@
-# Contributing to Whence
+# Contributing to SENTINEL
 
-Thanks for your interest. Whence is a security proxy, so the bar for changes is
+Thanks for your interest. SENTINEL is a security proxy, so the bar for changes is
 "does this preserve the guarantees" more than "does it work".
 
 ## Setup
 
 ```bash
-git clone https://github.com/Harshith029/Whence.git
-cd Whence
+git clone https://github.com/Harshith029/SENTINEL.git
+cd SENTINEL
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
 .venv/bin/pre-commit install
@@ -40,7 +40,7 @@ not a passing test suite.
 4. **The sanitizer is not launderable.** A cleared value has empty `derived_from`;
    recombining it with a tainted sibling re-taints.
 5. **Interception is topological.** Every agent→tool path goes through
-   `WhenceProxy._intercept`. The non-bypassability test compares downstream
+   `SentinelProxy._intercept`. The non-bypassability test compares downstream
    executions against emitted spans — keep it green.
 6. **Forensic spans are immutable.** An identical re-emit is a no-op; a differing one
    is rejected.
@@ -77,9 +77,9 @@ One-time setup on PyPI (before the first upload), at
 
 | Field | Value |
 |---|---|
-| PyPI Project Name | `whence` |
+| PyPI Project Name | `sentinel` |
 | Owner | `Harshith029` |
-| Repository name | `Whence` |
+| Repository name | `SENTINEL` |
 | Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
@@ -96,7 +96,7 @@ TestPyPI first if unsure. Push tags individually; never `git push --tags`.
 
 ## Reporting a vulnerability
 
-Please **do not** open a public issue for a security vulnerability in Whence
+Please **do not** open a public issue for a security vulnerability in SENTINEL
 itself. Open a GitHub security advisory on the repository, or contact the maintainer
 privately, and allow time for a fix before disclosure.
 

@@ -3,10 +3,10 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Distribution name only — the import package and CLI command are both `whence`.
-# (`whence`, `whence-mcp`, `mcp-whence` and `whencey` were all
-# unavailable on PyPI, so the published distribution is `whence`.)
-name = "whence"
+# Distribution name only — the import package and CLI command are both `sentinel`.
+# (`sentinel`, `sentinel-mcp`, `mcp-sentinel` and `sentinely` were all
+# unavailable on PyPI, so the published distribution is `sentinel`.)
+name = "sentinel-prox"
 version = "0.2.0"
 description = "Provenance-aware security proxy for AI agents: block prompt-injection actions at the MCP tool boundary."
 requires-python = ">=3.11"
@@ -38,7 +38,7 @@ classifiers = [
 # would be absorbed into the sub-table.
 
 # Every direct dependency carries an UPPER bound as well as a floor. Floors alone
-# let `pip install whence` resolve a breaking major: mcp 2.0.0 removed an
+# let `pip install sentinel` resolve a breaking major: mcp 2.0.0 removed an
 # API we use and made the first published release fail on import. Exact tested
 # versions live in versions.lock (used by CI and the container); these ranges are
 # what protects a plain `pip install` for everyone else.
@@ -75,14 +75,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Harshith029/Whence"
-Repository = "https://github.com/Harshith029/Whence"
-Issues = "https://github.com/Harshith029/Whence/issues"
-Demo = "https://whence-i63x.onrender.com"
+Homepage = "https://github.com/Harshith029/SENTINEL"
+Repository = "https://github.com/Harshith029/SENTINEL"
+Issues = "https://github.com/Harshith029/SENTINEL/issues"
+Demo = "https://sentinel-i63x.onrender.com"
 
 [project.scripts]
-# The product surface: `whence init|check|scaffold|serve`.
-whence = "whence.cli:main"
+# The product surface: `sentinel init|check|scaffold|serve`.
+sentinel = "sentinel.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -101,10 +101,10 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship the canonical authorization policy and trust config with the package so
 # they are loadable via importlib.resources in both editable and wheel installs.
-"whence" = ["py.typed"]                # PEP 561: ship inline types to consumers
-"whence.authorization" = ["policies/*.yaml"]
-"whence.trust" = ["config.yaml"]
-"whence.control" = ["static/*.html", "static/fonts/*.woff2"]
+"sentinel" = ["py.typed"]                # PEP 561: ship inline types to consumers
+"sentinel.authorization" = ["policies/*.yaml"]
+"sentinel.trust" = ["config.yaml"]
+"sentinel.control" = ["static/*.html", "static/fonts/*.woff2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

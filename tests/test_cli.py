@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from whence.cli import (
+from sentinel.cli import (
     DEFAULT_CONFIG,
     ConfigError,
     apply_config,
@@ -21,17 +21,17 @@ from whence.cli import (
     load_config,
     main,
 )
-from whence.config import reset_settings_cache
+from sentinel.config import reset_settings_cache
 
 _CLI_VARS = (
-    "WHENCE_MCP_SERVERS", "WHENCE_POLICY_FILE",
-    "WHENCE_CATALOGUE_STRICT", "WHENCE_REAL_WEB_FETCH", "WHENCE_API_TOKEN",
+    "SENTINEL_MCP_SERVERS", "SENTINEL_POLICY_FILE",
+    "SENTINEL_CATALOGUE_STRICT", "SENTINEL_REAL_WEB_FETCH", "SENTINEL_API_TOKEN",
 )
 
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Scratch cwd + a clean WHENCE_* environment, restored afterwards.
+    """Scratch cwd + a clean SENTINEL_* environment, restored afterwards.
 
     ``apply_config`` writes ``os.environ`` directly (that is its whole job), and
     monkeypatch cannot undo writes it did not make — so without an explicit
@@ -65,7 +65,7 @@ def test_init_refuses_to_clobber_without_force() -> None:
     assert main(["init"]) == 1
     assert Path(DEFAULT_CONFIG).read_text(encoding="utf-8") == "servers: []"
     assert main(["init", "--force"]) == 0
-    assert "Whence configuration" in Path(DEFAULT_CONFIG).read_text(encoding="utf-8")
+    assert "SENTINEL configuration" in Path(DEFAULT_CONFIG).read_text(encoding="utf-8")
 
 
 # --- config loading & precedence ----------------------------------------------
@@ -98,18 +98,18 @@ def test_config_populates_environment() -> None:
             "catalogue_strict": False,
         }
     )
-    assert '"name": "gh"' in os.environ["WHENCE_MCP_SERVERS"]
-    assert os.environ["WHENCE_POLICY_FILE"] == "./policy.yaml"
-    assert os.environ["WHENCE_CATALOGUE_STRICT"] == "0"
+    assert '"name": "gh"' in os.environ["SENTINEL_MCP_SERVERS"]
+    assert os.environ["SENTINEL_POLICY_FILE"] == "./policy.yaml"
+    assert os.environ["SENTINEL_CATALOGUE_STRICT"] == "0"
 
 
 def test_explicit_environment_beats_the_config_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Containers must be able to override a checked-in file without editing it."""
-    monkeypatch.setenv("WHENCE_POLICY_FILE", "/etc/from-env.yaml")
+    monkeypatch.setenv("SENTINEL_POLICY_FILE", "/etc/from-env.yaml")
     apply_config({"policy": "./from-file.yaml"})
-    assert os.environ["WHENCE_POLICY_FILE"] == "/etc/from-env.yaml"
+    assert os.environ["SENTINEL_POLICY_FILE"] == "/etc/from-env.yaml"
 
 
 # --- check: actionable failures -----------------------------------------------
@@ -121,7 +121,7 @@ def test_check_fails_clearly_when_policy_is_missing(
     assert main(["check"]) == 1
     captured = capsys.readouterr()
     assert "MISSING" in captured.out
-    assert "whence scaffold" in captured.err  # tells the operator what to do
+    assert "sentinel scaffold" in captured.err  # tells the operator what to do
 
 
 def test_check_fails_clearly_when_no_servers_declared(
@@ -149,9 +149,9 @@ def test_serve_dashboard_is_opt_in() -> None:
 def test_init_warns_when_the_config_could_be_committed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """F-13: whence.yaml accepts an api_token, so a committed copy leaks it.
+    """F-13: sentinel.yaml accepts an api_token, so a committed copy leaks it.
 
-    `whence init` writes the file straight into the operator's working tree.
+    `sentinel init` writes the file straight into the operator's working tree.
     Nothing there tells them it is credential-bearing, and nothing ignores it —
     so the natural next step (commit the new config) publishes a bearer token
     that grants access to the security proxy itself. The starter file now says
@@ -161,14 +161,14 @@ def test_init_warns_when_the_config_could_be_committed(
         ["git", "init", "-q"],  # noqa: S607
         cwd=tmp_path, check=True, capture_output=True,
     )
-    target = tmp_path / "whence.yaml"
+    target = tmp_path / "sentinel.yaml"
 
     assert main(["--config", str(target), "init"]) == 0
     err = capsys.readouterr().err
-    assert "not ignored" in err and "WHENCE_API_TOKEN" in err
+    assert "not ignored" in err and "SENTINEL_API_TOKEN" in err
     assert "SECRETS DO NOT BELONG IN THIS FILE" in target.read_text(encoding="utf-8")
 
     # Once git ignores it there is nothing to warn about.
-    (tmp_path / ".gitignore").write_text("whence.yaml\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("sentinel.yaml\n", encoding="utf-8")
     assert main(["--config", str(target), "init", "--force"]) == 0
     assert "not ignored" not in capsys.readouterr().err

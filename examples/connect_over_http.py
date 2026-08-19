@@ -1,11 +1,11 @@
-"""Connect a REAL external MCP client to Whence over the wire.
+"""Connect a REAL external MCP client to SENTINEL over the wire.
 
-This is the "put Whence in front of your agent" demo. Unlike
+This is the "put SENTINEL in front of your agent" demo. Unlike
 ``run_custom_attack.py`` (which drives the REST control plane), this script speaks
-no Whence-specific API at all: it uses the upstream ``mcp`` SDK's HTTP client to
-connect to Whence's ``/mcp`` endpoint exactly the way any MCP client (Claude
+no SENTINEL-specific API at all: it uses the upstream ``mcp`` SDK's HTTP client to
+connect to SENTINEL's ``/mcp`` endpoint exactly the way any MCP client (Claude
 Desktop, an Azure AI Foundry agent, your own app) would connect to any MCP tool
-server. To the client, Whence is just a tool server — but every call is run
+server. To the client, SENTINEL is just a tool server — but every call is run
 through the provenance → authorization → trust → forensic pipeline.
 
 Run it::
@@ -38,7 +38,7 @@ _DEFAULT_ATTACKER = "attacker@evil-corp.io"
 
 
 def _text(result: object) -> str:
-    """Flatten an MCP CallToolResult's text content (no Whence imports needed)."""
+    """Flatten an MCP CallToolResult's text content (no SENTINEL imports needed)."""
     blocks = getattr(result, "content", []) or []
     return "\n".join(
         getattr(b, "text", "") for b in blocks if getattr(b, "type", None) == "text"
@@ -47,13 +47,13 @@ def _text(result: object) -> str:
 
 async def _run(base: str, poisoned_url: str, attacker: str) -> int:
     mcp_url = base.rstrip("/") + "/mcp"
-    print(f"connecting an MCP client to Whence at {mcp_url} ...\n")
+    print(f"connecting an MCP client to SENTINEL at {mcp_url} ...\n")
     async with streamable_http_client(mcp_url) as (read, write, _session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
             tools = await session.list_tools()
-            print("tools Whence exposes:", sorted(t.name for t in tools.tools), "\n")
+            print("tools SENTINEL exposes:", sorted(t.name for t in tools.tools), "\n")
 
             print("1) get_customer_record(42)  — legit read")
             record = await session.call_tool("get_customer_record", {"id": 42})
@@ -71,9 +71,9 @@ async def _run(base: str, poisoned_url: str, attacker: str) -> int:
             verdict = _text(blocked)
             print("   ->", "BLOCKED:" if blocked.isError else "ALLOWED (!):", verdict, "\n")
 
-            if blocked.isError and "Whence blocked" in verdict:
+            if blocked.isError and "SENTINEL blocked" in verdict:
                 print("RESULT: exfiltration was stopped over the wire. The client was")
-                print("never modified — Whence secured it by sitting in the MCP path.")
+                print("never modified — SENTINEL secured it by sitting in the MCP path.")
                 return 0
             print("RESULT: the call was NOT blocked — check the policy / recipient.")
             return 1
@@ -82,7 +82,7 @@ async def _run(base: str, poisoned_url: str, attacker: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="http://127.0.0.1:8765",
-                        help="Whence base URL (default: %(default)s)")
+                        help="SENTINEL base URL (default: %(default)s)")
     parser.add_argument("--url", default=_DEFAULT_POISONED_URL,
                         help="page the agent fetches (default: the canned poisoned page)")
     parser.add_argument("--attacker", default=_DEFAULT_ATTACKER,

@@ -1,4 +1,4 @@
-# Whence — 3-minute demo video · teleprompter script
+# SENTINEL — 3-minute demo video · teleprompter script
 
 **How to read this:** talk like you're showing a friend something cool on your screen —
 relaxed, not announcing. The little "so", "okay", "yeah", "kind of" are just there to
@@ -12,7 +12,7 @@ worse. ~450 words ≈ just under 3:00 at a relaxed pace.
 
 1. Start the server — PowerShell, in the repo folder, venv active:
    ```
-   .venv\Scripts\python.exe -m uvicorn whence.control.app:create_app --factory --host 127.0.0.1 --port 8765
+   .venv\Scripts\python.exe -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
    ```
    Wait for **"Application startup complete"**, then open **http://localhost:8765** in Chrome.
    *(Or, once it's deployed, record against your live Render URL — but localhost is more
@@ -35,7 +35,7 @@ worse. ~450 words ≈ just under 3:00 at a relaxed pace.
 ### BEAT 1 — the hook  ·  0:00–0:25
 🖱 Dashboard on screen, idle. Cursor parked, not moving.
 
-🎙 "Hey, I'm Harshith, and this is Whence. So the problem I wanted to solve is
+🎙 "Hey, I'm Harshith, and this is SENTINEL. So the problem I wanted to solve is
 honestly kind of a scary one. These days, AI agents don't just talk to you —
 they actually *do* things. They send emails, they pull up customer records, all
 on their own. (pause) And the catch is, whatever's telling them to do that… it
@@ -46,7 +46,7 @@ can come from pretty much anywhere. Even just a web page the agent happened to r
 ### BEAT 2 — launch the attack  ·  0:25–0:35
 🖱 Move the cursor slowly over to the button row.
 
-🎙 "So this is Whence's live monitor. The agent here is sitting behind a proxy,
+🎙 "So this is SENTINEL's live monitor. The agent here is sitting behind a proxy,
 and that proxy sees every tool the agent tries to use. Okay — let me actually try
 to break it. Let's see what happens."
 
@@ -85,7 +85,7 @@ problem with filters, right? They're reading the words. And words are easy to hi
 🎙 "But then, the second the agent tries to actually send that email out… it gets
 blocked. And the reason is the interesting part. It's not because the text looked
 suspicious. It's because if you trace this action back, it came from that
-untrusted page. Whence was tracking where everything came from the whole time.
+untrusted page. SENTINEL was tracking where everything came from the whole time.
 So an email that's basically built out of a poisoned page — yeah, that's just not
 going anywhere."
 
@@ -100,13 +100,13 @@ yep, it's quarantined now. So it kind of just shut itself down, on its own."
 ---
 
 ### BEAT 7 — with vs without  ·  1:55–2:20
-🖱 **Scroll down** to `DIFF // OUTBOX: WITHOUT vs WITH Whence`. Point at the left
+🖱 **Scroll down** to `DIFF // OUTBOX: WITHOUT vs WITH SENTINEL`. Point at the left
 box first, then the right.
 
 🎙 "Okay, so this view is the one I really like. Same attack, just run two ways.
-Without Whence — there it is, the SSN, sitting right in the attacker's inbox.
-(pause) But with Whence? Nothing. It was never even saved. Same agent, same
-tools, same attack — the only difference is Whence was sitting in the middle."
+Without SENTINEL — there it is, the SSN, sitting right in the attacker's inbox.
+(pause) But with SENTINEL? Nothing. It was never even saved. Same agent, same
+tools, same attack — the only difference is SENTINEL was sitting in the middle."
 
 ---
 
@@ -125,7 +125,7 @@ at all. It's just the stuff around it."
 ### BEAT 9 — close  ·  2:45–3:00
 🖱 **Scroll back up** so the BLOCKED banner is on screen again. Hold still.
 
-🎙 "So yeah — that's Whence. There's around 277 tests behind it, it works with
+🎙 "So yeah — that's SENTINEL. There's around 277 tests behind it, it works with
 pretty much any agent — Foundry, Claude, GPT — and you don't have to touch the
 agent's code at all. (pause) Because really, security should be about where
 something came from… not just what it says. Anyway — thanks for watching."

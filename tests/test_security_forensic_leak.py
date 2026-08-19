@@ -20,10 +20,10 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 
-from whence.control.app import create_app
-from whence.control.manager import RunManager
-from whence.demo.tool_servers import SYNTHETIC_SECRET_MARKERS
-from whence.forensics.store import InMemoryForensicStore
+from sentinel.control.app import create_app
+from sentinel.control.manager import RunManager
+from sentinel.demo.tool_servers import SYNTHETIC_SECRET_MARKERS
+from sentinel.forensics.store import InMemoryForensicStore
 
 ATTACKER = "attacker@evil-corp.io"
 

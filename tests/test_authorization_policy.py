@@ -5,7 +5,7 @@ import textwrap
 
 import pytest
 
-from whence.authorization.policy import (
+from sentinel.authorization.policy import (
     PolicyLoadError,
     load_default_policy,
     load_policy,

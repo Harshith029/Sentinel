@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from whence.authorization.ast import (
+from sentinel.authorization.ast import (
     Comparison,
     ConditionError,
     LabelLiteral,

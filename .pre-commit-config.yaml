@@ -1,4 +1,4 @@
-# Whence pre-commit configuration.
+# SENTINEL pre-commit configuration.
 #
 # Phase 0 / BUILD_SPEC §2: secrets are gitignored and `gitleaks` blocks any
 # accidental commit. The pre-commit framework downloads the gitleaks binary,
@@ -33,6 +33,6 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
-        # 2MB: the hackathon submission deck (deck/WHENCE_Submission.pptx,
+        # 2MB: the hackathon submission deck (deck/SENTINEL_Submission.pptx,
         # ~1.3MB with embedded dashboard screenshots) lives in the repo.
         args: ["--maxkb=2048"]

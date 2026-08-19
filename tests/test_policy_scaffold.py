@@ -10,9 +10,9 @@ from __future__ import annotations
 import mcp.types as mcp_types
 import yaml
 
-from whence.authorization.engine import AuthorizationEngine, ToolCall
-from whence.authorization.policy import load_policy
-from whence.scaffold import scaffold_policy
+from sentinel.authorization.engine import AuthorizationEngine, ToolCall
+from sentinel.authorization.policy import load_policy
+from sentinel.scaffold import scaffold_policy
 
 
 def tool(name: str, description: str = "does a thing") -> mcp_types.Tool:
@@ -109,7 +109,7 @@ def test_tool_names_are_not_mangled_by_yaml_marker_stripping() -> None:
 
 
 def test_output_is_pure_ascii() -> None:
-    """`python -m whence.scaffold > policy.yaml` must not crash on a cp1252
+    """`python -m sentinel.scaffold > policy.yaml` must not crash on a cp1252
     console, so the generated document contains no non-ASCII characters."""
     text = scaffold_policy(CATALOGUES)
     text.encode("ascii")  # raises UnicodeEncodeError if we regress

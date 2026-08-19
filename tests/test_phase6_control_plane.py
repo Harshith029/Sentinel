@@ -13,11 +13,11 @@ from pathlib import Path
 
 import httpx
 
-from whence.control.app import create_app
-from whence.control.events import EventBus
-from whence.control.manager import RunManager
-from whence.forensics.span import Span
-from whence.redaction import redact_text
+from sentinel.control.app import create_app
+from sentinel.control.events import EventBus
+from sentinel.control.manager import RunManager
+from sentinel.forensics.span import Span
+from sentinel.redaction import redact_text
 
 TRACE = "a" * 32
 
@@ -282,8 +282,8 @@ async def test_custom_scenario_runs_user_supplied_attack() -> None:
         await manager.aclose()
 
 
-async def test_custom_baseline_outbox_arrives_without_whence() -> None:
-    """The "before" half of the demo: without Whence, the exfil succeeds.
+async def test_custom_baseline_outbox_arrives_without_sentinel() -> None:
+    """The "before" half of the demo: without SENTINEL, the exfil succeeds.
 
     This is the contrast a buyer needs to feel the win. The outbox arrives
     with the synthetic SSN/api_key markers; no spans are produced (no proxy
@@ -307,10 +307,10 @@ async def test_custom_baseline_outbox_arrives_without_whence() -> None:
             assert resp.status_code == 200
             body = resp.json()
             assert body["outbox"], (
-                "without Whence, the email should arrive — this is the WHOLE POINT"
+                "without SENTINEL, the email should arrive — this is the WHOLE POINT"
             )
             # The synthetic-record markers must reach the (fake) attacker —
-            # again, the very thing Whence prevents in the with-proxy path.
+            # again, the very thing SENTINEL prevents in the with-proxy path.
             blob = repr(body["outbox"])
             assert "000-00-0000" in blob or "sk-synthetic" in blob
     finally:
@@ -364,15 +364,15 @@ async def test_no_auth_required_when_token_unset() -> None:
 async def test_mutating_endpoints_require_token_when_set(
     monkeypatch: __import__("pytest").MonkeyPatch,
 ) -> None:
-    """WHENCE_API_TOKEN gates EVERY endpoint, reads included.
+    """SENTINEL_API_TOKEN gates EVERY endpoint, reads included.
 
     Reads were open on the theory that forensic spans are evidence an operator
     may want to inspect freely. That was wrong: the spans map which tools an
     agent called and which were blocked — the operator's estate — and one
     internet-reachable deployment makes that public."""
-    monkeypatch.setenv("WHENCE_API_TOKEN", "s3kret")
+    monkeypatch.setenv("SENTINEL_API_TOKEN", "s3kret")
     # Settings is lru_cached; force a re-read so the new token actually takes effect.
-    from whence.config import reset_settings_cache
+    from sentinel.config import reset_settings_cache
     reset_settings_cache()
     try:
         manager = RunManager()
@@ -417,7 +417,7 @@ async def test_audit_jsonl_download() -> None:
             )
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("application/x-ndjson")
-            assert "whence-" in resp.headers["content-disposition"]
+            assert "sentinel-" in resp.headers["content-disposition"]
             assert ".jsonl" in resp.headers["content-disposition"]
             # Each line is independently valid JSON (JSONL invariant).
             import json as _json
@@ -434,9 +434,9 @@ async def test_audit_jsonl_download() -> None:
 async def test_runs_persist_and_restore_across_restart(tmp_path: Path) -> None:
     """A SQLite-backed manager survives a restart: the prior run's spans + record
     are still queryable, identifiable, and exportable."""
-    from whence.forensics.store import SqliteForensicStore
+    from sentinel.forensics.store import SqliteForensicStore
 
-    db = tmp_path / "whence.db"
+    db = tmp_path / "sentinel.db"
 
     # First lifetime: run a scenario, capture trace_id, then close cleanly.
     mgr_a = RunManager(store=SqliteForensicStore(db))

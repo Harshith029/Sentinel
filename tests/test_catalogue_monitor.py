@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import mcp.types as mcp_types
 
-from whence.catalogue import CatalogueMonitor, fingerprint_catalogue
+from sentinel.catalogue import CatalogueMonitor, fingerprint_catalogue
 
 
 def tool(name: str, description: str = "safe") -> mcp_types.Tool:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import mcp.types as mcp_types
 import pytest
 
-from whence.catalogue import (
+from sentinel.catalogue import (
     CatalogueIntegrityError,
     detect_drift,
     detect_shadowing,
@@ -18,7 +18,7 @@ from whence.catalogue import (
     scan_descriptions,
     verify_catalogue,
 )
-from whence.shield import InputShield
+from sentinel.shield import InputShield
 
 SHIELD = InputShield(demo_mode=True)
 

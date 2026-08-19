@@ -7,10 +7,10 @@ The live, multi-URL demonstration is exercised manually; this locks the wiring.
 """
 from __future__ import annotations
 
-from whence.demo.driver import ScriptedAgentDriver, ToolInvocation
-from whence.demo.scenario import run_demo_session
-from whence.mcp_proxy.content import result_text
-from whence.redaction import redact_text
+from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
+from sentinel.demo.scenario import run_demo_session
+from sentinel.mcp_proxy.content import result_text
+from sentinel.redaction import redact_text
 
 CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
 

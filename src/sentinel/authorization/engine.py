@@ -35,9 +35,8 @@ _LOG: Final[logging.Logger] = logging.getLogger("sentinel.authorization.engine")
 class ToolCall:
     """A normalized proposed call: name, typed args, provenance set, and config.
 
-    ``namespace`` is the flat evaluation context predicates resolve against. The
-    provenance keys are written LAST so a tool argument can never shadow
-    ``effective_provenance`` / ``is_tainted``.
+    ``namespace`` is the flat evaluation context predicates resolve against,
+    layered by trust — see :meth:`namespace`.
     """
 
     name: str
@@ -51,9 +50,25 @@ class ToolCall:
 
     @property
     def namespace(self) -> dict[str, object]:
+        """The flat evaluation context, layered by TRUST.
+
+        Written least-trusted first, so each layer overwrites the one below it:
+
+        1. **arguments** — chosen by the agent, which may be acting on injected
+           content. Untrusted.
+        2. **config** — declared by the operator in the policy document.
+        3. **provenance** — computed by Whence itself and never supplied.
+
+        The ordering is load-bearing, not stylistic. With arguments written
+        LAST, a call carrying an argument named ``allowed_domains`` overwrote the
+        operator's allowlist and flipped a DENY to an ALLOW: attacker-selectable
+        input decided a deny rule. Trusted values must be written after
+        untrusted ones for exactly the same reason provenance is written after
+        both.
+        """
         ns: dict[str, object] = {}
-        ns.update(self.config)
         ns.update(self.arguments)
+        ns.update(self.config)
         ns["effective_provenance"] = self.provenance
         ns["is_tainted"] = self.is_tainted
         return ns
@@ -89,6 +104,16 @@ class AuthorizationEngine:
     @property
     def policy_version(self) -> int:
         return self._policy.policy_version
+
+    @property
+    def config(self) -> dict[str, object]:
+        """Deployment values this tenant's predicates resolve against.
+
+        Comes from the policy document, so callers never have to supply one —
+        and cannot accidentally supply the wrong one, which is what happened
+        when the live MCP path passed the demo's config.
+        """
+        return dict(self._policy.config)
 
     def declassifier_for(self, tool_name: str) -> str | None:
         """The declassification schema policy allows for a tool's output.

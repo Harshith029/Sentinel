@@ -99,6 +99,11 @@ class _PolicyDoc(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     policy_version: int
+    # Deployment values the rules reference (allowed_domains, max_amount, ...).
+    # They live HERE, with the predicates that read them: one reviewable
+    # artefact, and per-tenant for free since the registry loads policy per
+    # tenant. Absent means empty — never a default borrowed from elsewhere.
+    config: dict[str, Any] = Field(default_factory=dict)
     tools: dict[str, _ToolDoc]
 
 
@@ -122,6 +127,8 @@ class CompiledRule:
 class CompiledPolicy:
     policy_version: int
     tools: dict[str, tuple[CompiledRule, ...]]
+    # Operator-declared values the predicates resolve against.
+    config: dict[str, Any] = field(default_factory=dict)
     # tool name -> declassification schema name. Absent means this tool's output
     # can never clear taint, which is the default for every tool.
     declassifiers: dict[str, str] = field(default_factory=dict)
@@ -162,7 +169,10 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
                 )
         tools[tool_name] = tuple(compiled)
     return CompiledPolicy(
-        policy_version=doc.policy_version, tools=tools, declassifiers=declassifiers
+        policy_version=doc.policy_version,
+        tools=tools,
+        declassifiers=declassifiers,
+        config=dict(doc.config),
     )
 
 

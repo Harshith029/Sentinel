@@ -53,6 +53,7 @@ Read this before deploying anything.
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested |
 | Authentication | Every endpoint gated; fails closed when unconfigured |
+| Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | **Not implemented** — trust and quarantine reset when a session reconnects |
 | Multi-tenant isolation | **Not implemented** — a valid credential sees everything |

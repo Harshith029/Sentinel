@@ -18,9 +18,16 @@ arguments SENTINEL inspects are exactly the sensitive material it exists to
 protect — customer records, keys, message bodies. Writing them to a log would
 move the secret from a blocked tool call into a plaintext file that is shipped
 off-box, i.e. it would perform the exfiltration the proxy just prevented. We log
-the *decision* (tool, rule, provenance labels, trace id) and never the data. The
-forensic store already holds the full payload under access control for anyone
-who genuinely needs it.
+the *decision* (tool, rule, provenance labels, trace id) and never the data.
+
+Nor does the forensic store hold the payload: spans are redacted at the emitter
+before persistence (:mod:`sentinel.redaction`), so what survives there is the
+argument NAMES, types, lengths and a salted fingerprint — enough to investigate
+a call, not enough to reconstruct it. Whence deliberately keeps no copy of the
+caller's data anywhere. An earlier version of this note claimed the store held
+"the full payload under access control", which was wrong on both counts: nothing
+holds the full payload, and the read endpoints were unauthenticated when it was
+written.
 """
 from __future__ import annotations
 

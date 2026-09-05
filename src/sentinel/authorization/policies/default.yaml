@@ -9,6 +9,15 @@
 #   * typed tool args        — e.g. recipient_domain, amount
 #   * config                 — e.g. allowed_domains, max_amount
 policy_version: 3
+
+# Deployment values the rules below resolve against. These are the EXAMPLE
+# topology's values; replace them with your own when you point Whence at your
+# servers. They live here rather than in code so each tenant's policy carries
+# its own, and so nothing has to guess them at runtime.
+config:
+  allowed_domains: ["corp.example"]
+  max_amount: 1000
+
 tools:
   # web_fetch is a READ tool: always permitted (no deny rules). It is, however,
   # the primary SOURCE of taint — its results are tagged RETRIEVED_CONTENT by the

@@ -30,7 +30,6 @@ from sentinel.config import Settings, get_settings
 from sentinel.control.capabilities import mode_summary
 from sentinel.control.events import BroadcastStore, EventBus
 from sentinel.demo.scenario import (
-    DEFAULT_CONFIG,
     CustomScenarioSpec,
     ScenarioBuild,
     build_custom_scenario,
@@ -272,7 +271,14 @@ class RunManager:
             scorer=self._scorer,
             agent_id=agent_id,
             trace_id=trace_id,
-            authorization_config=DEFAULT_CONFIG,
+            # The TENANT'S OWN config, from their policy document. This used
+            # to be sentinel.demo.scenario.DEFAULT_CONFIG, so every live MCP
+            # session over the wire — the product path — was authorized against
+            # the demo's `allowed_domains: ["corp.example"]` and `max_amount`.
+            # An operator had no way to set it, so their allowlist rules either
+            # permitted a domain they never approved or fail-closed on every key
+            # the demo dict happened not to contain.
+            authorization_config=engine.config,
             input_shield=self._shield,
             tool_schema_cache=cache,
         )

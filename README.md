@@ -55,7 +55,7 @@ Read this before deploying anything.
 | Authentication | Every endpoint gated; fails closed when unconfigured |
 | Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
-| Stable agent identity across reconnect | **Not implemented** — trust and quarantine reset when a session reconnects |
+| Stable agent identity across reconnect | Derived from the authenticated credential; quarantine survives reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | **Not implemented** — a valid credential sees everything |
 | Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |

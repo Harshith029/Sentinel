@@ -370,6 +370,23 @@ class RunManager:
     def get_run(self, run_id: str) -> RunRecord | None:
         return self._runs.get(run_id)
 
+    def finish_live_run(self, trace_id: str, *, status: str = "completed") -> None:
+        """Move a live MCP run out of ``running`` when its transport is done.
+
+        Live runs were opened ``status="running"`` and never transitioned, so
+        every MCP session a deployment had ever served sat in the run index as
+        permanently in-flight. An operator reading that index could not tell an
+        active agent from one that disconnected days ago, which is exactly the
+        question the index exists to answer.
+
+        Idempotent and safe from a finalizer: it only ever moves a run OUT of
+        ``running``, so a late call cannot resurrect or relabel a run that some
+        other path already completed.
+        """
+        record = self._runs.get(trace_id)
+        if record is not None and record.status == "running":
+            record.status = status
+
     def list_runs(self) -> list[RunRecord]:
         return list(self._runs.values())
 

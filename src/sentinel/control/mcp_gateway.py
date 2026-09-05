@@ -46,7 +46,9 @@ drift between the deployment wiring and the product path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
 import time
 import weakref
 from collections.abc import Sequence
@@ -101,6 +103,43 @@ _MAX_SESSIONS: Final[int] = 512
 # a transport-layer leak). Retiring it frees the proxy; it does NOT hand a
 # returning caller a clean one — see ``_retire_idle``.
 _SESSION_IDLE_TTL_SECONDS: Final[float] = 900.0
+# Salt for principal ids. Per process, matching the trust scorer's own lifetime:
+# scores live in memory, so a principal that outlived the process would name
+# state that no longer exists. Persisting trust would require promoting this to
+# a deployment-scoped secret so the same credential maps to the same principal
+# across restarts.
+_PRINCIPAL_SALT: Final[bytes] = os.urandom(16)
+
+
+def _principal_id(request: object | None) -> str | None:
+    """A stable id for the AUTHENTICATED caller, or ``None`` when anonymous.
+
+    Derived from the credential the request already had to present to get past
+    :func:`_request_authorized` — never from anything the client merely claims
+    about itself. A client-supplied agent name would be trivially spoofable, and
+    an agent that could choose its own identity could shed a quarantine by
+    choosing a different one, which is the exact failure this fixes.
+
+    Hashed so the credential never reaches a span, a log or the dashboard: the
+    id identifies a caller without being usable to impersonate one.
+
+    Bearer header only, because that is the ONLY credential ``/mcp`` accepts
+    (see :func:`_request_authorized`). The control plane also honours a session
+    cookie for browsers, but ``EventSource`` is not how an MCP client connects,
+    and deriving identity from a credential this endpoint would not have
+    accepted would attribute a session to a principal that never authenticated.
+    """
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("authorization", "")
+    if not raw.lower().startswith("bearer "):
+        return None
+    credential = raw[7:].strip()
+    if not credential:
+        return None
+    digest = hashlib.sha256(_PRINCIPAL_SALT + credential.encode("utf-8", "replace"))
+    return digest.hexdigest()[:16]
 
 
 @dataclass
@@ -460,10 +499,15 @@ class SentinelGateway:
         ALWAYS returned its own proxy — it is never replaced, so its provenance
         frontier can never be silently reset.
         """
-        return await self._proxy_for_session(self._front.request_context.session)
+        context = self._front.request_context
+        return await self._proxy_for_session(
+            context.session, principal=_principal_id(getattr(context, "request", None))
+        )
 
-    async def _proxy_for_session(self, session: ServerSession) -> SentinelProxy | None:
-        """:meth:`_proxy_for_current_session` with the session passed explicitly.
+    async def _proxy_for_session(
+        self, session: ServerSession, *, principal: str | None = None
+    ) -> SentinelProxy | None:
+        """:meth:`_proxy_for_current_session` with the inputs passed explicitly.
 
         Split out so the session-lifecycle rules can be exercised directly,
         without standing up an HTTP transport for each session under test.
@@ -491,10 +535,16 @@ class SentinelGateway:
             # through on a fresh, clean proxy (provenance laundering).
             if self.active_sessions >= self._max_sessions:
                 return None
-            # Identity is a random session id, not a memory address: it is unique
-            # for the life of the deployment, so a forensic trace can never be
-            # attributed to the wrong principal by address reuse.
-            agent_id = f"live-{uuid4().hex}"
+            # Identity follows the AUTHENTICATED caller, so trust and quarantine
+            # survive a reconnect. Keying on the connection instead — as a random
+            # per-session id did — made quarantine unenforceable: an agent that
+            # tripped it only had to reconnect to be handed a clean score.
+            #
+            # With no credential there is no caller to attribute anything to, so
+            # the fallback is per-session and trust genuinely does not carry.
+            # That is a property of running unauthenticated, not a workaround:
+            # durable trust requires a durable identity.
+            agent_id = f"agent-{principal}" if principal else f"anon-{uuid4().hex}"
             proxy = self._manager.new_live_proxy(
                 downstream=self._router,
                 cache=self._cache,
@@ -505,6 +555,13 @@ class SentinelGateway:
             self._sessions[session] = _TrackedSession(
                 agent_id=agent_id, proxy=proxy, last_used=now
             )
+            # The run is in-flight only while the transport holds the session.
+            # finalize() fires when the session is collected — the same moment
+            # the WeakKeyDictionary entry disappears — so the run index stops
+            # showing disconnected agents as permanently running. It captures
+            # the trace id, never the session, or it would keep alive the very
+            # object whose death it waits for.
+            weakref.finalize(session, self._manager.finish_live_run, proxy.trace_id)
             return proxy
 
     @property
@@ -528,4 +585,5 @@ class SentinelGateway:
                     "retiring idle MCP session",
                     extra={"agent_id": tracked.agent_id, "idle_seconds": now - tracked.last_used},
                 )
+                self._manager.finish_live_run(tracked.proxy.trace_id, status="failed")
                 tracked.proxy = None

@@ -28,9 +28,9 @@ transport plus a live Azure project; the stage demo stays on DEMO MODE.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from hmac import compare_digest
 from pathlib import Path
 from typing import Any, Final
 
@@ -41,7 +41,9 @@ from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
+from sentinel.authn import auth_configured, resolve_tenant
 from sentinel.authorization.policy import PolicyLoadError
+from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 from sentinel.control.events import BroadcastEvent
 from sentinel.control.manager import RunManager
@@ -109,6 +111,7 @@ def _resolve_start_id(request: Request, last_event_id: int) -> int:
     return last_event_id
 
 
+_LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.app")
 SESSION_COOKIE: Final[str] = "sentinel_session"
 _SESSION_MAX_AGE_SECONDS: Final[int] = 12 * 60 * 60
 
@@ -148,7 +151,7 @@ def _presented_credential(request: Request) -> str:
 
 
 def require_auth(request: Request) -> None:
-    """Authenticate EVERY control-plane request — reads included.
+    """Authenticate EVERY control-plane request, and bind it to a tenant.
 
     Reads were previously open on the theory that forensic spans are evidence an
     operator may want to inspect freely. That was wrong twice over: the spans
@@ -157,30 +160,53 @@ def require_auth(request: Request) -> None:
     turns that into public data. Runs, replay, audit, trust, events and SSE all
     go through here now.
 
-    Fail-closed on misconfiguration. With no token set and no explicit
-    ``SENTINEL_ALLOW_ANONYMOUS``, the service refuses to answer rather than
-    answering openly — forgetting to configure a token must not be the same
-    thing as choosing to have none.
+    On success the resolved tenant is attached to ``request.state``. Everything
+    downstream reads it from there rather than from the request body, because a
+    body field naming a tenant is a CLAIM by the caller, not a fact about them.
+
+    Fail-closed on misconfiguration. With no credential configured and no
+    explicit ``SENTINEL_ALLOW_ANONYMOUS``, the service refuses to answer rather
+    than answering openly — forgetting to configure authentication must not be
+    the same thing as choosing to have none.
     """
-    expected = _expected_token()
-    if expected is None:
+    if not auth_configured():
         if _anonymous_allowed():
-            return  # explicit local-demo posture
+            # No credential means no principal, and therefore no tenant to
+            # isolate to. `None` says so explicitly; callers treat it as "this
+            # deployment has no isolation", which is a property of running
+            # unauthenticated rather than a hole in the isolation itself.
+            request.state.tenant = None
+            return
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "SENTINEL is not configured for authentication. Set "
-                "SENTINEL_API_TOKEN to a secret value, or set "
-                "SENTINEL_ALLOW_ANONYMOUS=1 to run with NO authentication "
-                "(local offline demo only — never on a reachable network)."
+                "SENTINEL_API_TOKEN to a secret value (or SENTINEL_API_TOKENS "
+                "for per-tenant credentials), or set SENTINEL_ALLOW_ANONYMOUS=1 "
+                "to run with NO authentication (local offline demo only — never "
+                "on a reachable network)."
             ),
         )
-    if not compare_digest(_presented_credential(request), expected):
+    presented = _presented_credential(request)
+    tenant = resolve_tenant(presented)
+    if tenant is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid or missing credential",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    request.state.tenant = tenant
+
+
+def caller_tenant(request: Request) -> str | None:
+    """The tenant this request authenticated as; ``None`` when anonymous.
+
+    ``None`` means the deployment is running without authentication, so there
+    is nothing to scope to and every run is visible. It is never a way for an
+    authenticated caller to opt out of scoping — :func:`require_auth` only ever
+    sets it to ``None`` on the anonymous path.
+    """
+    return getattr(request.state, "tenant", None)
 
 
 # Mutating endpoints have always required this; the name is kept so the intent
@@ -221,18 +247,75 @@ def create_app(
     app.state.manager = mgr
     app.state.gateway = gateway
 
+    def _scope(request: Request) -> str | None:
+        """The tenant this request may see, or ``None`` for no scoping."""
+        return caller_tenant(request)
+
+    def _effective_tenant(request: Request, claimed: str) -> str:
+        """The tenant a write lands in.
+
+        An authenticated caller writes into ITS OWN tenant; the body's tenant is
+        a claim, and a claim that disagrees with the credential is refused
+        rather than quietly rewritten, so a misconfigured client is told instead
+        of silently having its data land somewhere else. Anonymous callers have
+        no tenant to be bound to, so the body still decides — running without
+        authentication means running without isolation.
+        """
+        tenant = _scope(request)
+        if tenant is None:
+            return claimed
+        if claimed != DEFAULT_TENANT and claimed != tenant:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"credential authenticates as tenant {tenant!r}, "
+                    f"cannot act as {claimed!r}"
+                ),
+            )
+        return tenant
+
+    def _owned_run(run_id: str, request: Request) -> Any:  # noqa: ANN401 - RunRecord
+        """Fetch a run the caller is entitled to, or 404.
+
+        Deliberately 404 and not 403 for another tenant's run: a 403 would
+        confirm that a given run id exists, letting one tenant enumerate
+        another's activity through the error code alone.
+        """
+        record = mgr.get_run(run_id)
+        tenant = _scope(request)
+        if record is None or (tenant is not None and record.tenant != tenant):
+            raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
+        return record
+
+    def _owned_agent(agent_id: str, request: Request) -> None:
+        """Refuse an agent that has never acted in the caller's tenant.
+
+        Trust scores are keyed by agent, not by tenant, so without this one
+        tenant could read — or RESET — another's quarantine. Reset is the
+        sharper end: clearing a quarantine you do not own re-enables an agent
+        someone else's policy stopped. 404 for the same reason as runs.
+        """
+        tenant = _scope(request)
+        if tenant is None:
+            return
+        if not any(
+            r.agent_id == agent_id and r.tenant == tenant for r in mgr.list_runs()
+        ):
+            raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
     @app.post("/runs", dependencies=[Depends(require_auth)])
-    async def start_run(body: StartRunRequest) -> dict[str, Any]:
+    async def start_run(body: StartRunRequest, request: Request) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(
-                body.scenario, agent_id=body.agent_id, tenant=body.tenant
+                body.scenario, agent_id=body.agent_id,
+                tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
     @app.post("/runs/custom", dependencies=[Depends(require_auth)])
-    async def start_custom_run(body: CustomRunRequest) -> dict[str, Any]:
+    async def start_custom_run(body: CustomRunRequest, request: Request) -> dict[str, Any]:
         """Start a user-supplied attack (paste a task / URL / page / attacker).
 
         Same pipeline as the canned scenarios — the security pipeline is the
@@ -251,7 +334,8 @@ def create_app(
         )
         try:
             record = mgr.start_custom(
-                spec, agent_id=body.agent_id, tenant=body.tenant
+                spec, agent_id=body.agent_id,
+                tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -298,34 +382,35 @@ def create_app(
         return await mgr.run_baseline(build)
 
     @app.get("/runs", dependencies=[Depends(require_auth)])
-    async def list_runs() -> dict[str, Any]:
-        """Every run the control plane knows about (in-memory + restored)."""
+    async def list_runs(request: Request) -> dict[str, Any]:
+        """The runs this caller's tenant owns (in-memory + restored)."""
         # Rehydrate persisted runs lazily on the first list — keeps cold-start
         # cost paid once per process. Idempotent: a second call is a no-op.
         await mgr.restore_persisted_runs()
-        return {"runs": [r.to_payload() for r in mgr.list_runs()]}
+        tenant = _scope(request)
+        runs = [
+            r for r in mgr.list_runs() if tenant is None or r.tenant == tenant
+        ]
+        return {"runs": [r.to_payload() for r in runs]}
 
     @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
-    async def get_run(run_id: str) -> dict[str, Any]:
-        record = mgr.get_run(run_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
-        return record.to_payload()
+    async def get_run(run_id: str, request: Request) -> dict[str, Any]:
+        return dict(_owned_run(run_id, request).to_payload())
 
     @app.get("/runs/{run_id}/replay", dependencies=[Depends(require_auth)])
-    async def get_replay(run_id: str) -> dict[str, Any]:
-        record = mgr.get_run(run_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
+    async def get_replay(run_id: str, request: Request) -> dict[str, Any]:
+        record = _owned_run(run_id, request)
         rep = await mgr.replay(record.trace_id)
         return _serialize_replay(rep)
 
     @app.get("/agents/{agent_id}/trust", dependencies=[Depends(require_auth)])
-    async def get_trust(agent_id: str) -> dict[str, Any]:
+    async def get_trust(agent_id: str, request: Request) -> dict[str, Any]:
+        _owned_agent(agent_id, request)
         return mgr.trust(agent_id)
 
     @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_auth)])
-    async def reset_trust(agent_id: str) -> dict[str, Any]:
+    async def reset_trust(agent_id: str, request: Request) -> dict[str, Any]:
+        _owned_agent(agent_id, request)
         return mgr.reset(agent_id)
 
     @app.get("/capabilities", dependencies=[Depends(require_auth)])
@@ -357,7 +442,7 @@ def create_app(
 
     @app.get("/runs/{run_id}/audit", dependencies=[Depends(require_auth)])
     async def get_audit(
-        run_id: str, format: str = "json"
+        run_id: str, request: Request, format: str = "json"
     ) -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
         """SOC/SIEM export; blocked attempts carry a classifier label.
 
@@ -365,9 +450,7 @@ def create_app(
         a downloadable JSONL file, one alert per line, the actual shape a SIEM
         ingests. Same data either way.
         """
-        record = mgr.get_run(run_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
+        record = _owned_run(run_id, request)
         alerts = await mgr.audit(record.trace_id)
         if format.lower() == "jsonl":
             text = "\n".join(json.dumps(a) for a in alerts) + "\n"
@@ -383,8 +466,12 @@ def create_app(
         return {"trace_id": record.trace_id, "alerts": alerts}
 
     @app.get("/tenants", dependencies=[Depends(require_auth)])
-    async def list_tenants() -> dict[str, Any]:
-        return {"tenants": mgr.list_tenants()}
+    async def list_tenants(request: Request) -> dict[str, Any]:
+        tenant = _scope(request)
+        rows = mgr.list_tenants()
+        if tenant is not None:
+            rows = [t for t in rows if t.get("tenant") == tenant]
+        return {"tenants": rows}
 
     @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_auth)])
     async def reload_tenant_policy(tenant: str, body: PolicyReloadRequest) -> dict[str, Any]:

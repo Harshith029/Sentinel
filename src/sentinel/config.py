@@ -97,6 +97,18 @@ class Settings(BaseModel):
         ),
     )
 
+    api_tokens: str | None = Field(
+        default=None,
+        description=(
+            "JSON object mapping TENANT to bearer token, e.g. "
+            '{"acme": "...", "globex": "..."}. Each token authenticates as its '
+            "tenant and sees only that tenant's runs. Use this instead of "
+            "api_token when one deployment serves more than one tenant; "
+            "api_token is the single-tenant shorthand and binds to the default "
+            "tenant."
+        ),
+    )
+
     policy_file: str | None = Field(
         default=None,
         description=(
@@ -188,6 +200,7 @@ def _read_settings_from_env() -> Settings:
         sentinel_tools_records_url=os.environ.get("SENTINEL_TOOLS_RECORDS_URL") or None,
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
+        api_tokens=os.environ.get("SENTINEL_API_TOKENS") or None,
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),

@@ -16,6 +16,9 @@ from __future__ import annotations
 import gc
 from typing import Any
 
+import pytest
+
+from sentinel.authorization.policy import load_default_policy
 from sentinel.control.manager import RunManager
 from sentinel.control.mcp_gateway import SentinelGateway, _principal_id
 from sentinel.forensics.store import InMemoryForensicStore
@@ -182,3 +185,52 @@ async def test_finishing_a_run_never_relabels_a_settled_one() -> None:
         manager.finish_live_run(proxy.trace_id, status="completed")  # late, ignored
         record = next(r for r in manager.list_runs() if r.trace_id == proxy.trace_id)
         assert record.status == "failed"
+
+
+async def test_a_session_is_authorized_under_its_credentials_tenant() -> None:
+    """An MCP session lands in the tenant its credential authenticates as.
+
+    The gateway took a single tenant at construction, so every wire session on a
+    deployment shared one — with per-tenant tokens configured, one customer's
+    agent would have been authorized against another's policy and its runs
+    filed in another's history.
+    """
+    manager = RunManager(store=InMemoryForensicStore())
+    manager._registry.register("acme", load_default_policy())  # noqa: SLF001
+    gateway = SentinelGateway(manager, tenant="default")
+    async with gateway:
+        session = _FakeSession()
+        proxy = await gateway._proxy_for_session(  # noqa: SLF001
+            session, principal="p1", tenant="acme"
+        )
+        assert proxy is not None
+        record = next(r for r in manager.list_runs() if r.trace_id == proxy.trace_id)
+        assert record.tenant == "acme"
+
+        # And with no per-tenant credential, the deployment's own tenant stands —
+        # the single-tenant case, asserted on the same gateway rather than a
+        # second one, because every extra gateway lifecycle in this suite is
+        # another chance to hit the open teardown wedge.
+        plain = _FakeSession()
+        fallback = await gateway._proxy_for_session(plain, principal=None)  # noqa: SLF001
+        assert fallback is not None
+        default_run = next(
+            r for r in manager.list_runs() if r.trace_id == fallback.trace_id
+        )
+        assert default_run.tenant == "default"
+
+
+async def test_a_tenant_without_a_policy_is_refused_not_defaulted() -> None:
+    """A credential for a tenant with no policy fails closed.
+
+    Borrowing another tenant's rules would be the worst possible fallback: the
+    session would be authorized, but against a policy written for someone else.
+    Refusing to build the proxy is the only safe answer.
+    """
+    manager = RunManager(store=InMemoryForensicStore())
+    gateway = SentinelGateway(manager, tenant="default")
+    async with gateway:
+        with pytest.raises(ValueError, match="no policy registered"):
+            await gateway._proxy_for_session(  # noqa: SLF001
+                _FakeSession(), principal="p1", tenant="unregistered"
+            )

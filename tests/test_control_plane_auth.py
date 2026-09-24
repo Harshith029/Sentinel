@@ -54,14 +54,16 @@ async def _client(**env: str) -> AsyncIterator[httpx.AsyncClient]:
     previous = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     reset_settings_cache()
+    manager = RunManager(store=InMemoryForensicStore())
     try:
-        app = create_app(RunManager(store=InMemoryForensicStore()))
+        app = create_app(manager)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
             yield client
     finally:
+        await manager.aclose()  # never leave a background run behind
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)

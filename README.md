@@ -56,7 +56,7 @@ Read this before deploying anything.
 | Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | Derived from the authenticated credential; quarantine survives reconnect (per process, and only when authenticated) |
-| Multi-tenant isolation | **Not implemented** — a valid credential sees everything |
+| Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); reads, writes and MCP sessions scoped to the credential's tenant |
 | Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
 

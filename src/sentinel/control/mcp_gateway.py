@@ -65,6 +65,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 from starlette.types import Receive, Scope, Send
 
+from sentinel.authn import bearer_credential, resolve_tenant
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.catalogue import CatalogueFinding, CatalogueMonitor
 from sentinel.config import get_settings
@@ -111,6 +112,11 @@ _SESSION_IDLE_TTL_SECONDS: Final[float] = 900.0
 _PRINCIPAL_SALT: Final[bytes] = os.urandom(16)
 
 
+def _credential(request: object | None) -> str:
+    """The bearer token this request presented, or ``""``."""
+    return bearer_credential(getattr(request, "headers", None))
+
+
 def _principal_id(request: object | None) -> str | None:
     """A stable id for the AUTHENTICATED caller, or ``None`` when anonymous.
 
@@ -129,13 +135,7 @@ def _principal_id(request: object | None) -> str | None:
     and deriving identity from a credential this endpoint would not have
     accepted would attribute a session to a principal that never authenticated.
     """
-    headers = getattr(request, "headers", None)
-    if headers is None:
-        return None
-    raw = headers.get("authorization", "")
-    if not raw.lower().startswith("bearer "):
-        return None
-    credential = raw[7:].strip()
+    credential = _credential(request)
     if not credential:
         return None
     digest = hashlib.sha256(_PRINCIPAL_SALT + credential.encode("utf-8", "replace"))
@@ -500,12 +500,23 @@ class SentinelGateway:
         frontier can never be silently reset.
         """
         context = self._front.request_context
+        request = getattr(context, "request", None)
+        # The session's tenant follows the CREDENTIAL, not the gateway's
+        # construction argument. With per-tenant tokens configured, two agents
+        # on the same gateway are authorized against their own tenant's policy
+        # and their runs land in their own tenant's history; without them the
+        # constructor default stands, which is the single-tenant deployment.
+        tenant = resolve_tenant(_credential(request)) or self._tenant
         return await self._proxy_for_session(
-            context.session, principal=_principal_id(getattr(context, "request", None))
+            context.session, principal=_principal_id(request), tenant=tenant
         )
 
     async def _proxy_for_session(
-        self, session: ServerSession, *, principal: str | None = None
+        self,
+        session: ServerSession,
+        *,
+        principal: str | None = None,
+        tenant: str | None = None,
     ) -> SentinelProxy | None:
         """:meth:`_proxy_for_current_session` with the inputs passed explicitly.
 
@@ -549,7 +560,7 @@ class SentinelGateway:
                 downstream=self._router,
                 cache=self._cache,
                 agent_id=agent_id,
-                tenant=self._tenant,
+                tenant=tenant or self._tenant,
             )
             await proxy.start(user_input=_LIVE_USER_INPUT)
             self._sessions[session] = _TrackedSession(

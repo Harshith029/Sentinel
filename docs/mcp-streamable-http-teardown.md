@@ -16,29 +16,47 @@ no timeout.
 reproduces it **deterministically** — 3/3 runs — and is bounded at 20s so it
 fails fast with a full pending-task dump instead of hanging CI.
 
-## What is NOT established
+## Ruled out, with evidence
 
-* **Not attributed to upstream.** `docs/mcp_repro_standalone.py` (only `mcp` and
-  `uvicorn`, no SENTINEL code) hung once, which an earlier draft treated as proof
-  the defect was upstream. On retest it hangs **0 out of 6** runs. A
-  non-deterministic reproducer is not an attribution, so no upstream issue has
-  been filed and none should be until the script reproduces reliably.
-* **`terminate_on_close=False` is not a workaround.** The standalone script
-  suggested it; the suite refutes it. Setting it on SENTINEL's downstream
-  connections leaves the sequence failing (3/3), and setting it on the external
-  test client leaves it failing too.
-* **An explicit `httpx.AsyncClient` is not a workaround.** The suite wedges with
-  every client explicitly configured.
+Each of these was a plausible mechanism, tested directly, and disproved. They are
+listed so the next investigation does not spend its time here again.
 
-## What IS established
+| Hypothesis | How it was tested | Result |
+|---|---|---|
+| Upstream `mcp` defect | Standalone `mcp`+`uvicorn` script (`docs/mcp_repro_standalone.py`) | Hung ONCE, then **0/6** on retest. Not a reproducer, so not an attribution. |
+| Gateway leaks asyncio tasks on teardown | Enter a remote-mode gateway, tear down, count pending tasks | **Zero** leaked; downstream sessions and the session manager both close |
+| Settings-cache bleed into the next gateway | Assert `downstream_mode` on the second gateway | Reports `memory`, not the previous test's remote URLs |
+| `_free_port` bind/close/rebind race | Hand uvicorn a pre-bound listening socket instead | Did not fix it; the change was reverted rather than kept unproven |
+| The session-termination `DELETE` | `terminate_on_close=False` on downstream connections, then on the external client | Still wedges either way |
+| Letting the SDK build its own HTTP client | Supply an explicit `httpx.AsyncClient` everywhere | Still wedges |
+| Number of gateway enter/exit cycles | 0, 5 and 20 cycles, then a real-HTTP session | No wedge at any count |
+| A rejected (401) request leaving a half-open transport | One unauthorized attempt, then an authorized session | No wedge; the control run behaves identically |
+| Resource exhaustion (handles/sockets/threads) | Per-test `psutil` sampling across the whole suite | Handles ~233→445, threads 1, sockets 0. No runaway. |
 
-* The trigger is not SENTINEL's downstream connections: flipping their
-  termination policy changes nothing.
-* SENTINEL's gateway does not leak tasks on teardown — a standalone run entered a
-  remote-mode gateway, tore it down, and observed **zero** leaked asyncio tasks.
-* It is not settings-cache bleed: the second gateway reports
-  `downstream_mode == "memory"`, not the previous test's remote URLs.
-* It is not the `_free_port` bind/close/rebind race, which was fixed separately.
+## What it actually looks like
+
+* **Windows-only so far.** Linux CI has been green throughout; every observation
+  here is from Windows 11 / CPython 3.11 on the Proactor loop.
+* **Probabilistic, not ordered.** Measured at HEAD `5bb1dfb` with every test
+  bounded: **1 wedge in 8 full runs**. Removing *any* one of several unrelated
+  tests makes a failing run pass, which is the signature of a timing race rather
+  than a specific bad predecessor.
+* **Abandoned in-flight work raises the rate.** Tests that `POST /runs` start the
+  scenario as a background task. When a new test module did that without
+  draining the manager, the rate rose to **2 in 5**; adding
+  `await manager.aclose()` brought it back to **2 in 11**, indistinguishable from
+  baseline. That is the first lead on the mechanism rather than another
+  elimination: work destroyed mid-flight along with its event loop, instead of
+  being cancelled and awaited, appears to leave IOCP state that a later
+  overlapped read never recovers from. Every test that starts background work
+  must drain it.
+* **Always the same shape.** The blocked task sits in
+  `GetQueuedCompletionStatus`, waiting on IOCP for a completion that never
+  arrives, inside an MCP client handshake.
+
+Because it cannot be attributed, it is **contained** rather than fixed: every
+test is bounded (`timeout = 120` in `pyproject.toml`), so a wedge becomes a named
+failure with a stack dump instead of a run that hangs indefinitely.
 
 ## Why `terminate_on_close` stays `True`
 

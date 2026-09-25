@@ -301,13 +301,11 @@ async def test_unreachable_downstream_fails_fast_instead_of_hanging() -> None:
 
 
 async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
-    """The MCP POST to ``/mcp`` is answered with a 307 to ``/mcp/``.
+    """If ``/mcp`` redirects to ``/mcp/``, the factory must survive it.
 
-    An explicitly configured ``httpx.AsyncClient`` does NOT follow redirects by
-    default, so the factory has to opt in or every ordinary MCP mount breaks.
-    Proven behaviourally rather than by probing a status code: a client with
-    redirects disabled fails, the factory's client succeeds against the same
-    server.
+    Some Streamable-HTTP servers redirect ``/mcp`` to ``/mcp/`` while others
+    now serve ``/mcp`` directly. This diagnostic only applies to redirecting
+    servers.
     """
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
@@ -315,6 +313,30 @@ async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
     servers = _tool_servers()
     async with AsyncExitStack() as stack:
         srv = await stack.enter_async_context(_Server(servers["records"]))
+
+        probe_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "probe", "version": "0"},
+            },
+        }
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(None, connect=10.0), follow_redirects=False
+        ) as probe:
+            probe_resp = await probe.post(
+                srv.url,
+                json=probe_payload,
+                headers={"accept": "application/json, text/event-stream"},
+            )
+        if probe_resp.status_code not in (307, 308):
+            pytest.skip(
+                f"server does not redirect /mcp (got {probe_resp.status_code}); "
+                "redirect diagnostic not applicable"
+            )
 
         # Redirects disabled → the handshake cannot complete.
         with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as err:

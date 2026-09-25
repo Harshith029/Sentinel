@@ -109,6 +109,30 @@ class Settings(BaseModel):
         ),
     )
 
+    admin_token: str | None = Field(
+        default=None,
+        description=(
+            "The OPERATOR credential. The only thing that may replace a policy or "
+            "clear a quarantine. Kept separate from tenant tokens because those "
+            "are what agents hold: if the credential an agent uses could also "
+            "administer, a prompt-injected agent could switch off its own "
+            "guardrails. Not accepted on /mcp. With per-tenant tokens and no "
+            "admin token, administration is closed; in a single-token deployment "
+            "that one token is the operator's."
+        ),
+    )
+
+    tenant_policies: str | None = Field(
+        default=None,
+        description=(
+            "JSON object mapping tenant to a policy file, e.g. "
+            '{"acme": "policies/acme.yaml"}. A tenant with a credential but no '
+            "entry here uses the deployment policy (policy_file, or the bundled "
+            "example). A tenant with neither a credential nor an entry has no "
+            "policy and is refused."
+        ),
+    )
+
     policy_file: str | None = Field(
         default=None,
         description=(
@@ -201,6 +225,8 @@ def _read_settings_from_env() -> Settings:
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
         api_tokens=os.environ.get("SENTINEL_API_TOKENS") or None,
+        admin_token=os.environ.get("SENTINEL_ADMIN_TOKEN") or None,
+        tenant_policies=os.environ.get("SENTINEL_TENANT_POLICIES") or None,
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),

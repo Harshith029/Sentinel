@@ -22,7 +22,8 @@ from typing import Any
 
 import mcp.types as mcp_types
 
-from sentinel.authorization.policy import load_policy
+from sentinel.authn import tenant_credentials, tenant_policy_paths
+from sentinel.authorization.policy import CompiledPolicy, load_default_policy, load_policy
 from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry, ReloadResult
 from sentinel.classifier import AttackClassifier
 from sentinel.classifier.attack_classifier import BlockedAttempt
@@ -90,24 +91,49 @@ def _build_cosmos_container(settings: Settings) -> Any:  # noqa: ANN401 - SDK co
     return database.get_container_client(settings.azure_cosmos_container)
 
 
-def _build_registry(settings: Settings) -> PolicyRegistry:
-    """Load the operator's policy file, or fall back to the bundled example one.
-
-    Governing your own tools requires your own policy; the packaged default only
-    describes the example tools, so everything else is default-denied. Failing
-    loudly on a bad path is deliberate — silently running the example policy while
-    the operator believes theirs is active would be a security surprise.
-    """
-    if not settings.policy_file:
-        return PolicyRegistry.with_default()
-    path = Path(settings.policy_file)
+def _load_policy_file(path_text: str, *, what: str) -> CompiledPolicy:
+    path = Path(path_text)
     if not path.is_file():
         raise ValueError(
-            f"policy file not found: {path} (set SENTINEL_POLICY_FILE / `policy:` "
-            "in sentinel.yaml, or run `sentinel scaffold` to generate one)"
+            f"{what} not found: {path} (set SENTINEL_POLICY_FILE / `policy:` in "
+            "sentinel.yaml, or run `sentinel scaffold` to generate one)"
         )
+    return load_policy(path.read_text(encoding="utf-8"))
+
+
+def _build_registry(settings: Settings) -> PolicyRegistry:
+    """Give every provisioned tenant a policy, and nobody else.
+
+    * The default tenant gets the deployment policy: the operator's
+      ``policy_file``, or the bundled example policy.
+    * A tenant named in ``SENTINEL_TENANT_POLICIES`` gets its own file.
+    * A tenant with a credential in ``SENTINEL_API_TOKENS`` but no file of its
+      own gets the deployment policy. Before this, it got NOTHING, so every run
+      in a per-tenant deployment failed with "no policy registered" — tenancy
+      that authenticated callers and then could not execute a single action.
+    * A tenant with neither a credential nor a file has no policy and is
+      refused. That fail-closed behaviour is unchanged.
+
+    Failing loudly on a bad path is deliberate: silently running the example
+    policy while the operator believes theirs is active would be a security
+    surprise.
+    """
+    if settings.policy_file:
+        deployment = _load_policy_file(settings.policy_file, what="policy file")
+    else:
+        deployment = load_default_policy()
+
     registry = PolicyRegistry()
-    registry.register(DEFAULT_TENANT, load_policy(path.read_text(encoding="utf-8")))
+    registry.register(DEFAULT_TENANT, deployment)
+
+    explicit = tenant_policy_paths()
+    for tenant, path_text in explicit.items():
+        registry.register(
+            tenant, _load_policy_file(path_text, what=f"policy file for tenant {tenant!r}")
+        )
+    for tenant in tenant_credentials():
+        if tenant not in explicit and registry.get(tenant) is None:
+            registry.register(tenant, deployment)
     return registry
 
 

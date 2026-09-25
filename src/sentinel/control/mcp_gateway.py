@@ -65,7 +65,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 from starlette.types import Receive, Scope, Send
 
-from sentinel.authn import bearer_credential, resolve_tenant
+from sentinel.authn import auth_configured, bearer_credential, resolve_tenant
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.catalogue import CatalogueFinding, CatalogueMonitor
 from sentinel.config import get_settings
@@ -180,14 +180,18 @@ def _request_authorized(scope: Scope) -> bool:
     downstream tools — so forgetting to set a token must not be the same thing
     as choosing to have none.
     """
-    settings = get_settings()
-    expected = settings.api_token
-    if expected is None:
-        return settings.allow_anonymous
-    raw = dict(scope.get("headers") or []).get(b"authorization", b"")
-    presented = raw.decode("latin-1")
-    token = presented[7:].strip() if presented[:7].lower() == "bearer " else ""
-    return bool(token) and token == expected
+    if not auth_configured():
+        return get_settings().allow_anonymous
+    headers = {
+        k.decode("latin-1"): v.decode("latin-1")
+        for k, v in (scope.get("headers") or [])
+    }
+    # A TENANT credential — per-tenant or the single-tenant token. The operator
+    # credential is deliberately not an agent credential: an agent connecting
+    # with it would be an agent that can administer. This used to compare
+    # against SENTINEL_API_TOKEN alone (and not in constant time), so with
+    # per-tenant tokens configured every agent was refused.
+    return resolve_tenant(bearer_credential(headers)) is not None
 
 
 async def _reject_unauthorized(send: Send) -> None:

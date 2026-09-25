@@ -56,8 +56,58 @@ def tenant_credentials() -> dict[str, str]:
 
 
 def auth_configured() -> bool:
-    """Whether ANY credential is configured, single-tenant or per-tenant."""
-    return get_settings().api_token is not None or bool(tenant_credentials())
+    """Whether ANY credential is configured: single-tenant, per-tenant or operator."""
+    settings = get_settings()
+    return (
+        settings.api_token is not None
+        or settings.admin_token is not None
+        or bool(tenant_credentials())
+    )
+
+
+def is_admin(presented: str) -> bool:
+    """Whether a credential is the OPERATOR's — the one that may administer.
+
+    Administration means replacing a policy or clearing a quarantine. It is kept
+    apart from tenant credentials on purpose: tenant tokens are what agents
+    hold, and an agent whose credential could administer could rewrite its own
+    policy or lift its own quarantine — the guardrail and the thing it guards
+    would share a key.
+
+    * ``SENTINEL_ADMIN_TOKEN`` set: that credential, and only that one.
+    * Single-token deployment, no admin token: the one token is the operator's,
+      because there is nobody else it could belong to.
+    * Per-tenant tokens, no admin token: NOBODY administers. Falling back to
+      "any tenant may" is precisely the hole this closes.
+    """
+    if not presented:
+        return False
+    settings = get_settings()
+    if settings.admin_token is not None:
+        return compare_digest(presented, settings.admin_token)
+    if settings.api_token is not None and not tenant_credentials():
+        return compare_digest(presented, settings.api_token)
+    return False
+
+
+def tenant_policy_paths() -> dict[str, str]:
+    """Tenant → policy file, from ``SENTINEL_TENANT_POLICIES``.
+
+    Malformed configuration is an ERROR rather than an empty map: unlike
+    credentials, silently dropping a tenant's policy would leave that tenant
+    running the deployment policy while its operator believes their own is in
+    force.
+    """
+    raw = get_settings().tenant_policies
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"SENTINEL_TENANT_POLICIES is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("SENTINEL_TENANT_POLICIES must be a JSON object of tenant -> path")
+    return {str(tenant): str(path) for tenant, path in parsed.items()}
 
 
 def resolve_tenant(presented: str) -> str | None:

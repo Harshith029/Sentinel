@@ -46,6 +46,22 @@ GUARDED_READS = [
 ]
 
 
+async def _finish_runs(manager: RunManager) -> None:
+    """Let every background run complete, then close the manager.
+
+    Completing rather than cancelling matters here. Work killed mid-flight
+    along with its event loop is the one lead on the open Windows wedge
+    (docs/mcp-streamable-http-teardown.md): the hang rate rose when tests
+    abandoned runs and fell when they stopped doing so.
+    """
+    import asyncio
+
+    await asyncio.gather(
+        *(manager.join(r.run_id) for r in manager.list_runs()), return_exceptions=True
+    )
+    await manager.aclose()
+
+
 @asynccontextmanager
 async def _client(**env: str) -> AsyncIterator[httpx.AsyncClient]:
     """An app built under a specific auth configuration."""
@@ -63,7 +79,7 @@ async def _client(**env: str) -> AsyncIterator[httpx.AsyncClient]:
         ) as client:
             yield client
     finally:
-        await manager.aclose()  # never leave a background run behind
+        await _finish_runs(manager)
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)

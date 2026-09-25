@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Final
@@ -41,7 +41,7 @@ from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from sentinel.authn import auth_configured, resolve_tenant
+from sentinel.authn import auth_configured, is_admin, resolve_tenant
 from sentinel.authorization.policy import PolicyLoadError
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
@@ -176,6 +176,7 @@ def require_auth(request: Request) -> None:
             # deployment has no isolation", which is a property of running
             # unauthenticated rather than a hole in the isolation itself.
             request.state.tenant = None
+            request.state.admin = True  # no auth at all: nothing to separate
             return
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -189,24 +190,52 @@ def require_auth(request: Request) -> None:
         )
     presented = _presented_credential(request)
     tenant = resolve_tenant(presented)
-    if tenant is None:
+    admin = is_admin(presented)
+    if tenant is None and not admin:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid or missing credential",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # A tenant credential is scoped to its tenant. A pure operator credential
+    # (SENTINEL_ADMIN_TOKEN, which belongs to no tenant) is unscoped: the
+    # operator oversees every tenant. In a single-token deployment the one
+    # token is both, and stays scoped to the default tenant it resolves to.
     request.state.tenant = tenant
+    request.state.admin = admin
+    request.state.credential = presented
 
 
 def caller_tenant(request: Request) -> str | None:
-    """The tenant this request authenticated as; ``None`` when anonymous.
+    """The tenant this request is scoped to; ``None`` means unscoped.
 
-    ``None`` means the deployment is running without authentication, so there
-    is nothing to scope to and every run is visible. It is never a way for an
-    authenticated caller to opt out of scoping — :func:`require_auth` only ever
-    sets it to ``None`` on the anonymous path.
+    Unscoped happens in exactly two cases, both set by :func:`require_auth`: the
+    deployment runs without authentication, or the caller presented the pure
+    operator credential. It is never a way for a TENANT credential to opt out of
+    scoping.
     """
     return getattr(request.state, "tenant", None)
+
+
+def require_admin(request: Request) -> None:
+    """Allow only the operator: policy changes and quarantine resets.
+
+    The distinction exists because tenant credentials are what agents hold. If
+    they could administer, a prompt-injected agent could rewrite its own policy
+    or lift its own quarantine — and any tenant could replace another tenant's
+    policy, which is how the first tenancy pass let globex install an
+    allow-everything policy for acme.
+    """
+    require_auth(request)
+    if getattr(request.state, "admin", False):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "this operation needs the operator credential (SENTINEL_ADMIN_TOKEN); "
+            "tenant credentials cannot change policy or clear a quarantine"
+        ),
+    )
 
 
 # Mutating endpoints have always required this; the name is kept so the intent
@@ -286,6 +315,25 @@ def create_app(
         if record is None or (tenant is not None and record.tenant != tenant):
             raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}")
         return record
+
+    def _trace_filter(request: Request) -> Callable[[str], bool]:
+        """Which spans this caller may see on the event feed.
+
+        The first tenancy pass scoped runs, replay and audit but not the feed,
+        so any authenticated caller could watch every tenant's tool calls and
+        blocks live. A span is visible when its trace is a run in the caller's
+        tenant; a span whose trace is not a known run is hidden from a scoped
+        caller rather than guessed at.
+        """
+        tenant = _scope(request)
+        if tenant is None:
+            return lambda _trace: True
+
+        def visible(trace: str) -> bool:
+            record = mgr.get_run(trace)  # run_id IS the trace id
+            return record is not None and record.tenant == tenant
+
+        return visible
 
     def _owned_agent(agent_id: str, request: Request) -> None:
         """Refuse an agent that has never acted in the caller's tenant.
@@ -408,7 +456,7 @@ def create_app(
         _owned_agent(agent_id, request)
         return mgr.trust(agent_id)
 
-    @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_auth)])
+    @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_admin)])
     async def reset_trust(agent_id: str, request: Request) -> dict[str, Any]:
         _owned_agent(agent_id, request)
         return mgr.reset(agent_id)
@@ -473,7 +521,7 @@ def create_app(
             rows = [t for t in rows if t.get("tenant") == tenant]
         return {"tenants": rows}
 
-    @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_auth)])
+    @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_admin)])
     async def reload_tenant_policy(tenant: str, body: PolicyReloadRequest) -> dict[str, Any]:
         """Hot-reload a tenant's policy on version bump (rejects malformed)."""
         try:
@@ -489,9 +537,12 @@ def create_app(
         }
 
     @app.get("/events", dependencies=[Depends(require_auth)])
-    async def poll_events(since: int = 0, trace_id: str | None = None) -> dict[str, Any]:
+    async def poll_events(
+        request: Request, since: int = 0, trace_id: str | None = None
+    ) -> dict[str, Any]:
         """Polling fallback: every event after ``since`` (filtered), gap-free."""
-        events = mgr.bus.events_since(since)
+        visible = _trace_filter(request)
+        events = [e for e in mgr.bus.events_since(since) if visible(e.span.trace_id)]
         if trace_id is not None:
             events = [e for e in events if e.span.trace_id == trace_id]
         return {
@@ -514,8 +565,11 @@ def create_app(
         — a bounded "catch-up" used by clients that only want the missed events.
         """
         start_id = _resolve_start_id(request, since)
+        visible = _trace_filter(request)
 
         def _matches(span_trace: str) -> bool:
+            if not visible(span_trace):
+                return False
             return trace_id is None or span_trace == trace_id
 
         async def publisher() -> AsyncIterator[ServerSentEvent]:
@@ -577,11 +631,14 @@ def create_app(
         request arrived over TLS.
         """
         require_auth(request)  # same gate — the cookie is issued, not granted
-        expected = _expected_token()
-        if expected is None:
+        if not auth_configured():
             return {"status": "anonymous", "detail": "authentication is disabled"}
+        # The credential the caller PROVED, not a server-side default. Issuing
+        # the single deployment token here meant a per-tenant caller was told
+        # "authentication is disabled" and given no cookie at all.
+        presented = request.state.credential
         response.set_cookie(
-            SESSION_COOKIE, expected,
+            SESSION_COOKIE, presented,
             httponly=True, samesite="strict",
             secure=request.url.scheme == "https",
             max_age=_SESSION_MAX_AGE_SECONDS,

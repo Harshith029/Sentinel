@@ -35,6 +35,22 @@ GLOBEX = "globex-token"  # noqa: S105
 TOKENS = json.dumps({"acme": ACME, "globex": GLOBEX})
 
 
+async def _finish_runs(manager: RunManager) -> None:
+    """Let every background run complete, then close the manager.
+
+    Completing rather than cancelling matters here. Work killed mid-flight
+    along with its event loop is the one lead on the open Windows wedge
+    (docs/mcp-streamable-http-teardown.md): the hang rate rose when tests
+    abandoned runs and fell when they stopped doing so.
+    """
+    import asyncio
+
+    await asyncio.gather(
+        *(manager.join(r.run_id) for r in manager.list_runs()), return_exceptions=True
+    )
+    await manager.aclose()
+
+
 @asynccontextmanager
 async def _client(**env: str) -> AsyncIterator[tuple[httpx.AsyncClient, RunManager]]:
     previous = {k: os.environ.get(k) for k in env}
@@ -49,11 +65,10 @@ async def _client(**env: str) -> AsyncIterator[tuple[httpx.AsyncClient, RunManag
             yield client, manager
     finally:
         # POST /runs starts each scenario as a BACKGROUND task, and this app has
-        # no lifespan to stop them. Without draining, every run is abandoned
-        # mid-flight — in-memory MCP servers and all — on an event loop pytest is
-        # about to destroy. That is what made the suite intermittently wedge
-        # after these tests were added; the rest of the suite drains the same way.
-        await manager.aclose()
+        # no lifespan to stop them. Abandoning them mid-flight — in-memory MCP
+        # servers and all — on an event loop pytest is about to destroy measurably
+        # raised the rate of the open Windows wedge. Let them FINISH, then close.
+        await _finish_runs(manager)
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -151,9 +166,12 @@ async def test_one_tenant_cannot_reset_anothers_trust() -> None:
         assert (
             await client.get(f"/agents/{agent_id}/trust", headers=_auth(ACME))
         ).status_code == 404
+        # Reset is operator-only now (test_multitenant_auth_model): a tenant is
+        # refused before the agent is even looked up, so the 403 says nothing
+        # about whether the agent exists.
         assert (
             await client.post(f"/agents/{agent_id}/reset", headers=_auth(ACME))
-        ).status_code == 404
+        ).status_code == 403
 
         # Its own tenant still can.
         assert (
@@ -208,3 +226,34 @@ async def test_anonymous_mode_has_no_isolation_and_says_so() -> None:
             assert posted.status_code == 200
         runs = (await client.get("/runs")).json()["runs"]
         assert {r["tenant"] for r in runs} == {"acme", "globex"}
+
+
+async def test_the_event_feed_is_scoped_to_the_callers_tenant() -> None:
+    """``/events`` and the SSE stream must not leak other tenants' spans.
+
+    Missed by the first pass of tenant isolation, which scoped runs, replay and
+    audit but left the event feed global: any authenticated caller could watch
+    every tenant's tool calls, decisions and blocks as they happened. Payloads
+    were redacted, but WHICH tools a customer's agents call and what gets
+    blocked is itself the operator's confidential activity.
+    """
+    async with _client(
+        SENTINEL_API_TOKENS=TOKENS, SENTINEL_API_TOKEN="", SENTINEL_ALLOW_ANONYMOUS="0"
+    ) as (client, manager):
+        acme_run = await _seed(client, ACME)
+        globex_run = await _seed(client, GLOBEX)
+        await manager.join(acme_run)
+        await manager.join(globex_run)
+
+        polled = (await client.get("/events", headers=_auth(ACME))).json()["events"]
+        assert polled, "acme should see its own run's spans"
+        traces = {e["span"]["trace_id"] for e in polled}
+        assert traces == {acme_run}, f"event feed leaked across tenants: {traces}"
+
+        # The SSE catch-up path goes through the same filter.
+        streamed = await client.get(
+            "/events/stream", params={"follow": "false"}, headers=_auth(ACME)
+        )
+        assert streamed.status_code == 200
+        assert globex_run not in streamed.text
+        assert acme_run in streamed.text

@@ -300,36 +300,84 @@ async def test_unreachable_downstream_fails_fast_instead_of_hanging() -> None:
     assert loop.time() - started < _CONNECT_TIMEOUT_SECONDS
 
 
+def _mounted_mcp_app() -> Starlette:
+    """A downstream exposed the way a Starlette ``Mount`` exposes it.
+
+    That is how SENTINEL's own gateway serves ``/mcp``, and it is where the 307
+    comes from: a request for ``/mcp`` does not match ``Mount("/mcp")``, so the
+    router's ``redirect_slashes`` answers 307 → ``/mcp/``. FastMCP's own app
+    serves an exact ``Route("/mcp")`` and never redirects, so a test built on it
+    cannot exercise redirect handling at all — which is how an earlier version
+    of this test was wrong from the start.
+
+    A mounted sub-app's lifespan is not run by Starlette, so the outer app runs
+    the MCP session manager itself.
+    """
+    from contextlib import asynccontextmanager
+
+    from starlette.routing import Mount
+
+    server = build_downstream(ToolServerState())["records"]
+    server.settings.streamable_http_path = "/"
+    inner = server.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_app: Starlette):  # type: ignore[no-untyped-def]
+        async with server.session_manager.run():
+            yield
+
+    return Starlette(routes=[Mount("/mcp", app=inner)], lifespan=lifespan)
+
+
 async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
-    """The MCP POST to ``/mcp`` is answered with a 307 to ``/mcp/``.
+    """A downstream mounted like SENTINEL's gateway answers ``/mcp`` with a 307.
 
     An explicitly configured ``httpx.AsyncClient`` does NOT follow redirects by
-    default, so the factory has to opt in or every ordinary MCP mount breaks.
-    Proven behaviourally rather than by probing a status code: a client with
-    redirects disabled fails, the factory's client succeeds against the same
-    server.
+    default, so the factory has to opt in or every Mount-served MCP endpoint
+    breaks. The redirect is ASSERTED rather than assumed: if the server stops
+    redirecting, this fails rather than skips, because a skipped contract test
+    is not coverage.
     """
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    servers = _tool_servers()
     async with AsyncExitStack() as stack:
-        srv = await stack.enter_async_context(_Server(servers["records"]))
+        srv = await stack.enter_async_context(_Server(_mounted_mcp_app()))
+
+        # Precondition, checked: the endpoint really redirects.
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as probe:
+            raw = await probe.post(
+                srv.url, json={}, headers={"accept": "application/json, text/event-stream"}
+            )
+        assert raw.status_code in (307, 308), (
+            f"test server no longer redirects /mcp (got {raw.status_code}); the "
+            "redirect contract below would be vacuous"
+        )
 
         # Redirects disabled → the handshake cannot complete.
-        with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as err:
+        with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as err:  # noqa: B017
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(None, connect=10.0), follow_redirects=False
             ) as blind:
                 async with streamable_http_client(srv.url, http_client=blind) as (r, w, _):
                     async with ClientSession(r, w) as cs:
                         await cs.initialize()
-        assert "307" in str(err.value) or "edirect" in str(err.value), str(err.value)
+        # anyio surfaces the transport failure inside an ExceptionGroup, whose own
+        # str() omits the cause — so look at the leaf exceptions, not the wrapper.
+        causes = " | ".join(str(leaf) for leaf in _leaves(err.value))
+        assert "307" in causes, causes
 
         # The shipped factory follows it and discovery works.
         session = await open_downstream_session(srv.url, stack)
         listed = await session.list_tools()
         assert [t.name for t in listed.tools]
+
+
+def _leaves(exc: BaseException) -> list[BaseException]:
+    """Every non-group exception inside a (possibly nested) ExceptionGroup."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for inner in exc.exceptions for leaf in _leaves(inner)]
+    return [exc]
 
 
 def _recording_app(app: Starlette, seen: list[tuple[str, str]]) -> Starlette:

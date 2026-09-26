@@ -54,6 +54,7 @@ import weakref
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from hmac import compare_digest
 from typing import Any, Final
 from uuid import uuid4
 
@@ -63,7 +64,8 @@ from mcp.server.lowlevel import Server
 from mcp.server.session import ServerSession
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.memory import create_connected_server_and_client_session as connect
-from starlette.types import Receive, Scope, Send
+from starlette.datastructures import Headers
+from starlette.types import Message, Receive, Scope, Send
 
 from sentinel.authn import auth_configured, bearer_credential, resolve_tenant
 from sentinel.authorization.registry import DEFAULT_TENANT
@@ -110,6 +112,10 @@ _SESSION_IDLE_TTL_SECONDS: Final[float] = 900.0
 # a deployment-scoped secret so the same credential maps to the same principal
 # across restarts.
 _PRINCIPAL_SALT: Final[bytes] = os.urandom(16)
+# The MCP streamable-HTTP session header (header names are case-insensitive).
+_SESSION_HEADER: Final[str] = "mcp-session-id"
+# Session owners are pruned against the live transport past this many.
+_OWNER_PRUNE_THRESHOLD: Final[int] = 2 * _MAX_SESSIONS
 
 
 def _credential(request: object | None) -> str:
@@ -219,6 +225,40 @@ async def gateway_preflight(
     )
 
 
+def _session_owner(headers: Headers) -> str:
+    """Who a request is, for the purpose of owning an MCP session.
+
+    The salted principal hash for a credentialed caller. Anonymous callers are
+    indistinguishable from each other, so in anonymous mode any of them can
+    use any session id they learn: there is no identity to bind to.
+    """
+    credential = bearer_credential(headers)
+    if not credential:
+        return "anonymous"
+    digest = hashlib.sha256(_PRINCIPAL_SALT + credential.encode("utf-8", "replace"))
+    return "p:" + digest.hexdigest()
+
+
+async def _reject_unknown_session(send: Send) -> None:
+    """The SDK's own reply to an unknown session id, byte for byte in shape."""
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 404,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": (
+                b'{"jsonrpc":"2.0","id":"server-error",'
+                b'"error":{"code":-32600,"message":"Session not found"}}'
+            ),
+        }
+    )
+
+
 async def _reject_unauthorized(send: Send) -> None:
     await send(
         {
@@ -282,6 +322,8 @@ class SentinelGateway:
             weakref.WeakKeyDictionary()
         )
         self._session_lock = asyncio.Lock()
+        # MCP session id -> the principal that created it (see handle_asgi).
+        self._session_owners: dict[str, str] = {}
         self._front = self._build_front_server()
         # stateless=False: keep one ServerSession per MCP session so a session's
         # provenance frontier persists across its successive tool calls.
@@ -530,15 +572,62 @@ class SentinelGateway:
     async def handle_asgi(self, scope: Scope, receive: Receive, send: Send) -> None:
         """ASGI app mounted at ``/mcp`` — delegates to the MCP session manager.
 
-        When ``SENTINEL_API_TOKEN`` is set, the wire endpoint requires a matching
-        ``Authorization: Bearer`` header (the same posture as the REST mutating
-        endpoints), so a public deploy is not an open tool server. When the token
-        is unset (the offline DEMO default), it stays open.
+        Every request needs a tenant credential (``Authorization: Bearer``);
+        with none configured it is refused unless ``SENTINEL_ALLOW_ANONYMOUS``
+        is set (see :func:`_request_authorized`). A request naming an existing
+        session must also come from the principal that opened it.
         """
-        if scope["type"] == "http" and not _request_authorized(scope):
+        if scope["type"] != "http":
+            await self._session_manager.handle_request(scope, receive, send)
+            return
+        if not _request_authorized(scope):
             await _reject_unauthorized(send)
             return
-        await self._session_manager.handle_request(scope, receive, send)
+
+        # A session belongs to the principal that created it. The SDK routes a
+        # request to a session by its id alone (PYSEC-2026-3482), and a caller
+        # who passes the credential check above is not thereby the caller who
+        # opened THIS session. Before this, any authenticated caller holding
+        # another's session id could drive it (under that session's tenant,
+        # policy, agent identity and trace) or terminate it with DELETE.
+        headers = Headers(scope=scope)
+        owner = _session_owner(headers)
+        presented = headers.get(_SESSION_HEADER)
+        if presented is not None:
+            recorded = self._session_owners.get(presented)
+            if recorded is None or not compare_digest(recorded, owner):
+                # Indistinguishable from an unknown id: a foreign caller learns
+                # nothing about whether the session exists.
+                await _reject_unknown_session(send)
+                return
+            await self._session_manager.handle_request(scope, receive, send)
+            if scope.get("method") == "DELETE":
+                self._session_owners.pop(presented, None)
+            return
+
+        # No session id: this request may CREATE a session. The SDK assigns
+        # the id itself, so learn it from the response header, which is sent
+        # before the client can use the id in a follow-up request.
+        async def recording_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                for key, value in message.get("headers") or []:
+                    if key.lower() == _SESSION_HEADER.encode():
+                        self._record_session_owner(value.decode("latin-1"), owner)
+            await send(message)
+
+        await self._session_manager.handle_request(scope, receive, recording_send)
+
+    def _record_session_owner(self, session_id: str, owner: str) -> None:
+        self._session_owners[session_id] = owner
+        if len(self._session_owners) <= _OWNER_PRUNE_THRESHOLD:
+            return
+        # Forget sessions the transport no longer has. Only ever drops ids the
+        # SDK has already discarded, so no live session loses its owner (which
+        # would lock its creator out, since an unowned id is refused).
+        live = getattr(self._session_manager, "_server_instances", None)
+        if isinstance(live, dict):
+            for session in [s for s in self._session_owners if s not in live]:
+                del self._session_owners[session]
 
     async def _verify_catalogue(self) -> tuple[CatalogueFinding, ...]:
         """Re-check the live downstream against the catalogue pinned at connect.

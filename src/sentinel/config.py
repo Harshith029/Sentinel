@@ -97,6 +97,15 @@ class Settings(BaseModel):
         ),
     )
 
+    shield_backend: str = Field(
+        default="auto",
+        description=(
+            "Layer-1 injection detector: 'auto' (Azure Content Safety if "
+            "configured, else the free local detector), 'local', or 'azure'. "
+            "Layer 1 only flags; enforcement never depends on it."
+        ),
+    )
+
     api_tokens: str | None = Field(
         default=None,
         description=(
@@ -225,6 +234,7 @@ def _read_settings_from_env() -> Settings:
         enable_mcp_gateway=_parse_bool_env("SENTINEL_ENABLE_MCP_GATEWAY", default=False),
         api_token=os.environ.get("SENTINEL_API_TOKEN") or None,
         api_tokens=os.environ.get("SENTINEL_API_TOKENS") or None,
+        shield_backend=(os.environ.get("SENTINEL_SHIELD") or "auto").strip().lower(),
         admin_token=os.environ.get("SENTINEL_ADMIN_TOKEN") or None,
         tenant_policies=os.environ.get("SENTINEL_TENANT_POLICIES") or None,
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),

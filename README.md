@@ -218,11 +218,35 @@ docker run --rm -p 8765:8765 -v $(pwd)/sentinel.yaml:/app/sentinel.yaml sentinel
 ```
 
 Put your tool servers on an internal network reachable **only** by SENTINEL — that
-topology is what makes interception unbypassable. An Azure Container Apps blueprint
-(internal-ingress tool servers, KEDA scaling, managed identity, Cosmos persistence)
-is in [`deploy/`](./deploy).
+topology is what makes interception unbypassable.
 
-Gate the endpoint on any public deploy with `SENTINEL_API_TOKEN`.
+Authentication is required: with no credential configured SENTINEL refuses to serve.
+Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials plus
+`SENTINEL_ADMIN_TOKEN` for the operator (see [`.env.example`](./.env.example)).
+
+### Running at zero cost
+
+Nothing in SENTINEL requires a paid service. Enforcement — provenance tracking and
+the authorization engine — runs locally and is identical everywhere. The paid
+integrations improve detection, labelling and telemetry; they are upgrades, not
+prerequisites, and `GET /capabilities` reports which backend each capability is
+actually running on.
+
+| Capability | Free default | Optional paid upgrade |
+|---|---|---|
+| Enforcement (provenance + policy) | Built in | — |
+| Layer-1 injection shield | Local heuristic detector (`SENTINEL_SHIELD=local`) | Azure AI Content Safety |
+| Attack classifier (SOC labels) | Rule-based | Azure OpenAI |
+| Forensic persistence | SQLite on local disk | Azure Cosmos DB |
+| Agent model | Ollama locally, or any OpenAI-compatible endpoint via `OPENAI_BASE_URL` | OpenAI / Azure OpenAI |
+| Hosting | Render free tier (`render.yaml`), or any Docker host | Azure Container Apps |
+
+The Layer-1 shield only *flags*; it never blocks. The authorization engine refuses a
+tainted action whether or not anything flagged the text that tainted it, so a
+simpler free detector does not weaken enforcement.
+
+An Azure Container Apps blueprint is in [`deploy/`](./deploy). It is optional and has
+**not** been deployed or smoke-tested; see *Status and known limitations*.
 
 ## Try the demo
 

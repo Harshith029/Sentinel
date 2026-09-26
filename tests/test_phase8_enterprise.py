@@ -90,16 +90,53 @@ def test_registry_with_default_seeds_canonical_policy() -> None:
 
 # --- DEMO vs AZURE capability matrix -----------------------------------------
 
-def test_capability_matrix_flips_with_mode() -> None:
+def _rows(summary: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {c["key"]: c for c in summary["capabilities"]}  # type: ignore[union-attr,index]
+
+
+def test_capabilities_report_what_is_running_not_the_mode_flag() -> None:
+    """Outside demo mode with nothing paid configured, report FREE backends.
+
+    This test used to assert the opposite: that ``demo_mode=False`` alone made
+    the matrix announce Azure Content Safety, Azure OpenAI and Cosmos DB as
+    active with nothing degraded. None of them were configured. A capability
+    report derived from a boolean rather than the running system is precisely
+    the claim an operator cannot trust.
+    """
     demo = mode_summary(Settings(demo_mode=True))
     assert demo["mode"] == "DEMO MODE"
-    assert demo["degraded"]  # non-empty: things are degraded without Azure
-    keys = {c["key"] for c in demo["capabilities"]}  # type: ignore[union-attr]
+    keys = set(_rows(demo))
     assert {"prompt_shields", "classifier", "persistence", "agent_driver"} <= keys
 
-    azure = mode_summary(Settings(demo_mode=False))
-    assert azure["mode"] == "AZURE MODE"
-    assert azure["degraded"] == []  # everything lit up
+    free = mode_summary(Settings(demo_mode=False))
+    assert free["mode"] == "PRODUCTION MODE"
+    rows = _rows(free)
+    assert rows["prompt_shields"]["backend"] == "local"
+    assert rows["classifier"]["backend"] == "rules"
+    assert rows["persistence"]["backend"] == "sqlite"
+    assert all(rows[k]["cost"] == "free" for k in ("prompt_shields", "classifier", "persistence"))
+    assert free["degraded"], "free backends must not be reported as the paid ones"
+    assert "Enforcement never depends on a paid service" in str(free["tagline"])
+
+
+def test_capabilities_report_paid_backends_only_when_configured() -> None:
+    paid = mode_summary(
+        Settings(
+            demo_mode=False,
+            azure_content_safety_endpoint="https://cs.example",
+            azure_content_safety_key="k",
+            azure_openai_endpoint="https://oai.example",
+            azure_openai_deployment="gpt-4o-mini",
+            azure_cosmos_endpoint="https://cosmos.example",
+            applicationinsights_connection_string="InstrumentationKey=x",
+        )
+    )
+    rows = _rows(paid)
+    assert rows["prompt_shields"]["backend"] == "azure"
+    assert rows["classifier"]["backend"] == "azure_openai"
+    assert rows["persistence"]["backend"] == "cosmos"
+    assert rows["observability"]["backend"] == "azure_monitor"
+    assert all(rows[k]["cost"] == "paid" for k in ("prompt_shields", "classifier", "persistence"))
 
 
 # --- audit endpoint: blocked attempts carry a classifier label ---------------

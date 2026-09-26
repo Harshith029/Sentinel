@@ -92,7 +92,17 @@ def _rule_label(attempt: BlockedAttempt) -> AttackLabel:
 
 
 class AttackClassifier:
-    """Labels blocked attempts. Mock-deterministic in DEMO MODE, LLM in AZURE MODE."""
+    """Labels blocked attempts with deterministic rules, or Azure OpenAI if configured.
+
+    The label is for the SOC export only. It never influences a decision — the
+    call was already blocked — nor severity, which is computed independently. So
+    the free rule-based labeller is a legitimate production default, and Azure
+    OpenAI is an upgrade in label quality, not a requirement.
+
+    Previously a non-demo deployment without Azure OpenAI raised on the first
+    blocked call, which made ``/runs/{id}/audit`` fail precisely when SENTINEL
+    had done its job.
+    """
 
     def __init__(
         self,
@@ -106,6 +116,13 @@ class AttackClassifier:
         self._endpoint = azure_openai_endpoint
         self._deployment = azure_openai_deployment
         self._api_version = azure_openai_api_version
+        configured = bool(azure_openai_endpoint and azure_openai_deployment)
+        self._backend = "azure_openai" if (configured and not demo_mode) else "rules"
+
+    @property
+    def backend(self) -> str:
+        """``"rules"`` or ``"azure_openai"`` — which labeller is actually in use."""
+        return self._backend
 
     @classmethod
     def from_settings(cls, settings: Settings) -> AttackClassifier:
@@ -117,7 +134,7 @@ class AttackClassifier:
         )
 
     async def classify(self, attempt: BlockedAttempt) -> AttackLabel:
-        if self._demo_mode:
+        if self._backend == "rules":
             return _rule_label(attempt)
         return await self._classify_azure(attempt)
 

@@ -9,11 +9,29 @@ REST surface directly::
     resp:    {"userPromptAnalysis": {"attackDetected": bool},
               "documentsAnalysis": [{"attackDetected": bool}, ...]}
 
-DEMO MODE uses a deterministic local detector. It is DELIBERATELY simple: it
-catches the obvious injection markers (a fake ``SYSTEM:`` directive, an "ignore
-previous instructions", a plain "email X to <address>") and is EXPECTED to miss
-obfuscated variants. That fallibility is the point — it is what lets the hero
-demo show the Authorization Engine saving the day when the shield is evaded.
+The LOCAL backend is a deterministic, dependency-free detector. It is
+DELIBERATELY simple: it catches the obvious injection markers (a fake
+``SYSTEM:`` directive, an "ignore previous instructions", a plain "email X to
+<address>") and is EXPECTED to miss obfuscated variants.
+
+That is acceptable in production, not just in the demo, because of what Layer 1
+is for. It only ever FLAGS; it never blocks. Enforcement is the provenance-aware
+Authorization Engine, which refuses a tainted action whether or not anything
+flagged the text that tainted it. A better detector improves the forensic
+signal and the trust score, but SENTINEL's security does not depend on it — so
+the paid Azure backend is an upgrade, not a requirement, and a deployment with
+no budget runs the local one.
+
+Backend selection (``SENTINEL_SHIELD``):
+
+* ``auto`` (default) — Azure when an endpoint and key are configured, otherwise
+  local. Previously a non-demo deployment without Azure raised on its first
+  scanned result.
+* ``local`` — always local, even if Azure is configured.
+* ``azure`` — Azure, and fail at construction if it is not configured, rather
+  than at the first request.
+
+DEMO MODE always uses local, so the demo stays offline and deterministic.
 
 This module FLAGS only. It returns a :class:`ShieldVerdict`; the proxy decides
 what to record (an ``InjectionScanned`` span) and how to feed the trust scorer.
@@ -27,9 +45,10 @@ from typing import Any, Final
 
 from sentinel.config import Settings
 
-_SHIELD_MOCK: Final[str] = "mock_prompt_shields"
+_SHIELD_LOCAL: Final[str] = "local_heuristic_shield"
 _SHIELD_AZURE: Final[str] = "azure_prompt_shields"
 _API_VERSION: Final[str] = "2024-09-01"
+_BACKENDS: Final[frozenset[str]] = frozenset({"auto", "local", "azure"})
 
 # Deliberately shallow signatures. Layer 1 is meant to be fallible.
 _INJECTION_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
@@ -52,23 +71,43 @@ class ShieldVerdict:
     detail: str | None = None
 
 
-def _mock_detect(text: str) -> ShieldVerdict:
+def _local_detect(text: str) -> ShieldVerdict:
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(text):
             return ShieldVerdict(
                 attack_detected=True,
-                shield=_SHIELD_MOCK,
+                shield=_SHIELD_LOCAL,
                 detail=f"matched injection marker {pattern.pattern!r}",
             )
     return ShieldVerdict(
         attack_detected=False,
-        shield=_SHIELD_MOCK,
+        shield=_SHIELD_LOCAL,
         detail="no known injection marker matched",
     )
 
 
+def _resolve_backend(
+    requested: str, *, demo_mode: bool, endpoint: str | None, api_key: str | None
+) -> str:
+    """Pick ``"local"`` or ``"azure"``; raise on a request that cannot be met."""
+    if requested not in _BACKENDS:
+        raise ValueError(
+            f"SENTINEL_SHIELD must be one of {sorted(_BACKENDS)}, got {requested!r}"
+        )
+    if demo_mode or requested == "local":
+        return "local"
+    configured = bool(endpoint and api_key)
+    if requested == "azure" and not configured:
+        raise ValueError(
+            "SENTINEL_SHIELD=azure but AZURE_CONTENT_SAFETY_ENDPOINT / "
+            "AZURE_CONTENT_SAFETY_KEY are not set. Configure them, or use "
+            "SENTINEL_SHIELD=local (free, no credentials)."
+        )
+    return "azure" if configured else "local"
+
+
 class InputShield:
-    """Scans prompts/documents for injection. Mock in DEMO MODE, REST in AZURE MODE."""
+    """Scans prompts/documents for injection with a local or Azure backend."""
 
     def __init__(
         self,
@@ -76,10 +115,19 @@ class InputShield:
         demo_mode: bool = True,
         endpoint: str | None = None,
         api_key: str | None = None,
+        backend: str = "auto",
     ) -> None:
         self._demo_mode = demo_mode
         self._endpoint = endpoint
         self._api_key = api_key
+        self._backend = _resolve_backend(
+            backend, demo_mode=demo_mode, endpoint=endpoint, api_key=api_key
+        )
+
+    @property
+    def backend(self) -> str:
+        """``"local"`` or ``"azure"`` — which detector is actually in use."""
+        return self._backend
 
     @classmethod
     def from_settings(cls, settings: Settings) -> InputShield:
@@ -87,18 +135,19 @@ class InputShield:
             demo_mode=settings.demo_mode,
             endpoint=settings.azure_content_safety_endpoint,
             api_key=settings.azure_content_safety_key,
+            backend=settings.shield_backend,
         )
 
     async def inspect_user_prompt(self, content: str) -> ShieldVerdict:
-        if self._demo_mode:
-            return _mock_detect(content)
+        if self._backend == "local":
+            return _local_detect(content)
         analysis = await self._shield_prompt(user_prompt=content, documents=[])
         detected = bool(analysis.get("userPromptAnalysis", {}).get("attackDetected", False))
         return ShieldVerdict(attack_detected=detected, shield=_SHIELD_AZURE)
 
     async def inspect_document(self, content: str) -> ShieldVerdict:
-        if self._demo_mode:
-            return _mock_detect(content)
+        if self._backend == "local":
+            return _local_detect(content)
         analysis = await self._shield_prompt(user_prompt="", documents=[content])
         documents = analysis.get("documentsAnalysis") or [{}]
         detected = bool(documents[0].get("attackDetected", False))

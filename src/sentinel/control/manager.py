@@ -474,7 +474,13 @@ class RunManager:
         endpoint to decide whether a deployment is sound deserves to be told the
         difference rather than left to infer it.
         """
-        summary = mode_summary(self._settings)
+        # Resolved from the RUNNING components, not inferred from demo_mode.
+        summary = mode_summary(
+            self._settings,
+            shield_backend=self._shield.backend,
+            classifier_backend=self._classifier.backend,
+            store=self._inner_store,
+        )
         summary["deployment_verification"] = {
             "status": "unverified",
             "detail": (

@@ -30,6 +30,9 @@ from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.authn")
+# The browser credential carrier (issued by ``POST /auth/session``). Defined
+# here, not in the app, because the rate limiter reads it too.
+SESSION_COOKIE: Final[str] = "sentinel_session"
 
 
 def tenant_credentials() -> dict[str, str]:

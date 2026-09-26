@@ -46,6 +46,7 @@ from sentinel.authorization.engine import (
     ToolCall,
     to_decision_payload,
 )
+from sentinel.config import get_settings
 from sentinel.forensics.emitter import SpanEmitter
 from sentinel.forensics.events import (
     InjectionScanned,
@@ -82,6 +83,26 @@ def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     return namespace
 
 
+def _result_size(result: mcp_types.CallToolResult) -> int:
+    """Bytes of payload in a tool result, across every content block type.
+
+    Text alone is not enough: image and audio blocks carry base64 ``data`` and
+    embedded resources carry ``text`` or ``blob``, any of which can be large.
+    """
+    total = 0
+    for block in result.content:
+        for field in ("text", "data"):
+            value = getattr(block, field, None)
+            if isinstance(value, str):
+                total += len(value.encode("utf-8", "replace"))
+        resource = getattr(block, "resource", None)
+        for field in ("text", "blob"):
+            value = getattr(resource, field, None)
+            if isinstance(value, str):
+                total += len(value.encode("utf-8", "replace"))
+    return total
+
+
 class SentinelProxy:
     """A stateful, per-session MCP interception proxy.
 
@@ -105,8 +126,13 @@ class SentinelProxy:
         default_result_label: Label = RETRIEVED_CONTENT,
         input_shield: InputShield | None = None,
         tool_schema_cache: Sequence[mcp_types.Tool] | None = None,
+        max_result_bytes: int | None = None,
     ) -> None:
         self._downstream = downstream
+        self._max_result_bytes = (
+            max_result_bytes if max_result_bytes is not None
+            else get_settings().max_result_bytes
+        )
         self._emitter = emitter
         self._engine = engine
         # Policy decides WHETHER a tool may declassify; this performs it.
@@ -330,6 +356,18 @@ class SentinelProxy:
                 provenance=decision.effective_provenance,
             )
             result = await self._downstream.call_tool(name, dict(arguments))
+            # Bound what a downstream can hand back. A fetched page is
+            # attacker-sized, and everything below reads the whole result — the
+            # declassifier, the injection scanner, and finally the agent. An
+            # oversized result is replaced by an error HERE, before any of them
+            # see it. The tool did run, so the trail still records an execution;
+            # only its output is withheld.
+            size = _result_size(result)
+            if size > self._max_result_bytes:
+                result = mcp_error(
+                    f"SENTINEL withheld {name!r}'s result: {size} bytes exceeds the "
+                    f"{self._max_result_bytes}-byte limit (SENTINEL_MAX_RESULT_BYTES)"
+                )
             label = self._result_labels.get(name, self._default_result_label)
 
             # 4b. DECLASSIFICATION (§4.4), the only way taint ever clears.

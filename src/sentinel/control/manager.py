@@ -14,6 +14,7 @@ those are intercepted at the MCP boundary inside :func:`run_demo_session`.
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -152,6 +153,18 @@ def _default_store(settings: Settings) -> ForensicStore:
     return SqliteForensicStore(data_dir / "sentinel.db")
 
 
+class RunQuotaExceeded(RuntimeError):
+    """A tenant already has its maximum number of background runs in flight."""
+
+    def __init__(self, tenant: str, limit: int) -> None:
+        super().__init__(
+            f"tenant {tenant!r} already has {limit} runs in flight "
+            "(SENTINEL_MAX_ACTIVE_RUNS); retry when one finishes"
+        )
+        self.tenant = tenant
+        self.limit = limit
+
+
 @dataclass
 class RunRecord:
     """Public, mutable record of one run (``run_id`` is its ``trace_id``)."""
@@ -253,6 +266,16 @@ class RunManager:
         agent_id: str | None,
         tenant: str = DEFAULT_TENANT,
     ) -> RunRecord:
+        # Each run is a background task doing real work. Without a cap one
+        # caller could start any number of them — 60 rapid requests put 41 in
+        # flight at once — so a tenant gets a bounded share, per tenant, so one
+        # tenant saturating its quota does not lock out another.
+        limit = self._settings.max_active_runs_per_tenant
+        in_flight = sum(
+            1 for r in self._runs.values() if r.tenant == tenant and r.status == "running"
+        )
+        if in_flight >= limit:
+            raise RunQuotaExceeded(tenant, limit)
         trace_id = self._emitter.new_trace_id()
         record = RunRecord(
             run_id=trace_id,
@@ -264,7 +287,29 @@ class RunManager:
         self._runs[trace_id] = record
         task: asyncio.Task[None] = asyncio.create_task(self._execute(record, build))
         self._tasks[trace_id] = task
+        task.add_done_callback(functools.partial(self._on_run_done_callback, trace_id))
         return record
+
+    def _on_run_done_callback(self, trace_id: str, _task: asyncio.Task[None]) -> None:
+        self._on_run_done(trace_id)
+
+    def _on_run_done(self, trace_id: str) -> None:
+        """Drop the finished task's reference and keep the index bounded."""
+        self._tasks.pop(trace_id, None)
+        self._prune_finished_runs()
+
+    def _prune_finished_runs(self) -> None:
+        """Keep at most ``max_retained_runs`` FINISHED runs in the index.
+
+        The run index and the task table used to grow for as long as the
+        process lived. Only finished runs are evicted — never one in flight —
+        and oldest first. Their spans stay in the forensic store; this bounds
+        the in-memory index, not the evidence.
+        """
+        limit = self._settings.max_retained_runs
+        finished = [tid for tid, r in self._runs.items() if r.status != "running"]
+        for tid in finished[: max(0, len(finished) - limit)]:
+            del self._runs[tid]
 
     def new_live_proxy(
         self,
@@ -412,6 +457,7 @@ class RunManager:
         record = self._runs.get(trace_id)
         if record is not None and record.status == "running":
             record.status = status
+            self._prune_finished_runs()
 
     def list_runs(self) -> list[RunRecord]:
         return list(self._runs.values())
@@ -569,10 +615,13 @@ class RunManager:
 
     async def aclose(self) -> None:
         """Cancel any still-running background tasks (clean teardown)."""
-        for task in self._tasks.values():
+        # Snapshot: finishing tasks remove themselves from _tasks, so iterating
+        # the live dict while awaiting would change it mid-loop.
+        tasks = list(self._tasks.values())
+        for task in tasks:
             if not task.done():
                 task.cancel()
-        for task in self._tasks.values():
+        for task in tasks:
             # Teardown: drain cancelled/failed tasks; their failures are already
             # captured on the RunRecord, so swallowing here is intentional.
             try:

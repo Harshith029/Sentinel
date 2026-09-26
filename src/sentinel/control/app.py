@@ -35,18 +35,20 @@ from pathlib import Path
 from typing import Any, Final
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
+from starlette.types import Receive, Scope, Send
 
-from sentinel.authn import auth_configured, is_admin, resolve_tenant
+from sentinel.authn import SESSION_COOKIE, auth_configured, is_admin, resolve_tenant
 from sentinel.authorization.policy import PolicyLoadError
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 from sentinel.control.events import BroadcastEvent
-from sentinel.control.manager import RunManager
+from sentinel.control.limits import BodySizeLimit, RateLimit
+from sentinel.control.manager import RunManager, RunQuotaExceeded
 from sentinel.control.mcp_gateway import SentinelGateway
 from sentinel.demo.scenario import (
     CustomScenarioSpec,
@@ -112,8 +114,40 @@ def _resolve_start_id(request: Request, last_event_id: int) -> int:
 
 
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.app")
-SESSION_COOKIE: Final[str] = "sentinel_session"
 _SESSION_MAX_AGE_SECONDS: Final[int] = 12 * 60 * 60
+
+
+_EVENT_PAGE_MAX: Final[int] = 1000
+
+
+class _StreamSlots:
+    """How many live SSE streams are open on this app."""
+
+    def __init__(self) -> None:
+        self.active = 0
+
+    def release(self) -> None:
+        self.active = max(0, self.active - 1)
+
+
+class _BoundedEventSource(EventSourceResponse):
+    """An SSE response that gives its subscriber slot back however it ends.
+
+    The slot is released in ``__call__``'s ``finally`` rather than in the event
+    generator's, because a client that disconnects before streaming begins
+    means the generator body never runs — and its ``finally`` with it — which
+    would leak the slot until the cap refused everyone.
+    """
+
+    def __init__(self, content: Any, *, on_close: Callable[[], None]) -> None:  # noqa: ANN401
+        super().__init__(content)
+        self._on_close = on_close
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._on_close()
 
 
 def _expected_token() -> str | None:
@@ -273,8 +307,23 @@ def create_app(
         app = FastAPI(title="SENTINEL control plane", lifespan=_lifespan)
     else:
         app = FastAPI(title="SENTINEL control plane")
+    # Outermost last: the rate limiter refuses a flood before the body limiter
+    # reads a byte, and both sit in front of every route AND the /mcp mount.
+    app.add_middleware(BodySizeLimit)
+    app.add_middleware(RateLimit)
     app.state.manager = mgr
+
+    @app.exception_handler(RunQuotaExceeded)
+    async def _quota_exceeded(_request: Request, exc: RunQuotaExceeded) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": str(exc)},
+            headers={"Retry-After": "5"},
+        )
     app.state.gateway = gateway
+
+    streams = _StreamSlots()
+    app.state.sse_streams = streams  # observable, so tests can prove slots are released
 
     def _scope(request: Request) -> str | None:
         """The tenant this request may see, or ``None`` for no scoping."""
@@ -538,15 +587,37 @@ def create_app(
 
     @app.get("/events", dependencies=[Depends(require_auth)])
     async def poll_events(
-        request: Request, since: int = 0, trace_id: str | None = None
+        request: Request,
+        since: int = 0,
+        trace_id: str | None = None,
+        limit: int = _EVENT_PAGE_MAX,
     ) -> dict[str, Any]:
-        """Polling fallback: every event after ``since`` (filtered), gap-free."""
+        """Polling fallback: events after ``since`` (filtered), gap-free, paged.
+
+        A single response used to carry every buffered event after the cursor —
+        up to the whole 100 000-event buffer. It is now at most ``limit`` events
+        (capped at ``_EVENT_PAGE_MAX``); ``next_since`` is the cursor to resume
+        from and ``truncated`` says whether more are waiting.
+        """
+        page = max(1, min(limit, _EVENT_PAGE_MAX))
         visible = _trace_filter(request)
-        events = [e for e in mgr.bus.events_since(since) if visible(e.span.trace_id)]
-        if trace_id is not None:
-            events = [e for e in events if e.span.trace_id == trace_id]
+        events: list[Any] = []
+        scanned_to = since
+        truncated = False
+        for event in mgr.bus.events_since(since):
+            if len(events) >= page:
+                truncated = True
+                break
+            scanned_to = event.event_id
+            if not visible(event.span.trace_id):
+                continue
+            if trace_id is not None and event.span.trace_id != trace_id:
+                continue
+            events.append(event)
         return {
             "events": [e.to_payload() for e in events],
+            "next_since": scanned_to,
+            "truncated": truncated,
             "last_event_id": mgr.bus.last_event_id,
         }
 
@@ -583,7 +654,14 @@ def create_app(
                     if _matches(event.span.trace_id):
                         yield _to_sse(event)
 
-        return EventSourceResponse(publisher())
+        if streams.active >= get_settings().max_sse_subscribers:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="too many live-stream subscribers; use /events polling",
+                headers={"Retry-After": "5"},
+            )
+        streams.active += 1
+        return _BoundedEventSource(publisher(), on_close=streams.release)
 
     @app.get("/demo/sanitization", dependencies=[Depends(require_auth)])
     async def sanitization_demo() -> dict[str, Any]:

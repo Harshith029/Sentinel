@@ -58,6 +58,7 @@ Read this before deploying anything.
 | Stable agent identity across reconnect | Derived from the authenticated credential; quarantine survives reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
 | Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; tenant (agent) credentials cannot |
+| Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
 
@@ -223,6 +224,34 @@ topology is what makes interception unbypassable.
 Authentication is required: with no credential configured SENTINEL refuses to serve.
 Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials plus
 `SENTINEL_ADMIN_TOKEN` for the operator (see [`.env.example`](./.env.example)).
+
+### Resource limits
+
+Every per-request and per-tenant resource is capped, so one caller cannot exhaust
+the service. The defaults sit well above normal use and only affect abuse.
+
+| Setting | Default | Over the limit |
+|---|---|---|
+| `SENTINEL_MAX_BODY_BYTES` | 4 MiB | `413`. Chunked bodies are counted as they stream |
+| `SENTINEL_RATE_LIMIT_PER_MINUTE` | 600 | `429` + `Retry-After`. `0` disables |
+| `SENTINEL_MAX_ACTIVE_RUNS` | 8 per tenant | `429` + `Retry-After` |
+| `SENTINEL_MAX_RETAINED_RUNS` | 1000 | Oldest *finished* run leaves the run index; its spans stay in the forensic store |
+| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 | `503` |
+| `SENTINEL_MAX_RESULT_BYTES` | 1 MiB | The tool result is withheld and the agent gets an error. The call is still recorded |
+
+`GET /events` returns at most 1000 events per call, with `next_since` to resume.
+
+The rate limit is keyed by **tenant** for a valid credential and by **client
+address** for everything else, including invalid credentials and anonymous
+traffic. Inventing a new token for each request therefore does not buy a new
+budget. Behind a reverse proxy, the client address is the proxy's unless uvicorn
+trusts it: set `FORWARDED_ALLOW_IPS` to the proxy's address or CIDR. Do not set
+it to `*` on a host clients can reach directly, because uvicorn then takes the
+client-supplied `X-Forwarded-For` at face value. Until you configure it, all
+unauthenticated callers share one budget.
+
+These counters live in process memory. Two replicas give a tenant twice the
+budget; enforce a global limit at the load balancer if you need one.
 
 ### Running at zero cost
 

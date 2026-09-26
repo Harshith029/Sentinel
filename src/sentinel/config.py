@@ -21,6 +21,26 @@ _TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 
 
+def _parse_int_env(name: str, *, default: int, minimum: int = 0) -> int:
+    """A non-negative integer setting; a bad value is an error, not a default.
+
+    Silently falling back to the default on a typo would leave an operator
+    believing a limit is in force that is not.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Environment variable {name!r}={raw!r} is not an integer."
+        ) from exc
+    if value < minimum:
+        raise ValueError(f"Environment variable {name!r} must be >= {minimum}, got {value}.")
+    return value
+
+
 def _parse_bool_env(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -142,6 +162,43 @@ class Settings(BaseModel):
         ),
     )
 
+    # --- resource bounds (audit F-05/F-06) -------------------------------------
+    # Each of these was unbounded: a single caller could buffer an arbitrarily
+    # large body, start any number of background runs, and grow the run index,
+    # the event buffer and the SSE fan-out without limit. The defaults are set
+    # well above legitimate use so they only ever bite abuse.
+    max_body_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        description="Largest request body accepted, in bytes (413 above it).",
+    )
+    max_active_runs_per_tenant: int = Field(
+        default=8,
+        description="Background runs a tenant may have in flight at once (429 above it).",
+    )
+    max_retained_runs: int = Field(
+        default=1000,
+        description=(
+            "Finished runs kept in the in-memory run index. Spans stay in the "
+            "forensic store; this bounds only the index."
+        ),
+    )
+    max_sse_subscribers: int = Field(
+        default=100,
+        description="Concurrent live-stream subscribers (503 above it).",
+    )
+    rate_limit_per_minute: int = Field(
+        default=600,
+        description="Requests per credential (or client address) per minute; 0 disables.",
+    )
+    max_result_bytes: int = Field(
+        default=1024 * 1024,
+        description=(
+            "Largest downstream tool result forwarded to an agent. Larger results "
+            "are refused: they are also what the injection scanner would have to "
+            "read, and a fetched page is attacker-sized."
+        ),
+    )
+
     policy_file: str | None = Field(
         default=None,
         description=(
@@ -237,6 +294,24 @@ def _read_settings_from_env() -> Settings:
         shield_backend=(os.environ.get("SENTINEL_SHIELD") or "auto").strip().lower(),
         admin_token=os.environ.get("SENTINEL_ADMIN_TOKEN") or None,
         tenant_policies=os.environ.get("SENTINEL_TENANT_POLICIES") or None,
+        max_body_bytes=_parse_int_env(
+            "SENTINEL_MAX_BODY_BYTES", default=4 * 1024 * 1024, minimum=1024
+        ),
+        max_active_runs_per_tenant=_parse_int_env(
+            "SENTINEL_MAX_ACTIVE_RUNS", default=8, minimum=1
+        ),
+        max_retained_runs=_parse_int_env(
+            "SENTINEL_MAX_RETAINED_RUNS", default=1000, minimum=1
+        ),
+        max_sse_subscribers=_parse_int_env(
+            "SENTINEL_MAX_SSE_SUBSCRIBERS", default=100, minimum=1
+        ),
+        rate_limit_per_minute=_parse_int_env(
+            "SENTINEL_RATE_LIMIT_PER_MINUTE", default=600, minimum=0
+        ),
+        max_result_bytes=_parse_int_env(
+            "SENTINEL_MAX_RESULT_BYTES", default=1024 * 1024, minimum=1024
+        ),
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),

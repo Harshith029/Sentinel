@@ -17,6 +17,7 @@ cursor advances monotonically.
 from __future__ import annotations
 
 import asyncio
+import bisect
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Final
@@ -25,6 +26,10 @@ from sentinel.forensics.span import Span
 from sentinel.forensics.store import ForensicStore
 
 _DEFAULT_BUFFER_LIMIT: Final[int] = 100_000
+
+
+def _event_id(event: BroadcastEvent) -> int:
+    return event.event_id
 
 
 @dataclass(frozen=True)
@@ -56,28 +61,37 @@ class EventBus:
             event = BroadcastEvent(event_id=self._next_id, span=span)
             self._next_id += 1
             self._events.append(event)
-            if len(self._events) > self._buffer_limit:
-                # Keep the most recent window; back-fill works within it.
+            # Trim in batches: deleting one element from the front of a list is
+            # O(n), so trimming on EVERY publish once full made each publish cost
+            # the whole buffer. Letting it overshoot by a tenth amortises that.
+            if len(self._events) > self._buffer_limit + self._buffer_limit // 10:
                 del self._events[: len(self._events) - self._buffer_limit]
             self._condition.notify_all()
         return event
 
     def events_since(self, last_event_id: int) -> list[BroadcastEvent]:
-        """Every buffered event with ``event_id > last_event_id`` (the back-fill)."""
-        return [event for event in self._events if event.event_id > last_event_id]
+        """Every buffered event with ``event_id > last_event_id`` (the back-fill).
+
+        Ids are assigned monotonically under the publish lock, so the buffer is
+        sorted and a binary search finds the cut. This used to scan the whole
+        buffer — up to 100 000 events — on every poll and every subscriber
+        wake-up.
+        """
+        start = bisect.bisect_right(self._events, last_event_id, key=_event_id)
+        return self._events[start:]
 
     async def subscribe(self, last_event_id: int = 0) -> AsyncIterator[BroadcastEvent]:
         """Yield events after ``last_event_id`` — buffered first, then live, gap-free."""
         cursor = last_event_id
         while True:
             async with self._condition:
-                pending = [e for e in self._events if e.event_id > cursor]
+                pending = self.events_since(cursor)
                 if not pending:
                     # Release the lock and sleep until publish() notifies; on wake,
                     # re-snapshot. Nothing published in between can be missed,
                     # because publish() takes this same lock to append + notify.
                     await self._condition.wait()
-                    pending = [e for e in self._events if e.event_id > cursor]
+                    pending = self.events_since(cursor)
             for event in pending:
                 cursor = event.event_id
                 yield event

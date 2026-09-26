@@ -199,7 +199,20 @@ def _is_committable(target: Path) -> bool:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    """Validate config and connectivity WITHOUT serving — the pre-flight command."""
+    """Run ``serve``'s startup checks WITHOUT serving — the pre-flight command.
+
+    Every step here is the code ``serve`` itself runs, not a lookalike: the same
+    settings parser, the same policy registry builder, the same shield
+    resolution and the same catalogue preflight (:func:`gateway_preflight`).
+    It used to check only that the policy file existed and that the servers
+    answered, so it passed a policy that would not load, a poisoned catalogue
+    and a deployment with no credentials — a readiness signal for a service
+    that would then refuse to start, or start and refuse every request.
+
+    Keeps going after a failure so one run reports every problem it can, and
+    exits non-zero if any step failed. A tool with no policy rule is a warning,
+    not a failure: default-deny makes it safe, just not useful.
+    """
     import asyncio
     from contextlib import AsyncExitStack
 
@@ -207,21 +220,76 @@ def cmd_check(args: argparse.Namespace) -> int:
     apply_config(config)
 
     from sentinel.config import get_settings, reset_settings_cache
-    from sentinel.downstream import connect_downstream, parse_servers
 
     reset_settings_cache()
-    settings = get_settings()
-
     print(f"config          : {args.config or DEFAULT_CONFIG}")
+    try:
+        settings = get_settings()
+    except ValueError as exc:
+        _fail(f"settings        : INVALID - {exc}")
+        return 1
+
+    failed = False
+
+    # --- policy: loaded exactly as serve loads it ------------------------------
+    from sentinel.control.manager import build_policy_registry
+
+    registry = None
     policy = settings.policy_file
-    if policy:
-        ok = Path(policy).is_file()
-        print(f"policy          : {policy} {'(found)' if ok else '(MISSING)'}")
-        if not ok:
-            _fail("  -> run `sentinel scaffold > policy.yaml` to generate one")
-            return 1
+    if policy and not Path(policy).is_file():
+        print(f"policy          : {policy} (MISSING)")
+        _fail("  -> run `sentinel scaffold > policy.yaml` to generate one")
+        failed = True
     else:
-        print("policy          : (bundled example policy - your tools will be denied)")
+        try:
+            registry = build_policy_registry(settings)
+        except (ValueError, OSError) as exc:
+            _fail(f"policy          : INVALID - {exc}")
+            failed = True
+        else:
+            source = policy or "(bundled example policy)"
+            tenants = ", ".join(registry.tenants())
+            print(f"policy          : {source} - valid; tenants: {tenants}")
+
+    # --- authentication: would serve answer anyone? ----------------------------
+    from sentinel.authn import auth_configured, tenant_credentials
+
+    if auth_configured():
+        kinds = []
+        if settings.api_token:
+            kinds.append("single-tenant token")
+        if tenant_credentials():
+            kinds.append(f"{len(tenant_credentials())} tenant token(s)")
+        if settings.admin_token:
+            kinds.append("operator token")
+        print(f"auth            : {', '.join(kinds)}")
+    elif settings.allow_anonymous:
+        print(
+            "auth            : ANONYMOUS (SENTINEL_ALLOW_ANONYMOUS=1) - anyone who "
+            "can reach /mcp can drive your tools"
+        )
+    else:
+        _fail(
+            "auth            : NONE CONFIGURED - serve would refuse every request\n"
+            "  -> set SENTINEL_API_TOKEN, or SENTINEL_API_TOKENS plus "
+            "SENTINEL_ADMIN_TOKEN"
+        )
+        failed = True
+
+    # --- the injection shield the catalogue scan uses ---------------------------
+    from sentinel.shield import InputShield
+
+    try:
+        backend = InputShield.from_settings(settings).backend
+    except ValueError as exc:
+        _fail(f"shield          : INVALID - {exc}")
+        return 1  # the catalogue scan below cannot run without it
+    print(f"shield          : {backend}")
+
+    # --- downstream servers and their catalogue --------------------------------
+    from sentinel.control.mcp_gateway import gateway_preflight
+    from sentinel.demo.preflight import PreflightError
+    from sentinel.downstream import connect_downstream, parse_servers
 
     try:
         servers = parse_servers(settings.mcp_servers)
@@ -233,20 +301,59 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 1
     print(f"servers         : {len(servers)} declared")
 
-    async def probe() -> int:
+    async def probe() -> bool:
+        ok = True
         async with AsyncExitStack() as stack:
             topology = await connect_downstream(servers, stack)
             for name, tools in sorted(topology.catalogues.items()):
                 names = ", ".join(sorted(t.name for t in tools))
                 print(f"  {name:<16} {len(tools)} tool(s): {names}")
-            print(f"catalogue       : OK - no shadowing, {len(topology.tool_names)} tool(s) total")
-        return 0
+            try:
+                cache = await gateway_preflight(
+                    topology.router, declared=True, settings=settings
+                )
+            except PreflightError as exc:
+                _fail(f"catalogue       : REFUSED - serve would not start\n  {exc}")
+                return False
+            if cache.findings:
+                # Flag-only mode would serve this. A readiness check still must
+                # not pass it: these are the findings the operator has to triage.
+                _fail(
+                    f"catalogue       : {len(cache.findings)} FINDING(S) - serve "
+                    "would start (SENTINEL_CATALOGUE_STRICT=0) and serve them:"
+                )
+                for finding in cache.findings:
+                    _fail(f"  {finding}")
+                ok = False
+            else:
+                print(
+                    f"catalogue       : OK - no shadowing, no poisoning, "
+                    f"{len(cache.tools)} tool(s)"
+                )
+            if registry is not None:
+                for tenant in registry.tenants():
+                    compiled = registry.get(tenant)
+                    assert compiled is not None  # tenants() lists registered ones
+                    uncovered = sorted(
+                        t.name for t in cache.tools if compiled.rules_for(t.name) is None
+                    )
+                    covered = len(cache.tools) - len(uncovered)
+                    line = f"coverage [{tenant}] : {covered}/{len(cache.tools)} tool(s) have rules"
+                    if uncovered:
+                        line += f"; default-denied: {', '.join(uncovered)}"
+                    print(line)
+        return ok
 
     try:
-        return asyncio.run(probe())
+        if not asyncio.run(probe()):
+            failed = True
     except Exception as exc:  # noqa: BLE001 - report any connect/vetting failure
         _fail(f"FAILED: {exc}")
         return 1
+    if failed:
+        return 1
+    print("ready           : serve would start with this configuration")
+    return 0
 
 
 def cmd_scaffold(args: argparse.Namespace) -> int:

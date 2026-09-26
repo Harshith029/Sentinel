@@ -32,7 +32,7 @@ because its lineage traces back to untrusted content.</i></sub>
 ```bash
 pip install sentinel    # imports and CLI are both `sentinel`
 sentinel init             # write sentinel.yaml
-sentinel check            # validate config, connect to your servers, vet their tools
+sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
 sentinel scaffold > policy.yaml
 sentinel serve            # your agent points at http://127.0.0.1:8765/mcp
 ```
@@ -51,7 +51,7 @@ Read this before deploying anything.
 |---|---|
 | Provenance tracking + deterministic default-deny enforcement | Working, tested |
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence |
-| Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested |
+| Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting |
 | Authentication | Every endpoint gated; fails closed when unconfigured |
 | Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
@@ -91,7 +91,7 @@ the request was phrased.
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
 | **Tool poisoning** | Tool descriptions *and* input schemas are scanned at connect; a poisoned catalogue is refused |
 | **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
-| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked; post-approval mutation is detected |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on every tool listing and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
 | **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
 

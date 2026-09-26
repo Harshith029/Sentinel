@@ -68,9 +68,9 @@ from starlette.types import Receive, Scope, Send
 from sentinel.authn import auth_configured, bearer_credential, resolve_tenant
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.catalogue import CatalogueFinding, CatalogueMonitor
-from sentinel.config import get_settings
+from sentinel.config import Settings, get_settings
 from sentinel.control.manager import RunManager
-from sentinel.demo.preflight import preflight
+from sentinel.demo.preflight import ToolSchemaCache, preflight
 from sentinel.demo.tool_servers import (
     REQUIRED_TOOLS,
     TOOL_TO_SERVER,
@@ -194,6 +194,31 @@ def _request_authorized(scope: Scope) -> bool:
     return resolve_tenant(bearer_credential(headers)) is not None
 
 
+async def gateway_preflight(
+    router: ToolRouter, *, declared: bool, settings: Settings
+) -> ToolSchemaCache:
+    """The catalogue vetting the gateway performs before it serves anything.
+
+    Module-level so ``sentinel check`` runs exactly this, not an approximation
+    of it: a readiness check that vets less than startup does is a false
+    readiness signal.
+
+    Health-checks the downstream, scans every tool definition for injection
+    (tool poisoning) and, under ``SENTINEL_CATALOGUE_STRICT`` (the default),
+    refuses a poisoned catalogue. Cross-server shadowing has already failed
+    closed inside the router by the time this runs.
+    """
+    return await preflight(
+        router,
+        # With declared servers there is no fixed expected tool set — whatever
+        # discovery found IS the catalogue. Only the bundled example topology
+        # has required tools to assert.
+        required_tools=() if declared else REQUIRED_TOOLS,
+        shield=InputShield.from_settings(settings),
+        strict=settings.catalogue_strict,
+    )
+
+
 async def _reject_unauthorized(send: Send) -> None:
     await send(
         {
@@ -242,8 +267,15 @@ class SentinelGateway:
         self._downstream_mode = "memory"  # "memory" | "remote-http" | "declared"
         # Set only on the declared-servers (product) path: per-server catalogues.
         self._topology: DownstreamTopology | None = None
-        # Pins the approved catalogue at connect; re-checked on tool discovery.
+        # Pins the approved catalogue at connect; re-checked on tool discovery
+        # and on a schedule (SENTINEL_CATALOGUE_RECHECK_SECONDS).
         self._monitor: CatalogueMonitor | None = None
+        # Names in the catalogue approved at connect: the only tools callable.
+        self._approved: frozenset[str] | None = None
+        # Flag-only findings from the connect-time scan (strict mode refuses
+        # to start instead, so there these are always empty).
+        self._preflight_findings: tuple[CatalogueFinding, ...] = ()
+        self._recheck_task: asyncio.Task[None] | None = None
         # Live session → its proxy. Weakly keyed, so an entry lives exactly as
         # long as the transport's session does (see _TrackedSession).
         self._sessions: weakref.WeakKeyDictionary[ServerSession, _TrackedSession] = (
@@ -305,15 +337,27 @@ class SentinelGateway:
                 "tool_poisoning": (
                     "strict (refuse to serve)"
                     if settings.catalogue_strict
-                    else "flag-only"
+                    else f"flag-only ({len(self._preflight_findings)} finding(s))"
                 ),
                 "rug_pull": (
                     "DRIFT DETECTED after approval"
                     if (self._monitor is not None and self._monitor.drifted)
                     else "catalogue pinned; re-checked on tool discovery"
+                    + (
+                        f" and every {settings.catalogue_recheck_seconds}s"
+                        if settings.catalogue_recheck_seconds > 0
+                        else ""
+                    )
                 ),
+                "drifted_tools": (
+                    "refused at call time"
+                    if settings.catalogue_strict
+                    else "reported only (flag-only mode)"
+                ),
+                "unapproved_tools": "refused at call time",
                 "unknown_tools": "default-denied until policy is written",
             },
+            "catalogue_findings": [str(f) for f in self._preflight_findings],
             "catalogue_monitor": (
                 self._monitor.status() if self._monitor is not None else {}
             ),
@@ -352,22 +396,70 @@ class SentinelGateway:
         # default a poisoned catalogue refuses to boot. (Cross-server tool-name
         # shadowing already fails closed inside ToolRouter.list_tools.)
         settings = get_settings()
-        cache = await preflight(
-            self._router,
-            # With declared servers there is no fixed expected tool set — whatever
-            # discovery found IS the catalogue. Only the bundled example topology
-            # has required tools to assert.
-            required_tools=() if declared else REQUIRED_TOOLS,
-            shield=InputShield.from_settings(settings),
-            strict=settings.catalogue_strict,
+        cache = await gateway_preflight(
+            self._router, declared=bool(declared), settings=settings
         )
         self._cache = cache.tools
+        self._approved = cache.names
+        self._preflight_findings = cache.findings
+        if cache.findings:
+            # Flag-only mode: the operator chose to serve this catalogue, but
+            # it must not be served silently. These used to be discarded.
+            _LOG.error(
+                "serving a tool catalogue WITH FINDINGS (SENTINEL_CATALOGUE_STRICT=0): %s",
+                "; ".join(str(f) for f in cache.findings),
+            )
         # Pin the approved catalogue so a later mutation (rug pull) is detectable.
         self._monitor = CatalogueMonitor(pinned=cache.fingerprints)
         # The session manager's run() owns the task group every HTTP session lives
         # in; it must wrap the whole app lifetime.
         await self._stack.enter_async_context(self._session_manager.run())
+        if settings.catalogue_recheck_seconds > 0:
+            self._recheck_task = asyncio.create_task(
+                self._recheck_loop(settings.catalogue_recheck_seconds),
+                name="sentinel-catalogue-recheck",
+            )
         return self
+
+    async def _recheck_loop(self, interval: float) -> None:
+        """Re-verify the downstream catalogue on a schedule.
+
+        Checking only on ``tools/list`` left drift unnoticed for as long as no
+        agent re-listed, and most agents list tools once per session. A check
+        that fails is recorded by the monitor and retried next time; it never
+        stops the loop.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._verify_catalogue()
+            except Exception:  # noqa: BLE001 - the monitor must outlive a bad check
+                _LOG.exception("scheduled catalogue re-check failed")
+
+    def _catalogue_refusal(self, name: str) -> str | None:
+        """Why ``name`` may not be called, or ``None`` if it may.
+
+        Handed to every session's proxy as its catalogue gate. A tool outside
+        the approved catalogue is always refused: the agent was never shown
+        it, so no legitimate call names it. A tool whose definition changed
+        after approval is refused under ``SENTINEL_CATALOGUE_STRICT`` and only
+        reported otherwise. Either way the refusal stands until the catalogue
+        is re-approved, which means reconnecting (restarting) the gateway.
+        """
+        if self._approved is None:
+            return None  # nothing approved yet, so nothing to hold calls to
+        if name not in self._approved:
+            return f"tool {name!r} is not in the catalogue approved at connect"
+        if (
+            self._monitor is not None
+            and name in self._monitor.drifted_tools
+            and get_settings().catalogue_strict
+        ):
+            return (
+                f"tool {name!r} changed downstream after approval (possible rug "
+                "pull); refused until the catalogue is re-approved"
+            )
+        return None
 
     async def _connect_declared_downstream(
         self, servers: Sequence[DownstreamServer]
@@ -426,6 +518,13 @@ class SentinelGateway:
         self._downstream_mode = "remote-http"
 
     async def __aexit__(self, *exc: object) -> None:
+        if self._recheck_task is not None:
+            self._recheck_task.cancel()
+            try:
+                await self._recheck_task
+            except asyncio.CancelledError:
+                pass
+            self._recheck_task = None
         await self._stack.aclose()
 
     async def handle_asgi(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -450,12 +549,12 @@ class SentinelGateway:
         """
         if self._monitor is None or self._router is None:
             return ()
-        was_clean = not self._monitor.drifted
+        known = len(self._monitor.findings)
         findings = await self._monitor.check(self._router)
-        if findings and was_clean:
+        if len(findings) > known:
             _LOG.error(
                 "downstream catalogue changed after approval (possible rug pull): %s",
-                "; ".join(str(f) for f in findings),
+                "; ".join(str(f) for f in findings[known:]),
             )
         return findings
 
@@ -468,8 +567,9 @@ class SentinelGateway:
             # This is the rug-pull check, run at the moment it matters (an agent
             # is about to learn what tools exist). The agent is ALWAYS served the
             # pinned catalogue, so a mutated description can never reach it; the
-            # check exists to detect and report that a server changed its
-            # definitions after approval. A transport hiccup is not drift — the
+            # check detects and reports that a server changed its definitions
+            # after approval, and (strict mode) makes the call path refuse the
+            # changed tools. A transport hiccup is not drift — the
             # monitor records the error and we keep serving the cache.
             await self._verify_catalogue()
             return list(self._cache)
@@ -565,6 +665,7 @@ class SentinelGateway:
                 cache=self._cache,
                 agent_id=agent_id,
                 tenant=tenant or self._tenant,
+                catalogue_gate=self._catalogue_refusal,
             )
             await proxy.start(user_input=_LIVE_USER_INPUT)
             self._sessions[session] = _TrackedSession(

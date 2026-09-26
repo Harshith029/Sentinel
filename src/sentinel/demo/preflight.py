@@ -35,6 +35,9 @@ class ToolSchemaCache:
     """
 
     tools: tuple[mcp_types.Tool, ...]
+    # What the catalogue scan found. Only ever non-empty in flag-only mode
+    # (``strict=False``); strict mode raises instead of returning a cache.
+    findings: tuple[CatalogueFinding, ...] = ()
 
     @property
     def names(self) -> frozenset[str]:
@@ -69,8 +72,10 @@ async def preflight(
     is tainted, yet its instructions are already subverted. Refusing to serve it
     is therefore the right default.
 
-    ``strict=False`` downgrades poisoning to flag-only (findings are returned via
-    the raised-or-not path being skipped) for operators who prefer to triage.
+    ``strict=False`` downgrades poisoning to flag-only for operators who prefer
+    to triage: the catalogue is served and the findings travel with the cache
+    (:attr:`ToolSchemaCache.findings`) so the caller can surface them. They
+    used to be computed and then dropped, so flag-only mode flagged nothing.
 
     Cross-server shadowing needs no handling here: :meth:`ToolRouter.list_tools`
     already fails closed on a tool-name collision, and this call goes through it.
@@ -96,4 +101,6 @@ async def preflight(
                 "downstream tool catalogue appears poisoned; refusing to serve it:\n  "
                 + "\n  ".join(str(f) for f in findings)
             )
+        if findings:
+            cache = ToolSchemaCache(tools=cache.tools, findings=tuple(findings))
     return cache

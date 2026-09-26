@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import mcp.types as mcp_types
@@ -213,6 +213,10 @@ class CatalogueMonitor:
     findings: tuple[CatalogueFinding, ...] = ()
     checks: int = 0
     last_error: str | None = None
+    # Every tool a successful re-fetch has ever shown diverging from its pin.
+    # The call path refuses these (see SentinelGateway), so the set only grows:
+    # reverting a definition does not re-approve it.
+    drifted_tools: set[str] = field(default_factory=set)
 
     @property
     def drifted(self) -> bool:
@@ -223,8 +227,9 @@ class CatalogueMonitor:
         """Re-fetch ``downstream``'s catalogue and diff it against the pin.
 
         ``downstream`` is anything with ``list_tools()`` (the proxy's router).
-        Findings are sticky: once drift is observed it stays reported, because a
-        server that mutates its catalogue and reverts has still misbehaved.
+        Findings are sticky AND cumulative: once drift is observed it stays
+        reported, because a server that mutates its catalogue and reverts has
+        still misbehaved, and a second mutation does not erase the first.
         """
         self.checks += 1
         try:
@@ -233,9 +238,10 @@ class CatalogueMonitor:
             self.last_error = f"{type(exc).__name__}: {exc}"
             return self.findings
         self.last_error = None
-        found = tuple(detect_drift(self.pinned, list(listed.tools)))
+        found = detect_drift(self.pinned, list(listed.tools))
         if found:
-            self.findings = found
+            self.findings = tuple(dict.fromkeys((*self.findings, *found)))
+            self.drifted_tools.update(f.tool_name for f in found)
         return self.findings
 
     def status(self) -> dict[str, object]:
@@ -245,6 +251,7 @@ class CatalogueMonitor:
             "drifted": self.drifted,
             "last_error": self.last_error,
             "findings": [str(f) for f in self.findings],
+            "drifted_tools": sorted(self.drifted_tools),
         }
 
 

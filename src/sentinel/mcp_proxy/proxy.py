@@ -35,7 +35,7 @@ Claude, or any specific client. Any MCP speaker is secured identically.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Final
 
 import mcp.types as mcp_types
@@ -127,6 +127,7 @@ class SentinelProxy:
         input_shield: InputShield | None = None,
         tool_schema_cache: Sequence[mcp_types.Tool] | None = None,
         max_result_bytes: int | None = None,
+        catalogue_gate: Callable[[str], str | None] | None = None,
     ) -> None:
         self._downstream = downstream
         self._max_result_bytes = (
@@ -149,6 +150,10 @@ class SentinelProxy:
         # Optional preflighted tool schemas: serve list_tools from this cache so a
         # mid-demo downstream hiccup cannot break tool discovery (§Phase 5).
         self._tool_schema_cache = list(tool_schema_cache) if tool_schema_cache else None
+        # Optional: given a tool name, the reason it may NOT be called because it
+        # is outside the approved catalogue, or None. Supplied by the gateway,
+        # which owns the pinned catalogue and the drift monitor.
+        self._catalogue_gate = catalogue_gate
 
         self._graph = ProvenanceGraph()
         self._frontier: list[str] = []  # span_ids the agent has observed
@@ -270,6 +275,31 @@ class SentinelProxy:
                     derived_from=tuple(self._frontier),
                 )
             )
+            # 1b. Only tools in the APPROVED catalogue may be called. The agent
+            #     is only ever shown the pinned catalogue, but nothing stopped
+            #     it naming a tool that appeared downstream after approval, or
+            #     one whose definition has since changed (a rug pull), and the
+            #     router would forward either. Recorded like any other block,
+            #     without a trust penalty: calling a tool the agent was shown
+            #     is not agent misbehaviour; the downstream's change is.
+            refusal = self._catalogue_gate(name) if self._catalogue_gate else None
+            if refusal is not None:
+                await self._emitter.emit(
+                    ToolBlocked(
+                        tool_name=name,
+                        reason=refusal,
+                        blocked_by="catalogue",
+                        matched_rule_id=None,
+                    ),
+                    trace_id=self._trace_id,
+                    parent_span_id=proposed.span_id,
+                )
+                log_blocked(
+                    name, reason=refusal, rule="catalogue",
+                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                )
+                return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
+
             lineage = self._graph.effective_provenance(proposed.span_id)
             if lineage.anomalous:
                 # A cycle or a dangling ancestor means the traversal did not

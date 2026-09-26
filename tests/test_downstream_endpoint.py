@@ -74,7 +74,9 @@ async def test_poisoning_mode_reflects_configuration(
     manager = _manager()
     try:
         async with SentinelGateway(manager) as gateway:
-            assert gateway.describe()["checks"]["tool_poisoning"] == "flag-only"
+            described = gateway.describe()
+            assert described["checks"]["tool_poisoning"] == "flag-only (0 finding(s))"
+            assert described["catalogue_findings"] == []  # the bundled servers are clean
     finally:
         await manager.aclose()
         reset_settings_cache()

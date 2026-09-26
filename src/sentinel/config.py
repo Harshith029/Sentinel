@@ -229,7 +229,17 @@ class Settings(BaseModel):
             "tool catalogue whose definitions carry prompt-injection markers (tool "
             "poisoning) — a supply-chain compromise provenance alone cannot catch. "
             "Set False to downgrade to flag-only triage. Cross-server tool-name "
-            "shadowing always fails closed regardless of this setting."
+            "shadowing always fails closed regardless of this setting. Also "
+            "governs a tool whose definition changes after approval: refused "
+            "at call time when True, only reported when False."
+        ),
+    )
+    catalogue_recheck_seconds: int = Field(
+        default=300,
+        description=(
+            "How often the gateway re-fetches each downstream catalogue and "
+            "compares it to the one approved at connect (rug-pull detection). "
+            "0 disables the schedule; tool discovery still re-checks."
         ),
     )
 
@@ -315,6 +325,9 @@ def _read_settings_from_env() -> Settings:
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
+        catalogue_recheck_seconds=_parse_int_env(
+            "SENTINEL_CATALOGUE_RECHECK_SECONDS", default=300, minimum=0
+        ),
         mcp_servers=os.environ.get("SENTINEL_MCP_SERVERS") or None,
         policy_file=os.environ.get("SENTINEL_POLICY_FILE") or None,
     )

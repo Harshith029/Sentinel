@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,7 +102,7 @@ def _load_policy_file(path_text: str, *, what: str) -> CompiledPolicy:
     return load_policy(path.read_text(encoding="utf-8"))
 
 
-def _build_registry(settings: Settings) -> PolicyRegistry:
+def build_policy_registry(settings: Settings) -> PolicyRegistry:
     """Give every provisioned tenant a policy, and nobody else.
 
     * The default tenant gets the deployment policy: the operator's
@@ -214,7 +214,7 @@ class RunManager:
         self._bus = EventBus()
         self._store = BroadcastStore(self._inner_store, self._bus)
         self._emitter = SpanEmitter(self._store)
-        self._registry = _build_registry(self._settings)  # multi-tenant policies
+        self._registry = build_policy_registry(self._settings)  # multi-tenant policies
         self._scorer = TrustScorer(self._emitter, load_default_trust_config())
         # Build the shield FROM SETTINGS so AZURE MODE actually carries the
         # Content-Safety endpoint/key (demo_mode alone left it unconfigured).
@@ -318,6 +318,7 @@ class RunManager:
         cache: Sequence[mcp_types.Tool],
         agent_id: str,
         tenant: str = DEFAULT_TENANT,
+        catalogue_gate: Callable[[str], str | None] | None = None,
     ) -> SentinelProxy:
         """Build a per-session proxy for a LIVE MCP connection (Phase 9 gateway).
 
@@ -352,6 +353,7 @@ class RunManager:
             authorization_config=engine.config,
             input_shield=self._shield,
             tool_schema_cache=cache,
+            catalogue_gate=catalogue_gate,
         )
         self._runs[trace_id] = RunRecord(
             run_id=trace_id,

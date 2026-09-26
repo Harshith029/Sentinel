@@ -25,7 +25,18 @@ we stop that recurring.
 .venv/bin/python -m mypy src        # strict; no new ignores without a reason
 ```
 
-CI runs the same three plus `gitleaks`, on Python 3.11.
+CI runs those three on every push and PR (Python 3.11), plus:
+
+- **package**: builds the sdist and wheel, runs `twine check`, then installs the wheel
+  into a clean venv and uses it from outside the source tree;
+- **container**: builds `deploy/Dockerfile`, starts it, and checks it is healthy, refuses
+  requests when no credential is configured (503), and does not run as root;
+- **Bicep**: compiles `deploy/main.bicep` (this shows it builds, not that it deploys);
+- **supply chain**: `pip-audit` over `versions.lock`, failing on any known
+  vulnerability, and a `gitleaks` scan of the full history.
+
+A PR that fails the audit usually needs a pin bump in `versions.lock`: use the
+smallest fixed version within the current major, then rerun the tests.
 
 ## Security invariants — do not regress these
 

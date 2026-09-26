@@ -42,6 +42,15 @@ jobs:
         # drift. See scripts/check_versions_lock.py.
         run: python scripts/check_versions_lock.py
 
+      # Lint and types used to run only in release.yml, i.e. after a tag was
+      # pushed: a PR could merge code that the release would then refuse. One
+      # tool per step, so the run summary alone says which gate failed.
+      - name: Lint (ruff)
+        run: python -m ruff check src tests
+
+      - name: Types (mypy)
+        run: python -m mypy src
+
       - name: Install pre-commit hooks (gitleaks binary)
         run: |
           pre-commit install
@@ -49,6 +58,102 @@ jobs:
 
       - name: pytest
         run: python -m pytest -v
+
+  package:
+    # Proves what a user installs actually works: build both artifacts, check
+    # their metadata, then install the WHEEL into a fresh venv and use it from
+    # outside the source tree, where an editable install would hide a missing
+    # data file (the bundled policy and trust config ship as package data).
+    name: package (build + install the wheel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip "build==1.6.1" "twine==7.0.0"
+          python -m build
+          python -m twine check dist/*
+      - name: Install the wheel into a clean venv and smoke it
+        run: |
+          python -m venv /tmp/wheel-env
+          /tmp/wheel-env/bin/pip install dist/*.whl -c versions.lock
+          cd /tmp
+          /tmp/wheel-env/bin/python -c "from sentinel.authorization.policy import load_default_policy; from sentinel.trust.config import load_default_trust_config; load_default_policy(); load_default_trust_config(); print('package data OK')"
+          /tmp/wheel-env/bin/sentinel --help
+
+  container:
+    # The image render.yaml and deploy/ ship. Checks it builds, starts, is
+    # fail-closed with no credential, and does not run as root.
+    name: container (build + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -f deploy/Dockerfile -t sentinel:ci .
+      - name: Start and probe
+        run: |
+          docker run -d --name sentinel -p 8765:8765 sentinel:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8765/healthz > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/healthz
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/runs)
+          test "$code" = "503" || { echo "::error::no credential configured, expected 503, got $code"; exit 1; }
+          uid=$(docker exec sentinel id -u)
+          test "$uid" != "0" || { echo "::error::the container runs as root"; exit 1; }
+      - name: Container logs
+        if: always()
+        run: docker logs sentinel || true
+
+  bicep:
+    # deploy/main.bicep has never been deployed (see README). Compiling it on
+    # every change at least keeps it from rotting into something that would not
+    # even build. It does NOT show the template deploys or works.
+    name: Bicep (compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile deploy/main.bicep
+        run: |
+          az bicep install
+          az bicep version
+          az bicep build --file deploy/main.bicep --stdout > /dev/null
+
+  supply-chain:
+    name: dependency audit + secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # the secret scan covers the whole history, not a diff
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      # Audits exactly what versions.lock pins. Fails the build on any known
+      # vulnerability; the fix is a pin bump in versions.lock.
+      - name: Audit pinned dependencies (pip-audit)
+        run: |
+          python -m pip install --upgrade pip "pip-audit==2.10.1"
+          python -m pip_audit -r versions.lock --no-deps --disable-pip --progress-spinner off
+      # The pre-commit hook scans only what is being committed; this scans every
+      # commit on every ref. Same gitleaks version as .pre-commit-config.yaml.
+      - name: Secret scan, full history (gitleaks)
+        env:
+          GITLEAKS_VERSION: "8.21.2"
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "$base/$archive"
+          curl -sSfLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $archive\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$archive" gitleaks
+          ./gitleaks git "$GITHUB_WORKSPACE" --redact --no-banner
 
   real-mcp-diagnostics:
     # QUARANTINED. These exercise both remote downstream paths over real TCP, but

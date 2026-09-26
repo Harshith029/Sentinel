@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]  # 77: SPDX `license` string
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,8 @@ description = "Provenance-aware security proxy for AI agents: block prompt-injec
 requires-python = ">=3.11"
 authors = [{ name = "Pali Krishna Harshith" }]
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = [
     "mcp", "model-context-protocol", "ai-security", "prompt-injection",
     "ai-agents", "llm-security", "agentic-ai", "security-proxy",
@@ -22,7 +23,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

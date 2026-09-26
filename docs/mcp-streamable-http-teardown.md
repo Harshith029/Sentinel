@@ -35,8 +35,12 @@ listed so the next investigation does not spend its time here again.
 
 ## What it actually looks like
 
-* **Windows-only so far.** Linux CI has been green throughout; every observation
-  here is from Windows 11 / CPython 3.11 on the Proactor loop.
+* **Not Windows-only (corrected 2026-09-26).** This bullet used to read
+  "Windows-only so far. Linux CI has been green throughout", which misread the
+  evidence: CI was green because the *strict* xfail kept failing on Linux, as
+  it only can if the wedge reproduces there. See *Environment*. The detailed
+  measurements below are all from Windows 11 / CPython 3.11 on the Proactor
+  loop.
 * **Probabilistic, not ordered.** Measured at HEAD `5bb1dfb` with every test
   bounded: **1 wedge in 8 full runs**. Removing *any* one of several unrelated
   tests makes a failing run pass, which is the signature of a timing race rather
@@ -78,11 +82,24 @@ today; both are blocked until this is understood.
 
 ## Environment
 
-mcp 1.27.1 · anyio 4.13.0 · httpx 0.28.1 · httpcore 1.0.9 · starlette 1.2.0 ·
-uvicorn 0.48.0 · CPython 3.11.9 · Windows 11 (Proactor loop).
+First characterised on: mcp 1.27.1 · anyio 4.13.0 · httpx 0.28.1 ·
+httpcore 1.0.9 · starlette 1.2.0 · uvicorn 0.48.0 · CPython 3.11.9 ·
+Windows 11 (Proactor loop).
 
-**Only Windows has been tested.** No Linux or macOS run has been performed, so
-the platform matrix is one row wide and must not be described as more.
+**Still present after the 2026-09-26 security upgrade** (mcp 1.28.1 ·
+anyio 4.14.2 · starlette 1.3.1, rest unchanged). On Windows, running
+`test_remote_http_tool_servers_are_secured` followed by this test with
+`--runxfail` failed 3/3 with the same message: the session did not complete
+within 8.0s, with 20 pending tasks. The test alone passes (1.35s), as before.
+
+**It is not Windows-only.** This page used to say only Windows had been
+tested. CI has run the same strict xfail on ubuntu-latest on every push, and a
+strict xfail that passed there would fail the build. In run 36259905212
+(commit 9cf6fe8), the preceding test passed and this one reported XFAIL 9.1s
+later, which fits the 8s handshake deadline. The Linux failure message is not
+in the CI log (pytest prints only the xfail reason), so the timing and the
+strict marker are the evidence; no one has watched it fail on Linux directly.
+macOS has not been run.
 
 
 ## Related: F-02 deployment status

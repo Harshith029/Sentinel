@@ -50,11 +50,12 @@ dependencies = [
     "azure-monitor-opentelemetry>=1.6,<2",
 
     # MCP — official Python SDK (server + client)
-    # Floor is 1.27 purely for API compatibility: open_downstream_session passes
-    # `http_client=` to streamable_http_client, which older releases lack. It is
-    # NOT a claim that 1.27 fixes anything — the teardown defect in
-    # docs/mcp-streamable-http-teardown.md is present IN 1.27.1.
-    "mcp>=1.27,<2",
+    # Floor is 1.28.1 for security: earlier releases carry PYSEC-2026-3481,
+    # -3482 and -3483. (SENTINEL does its own session-ownership check as well;
+    # the SDK's fix for -3482 only covers servers using the SDK's own auth.)
+    # It is NOT a claim that 1.28.1 fixes the teardown defect in
+    # docs/mcp-streamable-http-teardown.md: that is still present in 1.28.1.
+    "mcp>=1.28.1,<2",
 
     # OpenAI — exact pin written to versions.lock after resolve
     "openai>=1.50,<3",

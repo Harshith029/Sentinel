@@ -328,7 +328,15 @@ class SentinelGateway:
         # stateless=False: keep one ServerSession per MCP session so a session's
         # provenance frontier persists across its successive tool calls.
         self._session_manager = StreamableHTTPSessionManager(
-            app=self._front, json_response=False, stateless=False
+            app=self._front, json_response=False, stateless=False,
+            # The transport keeps every session it ever opened until the client
+            # sends DELETE; one that just goes away held its task and streams
+            # for the life of the process (20 abandoned sessions: all 20 still
+            # there after the idle TTL). Reap it on the same idle TTL as its
+            # proxy. A request pushes the deadline forward, so an active
+            # session is never cut. (The SDK rejects 0, which the gateway's
+            # own TTL uses to mean "retire proxies at once".)
+            session_idle_timeout=idle_ttl if idle_ttl > 0 else None,
         )
 
     @property

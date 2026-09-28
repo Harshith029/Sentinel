@@ -15,6 +15,7 @@ they are not exposed to the Windows teardown wedge.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,7 +48,7 @@ def _fetch(url: str, id_: int) -> dict[str, Any]:
 
 @asynccontextmanager
 async def _gateway(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, **gateway_kwargs: Any
 ) -> AsyncIterator[tuple[httpx.AsyncClient, SentinelGateway, InMemoryForensicStore]]:
     monkeypatch.setenv(
         "SENTINEL_API_TOKENS", json.dumps({"acme": "tok-acme", "globex": "tok-globex"})
@@ -57,7 +58,7 @@ async def _gateway(
     store = InMemoryForensicStore()
     manager = RunManager(store=store)
     try:
-        async with SentinelGateway(manager) as gateway:
+        async with SentinelGateway(manager, **gateway_kwargs) as gateway:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=gateway.handle_asgi),
                 base_url="http://sentinel",
@@ -172,3 +173,43 @@ async def test_owner_records_are_pruned_only_for_dead_sessions(
         owners = gateway._session_owners  # noqa: SLF001
         assert "long-gone" not in owners
         assert all(s in owners for s in live), "a live session lost its owner"
+
+
+# --- abandoned sessions are reclaimed -------------------------------------------
+
+
+async def test_an_abandoned_session_is_reclaimed_after_the_idle_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that goes away without DELETE used to hold its session forever."""
+    async with _gateway(monkeypatch, idle_ttl=0.3) as (client, gateway, _store):
+        sessions = [await _open_session(client, _ACME) for _ in range(5)]
+        live = gateway._session_manager._server_instances  # noqa: SLF001
+        assert all(s in live for s in sessions)
+
+        for _ in range(100):
+            if not any(s in live for s in sessions):
+                break
+            await asyncio.sleep(0.02)
+        assert not any(s in live for s in sessions), "abandoned sessions were kept"
+
+        gone = await client.post(
+            "/", headers={**_ACME, "mcp-session-id": sessions[0]},
+            json=_fetch("https://corp.example/late", 9),
+        )
+        assert gone.status_code == 404
+
+
+async def test_an_active_session_is_not_cut_by_the_idle_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with _gateway(monkeypatch, idle_ttl=0.3) as (client, _gateway_, _store):
+        session = await _open_session(client, _ACME)
+        # Active for well over the TTL, never idle for as long as the TTL.
+        for i in range(8):
+            await asyncio.sleep(0.1)
+            kept = await client.post(
+                "/", headers={**_ACME, "mcp-session-id": session},
+                json=_fetch("https://corp.example/busy", 10 + i),
+            )
+            assert kept.status_code == 200, f"cut after {0.1 * (i + 1):.1f}s of activity"

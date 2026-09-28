@@ -50,7 +50,7 @@ Read this before deploying anything.
 | Area | State |
 |---|---|
 | Provenance tracking + deterministic default-deny enforcement | Working, tested |
-| Forensic spans, replay, audit trail | Working; payloads redacted before persistence |
+| Forensic spans, replay, audit trail | Working; payloads redacted before persistence. Each run's tenant is recorded, so history stays with its tenant across restarts. Traces are deleted after `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90). Not encrypted at rest by SENTINEL (see *Forensic data*) |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting |
 | Authentication | Every endpoint gated; fails closed when unconfigured |
 | Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
@@ -252,6 +252,31 @@ unauthenticated callers share one budget.
 
 These counters live in process memory. Two replicas give a tenant twice the
 budget; enforce a global limit at the load balancer if you need one.
+
+### Forensic data
+
+The default store is SQLite at `${SENTINEL_DATA_DIR:-./var}/sentinel.db`.
+
+- **Retention.** A trace is deleted, whole, once its newest span is older than
+  `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90; `0` keeps everything). The
+  purge runs the first time runs are listed or started after startup, then at
+  most once a day while runs are being started, so an idle service purges
+  nothing. Runs in flight are never deleted. Set the window to what your audit
+  obligations require.
+- **Ownership.** Each run's tenant is recorded when it starts, so after a
+  restart every tenant sees its own history and no one else's. History written
+  by a version before that has no recorded owner; it is shown only to the
+  operator (`SENTINEL_ADMIN_TOKEN`) rather than guessed at.
+- **Encryption at rest.** SENTINEL does not encrypt the database. Tool
+  arguments and results are redacted before they are written, but tool names,
+  decisions and timings are stored in the clear. Put `SENTINEL_DATA_DIR` on an
+  encrypted volume.
+- **Backup.** A clean shutdown checkpoints the write-ahead log, so the `.db`
+  file of a stopped service is complete on its own. While it runs, copy it with
+  SQLite's online backup (`sqlite3 sentinel.db ".backup copy.db"`), not a
+  file copy: the newest writes can still be in `sentinel.db-wal`.
+- **Cosmos DB.** Retention there is the container's time-to-live (`defaultTtl`),
+  set on the container; SENTINEL does not purge Cosmos itself.
 
 ### Running at zero cost
 

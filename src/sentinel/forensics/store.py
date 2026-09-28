@@ -23,6 +23,7 @@ import json
 import logging
 import sqlite3
 from collections import OrderedDict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
@@ -283,6 +284,18 @@ class SqliteForensicStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS spans_by_trace ON spans(trace_id, seq)"
         )
+        # Who each trace belongs to. Not forensic evidence (spans are), but
+        # without it a restart cannot tell whose history is whose: every
+        # restored run used to be attributed to the default tenant, which hid
+        # a tenant's own history from it and showed it to the default tenant.
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS runs ("
+            "  trace_id TEXT NOT NULL PRIMARY KEY,"
+            "  tenant   TEXT NOT NULL,"
+            "  agent_id TEXT NOT NULL,"
+            "  scenario TEXT NOT NULL"
+            ")"
+        )
 
     async def put(self, span: Span) -> None:
         body = json.dumps(span.model_dump(mode="json"))
@@ -332,5 +345,69 @@ class SqliteForensicStore:
         )
         return [row[0] for row in cursor.fetchall()]
 
+    async def put_run(
+        self, trace_id: str, *, tenant: str, agent_id: str, scenario: str
+    ) -> None:
+        """Record who a trace belongs to. First write wins: ownership is immutable."""
+        async with self._lock:
+            await asyncio.to_thread(
+                self._conn.execute,
+                "INSERT OR IGNORE INTO runs (trace_id, tenant, agent_id, scenario) "
+                "VALUES (?, ?, ?, ?)",
+                (trace_id, tenant, agent_id, scenario),
+            )
+
+    async def run_owners(self) -> dict[str, tuple[str, str, str]]:
+        """``{trace_id: (tenant, agent_id, scenario)}`` for every recorded run."""
+        async with self._lock:
+            rows = await asyncio.to_thread(
+                lambda: self._conn.execute(
+                    "SELECT trace_id, tenant, agent_id, scenario FROM runs"
+                ).fetchall()
+            )
+        return {row[0]: (row[1], row[2], row[3]) for row in rows}
+
+    async def purge_older_than(
+        self, cutoff: datetime, *, keep: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """Delete every trace whose NEWEST span is older than ``cutoff``.
+
+        Whole traces only: a partly deleted trace would replay as a different
+        story than the one recorded. ``keep`` protects traces still in use.
+        Returns the trace ids removed.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._purge_blocking, cutoff, keep)
+
+    def _purge_blocking(self, cutoff: datetime, keep: frozenset[str]) -> list[str]:
+        stamp = cutoff.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        rows = self._conn.execute(
+            "SELECT trace_id FROM spans GROUP BY trace_id "
+            "HAVING MAX(julianday(json_extract(body, '$.timestamp'))) < julianday(?)",
+            (stamp,),
+        ).fetchall()
+        doomed = [row[0] for row in rows if row[0] not in keep]
+        if not doomed:
+            return []
+        self._conn.execute("BEGIN")
+        try:
+            for trace_id in doomed:
+                self._conn.execute("DELETE FROM spans WHERE trace_id = ?", (trace_id,))
+                self._conn.execute("DELETE FROM runs WHERE trace_id = ?", (trace_id,))
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return doomed
+
     def close(self) -> None:
-        self._conn.close()
+        """Checkpoint the write-ahead log into the database file, then close.
+
+        Without the checkpoint the most recent writes live only in the
+        ``-wal`` file, so copying the database file alone as a backup would
+        silently miss them.
+        """
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            self._conn.close()

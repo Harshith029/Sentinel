@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +105,9 @@ def _load_policy_file(path_text: str, *, what: str) -> CompiledPolicy:
     return load_policy(path.read_text(encoding="utf-8"))
 
 
+_LOG = logging.getLogger("sentinel.control.manager")
+
+
 def build_policy_registry(settings: Settings) -> PolicyRegistry:
     """Give every provisioned tenant a policy, and nobody else.
 
@@ -173,7 +179,9 @@ class RunRecord:
     trace_id: str
     agent_id: str
     scenario: str
-    tenant: str = DEFAULT_TENANT
+    # None: restored from before ownership was recorded, so nobody knows whose
+    # it is. No tenant matches None, so only the operator can see such a run.
+    tenant: str | None = DEFAULT_TENANT
     status: str = "running"  # running | completed | failed
     error: str | None = None
 
@@ -211,6 +219,8 @@ class RunManager:
         self._inner_store: ForensicStore = (
             store if store is not None else _default_store(self._settings)
         )
+        # A store handed in belongs to the caller; one built here is ours to close.
+        self._owns_store = store is None
         self._bus = EventBus()
         self._store = BroadcastStore(self._inner_store, self._bus)
         self._emitter = SpanEmitter(self._store)
@@ -227,6 +237,9 @@ class RunManager:
         )
         self._runs: dict[str, RunRecord] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # Ownership writes in flight; awaited on shutdown so none is lost.
+        self._pending_writes: set[asyncio.Task[Any]] = set()
+        self._last_purge: float | None = None
 
     @property
     def bus(self) -> EventBus:
@@ -285,6 +298,7 @@ class RunManager:
             tenant=tenant,
         )
         self._runs[trace_id] = record
+        self._persist_owner(record)
         task: asyncio.Task[None] = asyncio.create_task(self._execute(record, build))
         self._tasks[trace_id] = task
         task.add_done_callback(functools.partial(self._on_run_done_callback, trace_id))
@@ -363,7 +377,58 @@ class RunManager:
             tenant=tenant,
             status="running",
         )
+        self._persist_owner(self._runs[trace_id])
         return proxy
+
+    def _persist_owner(self, record: RunRecord) -> None:
+        """Record in the persistent store which tenant a new run belongs to.
+
+        Fire-and-track rather than awaited, because runs start from synchronous
+        code; :meth:`aclose` waits for any write still in flight.
+        """
+        store = self._inner_store
+        if not isinstance(store, SqliteForensicStore) or record.tenant is None:
+            return
+        task = asyncio.create_task(
+            store.put_run(
+                record.trace_id, tenant=record.tenant,
+                agent_id=record.agent_id, scenario=record.scenario,
+            )
+        )
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
+        self._maybe_purge()
+
+    def _maybe_purge(self) -> None:
+        """Apply the retention policy at most once a day, driven by activity."""
+        now = time.monotonic()
+        if self._last_purge is not None and now - self._last_purge < 86_400:
+            return
+        self._last_purge = now
+        task = asyncio.create_task(self.purge_expired())
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
+
+    async def purge_expired(self) -> list[str]:
+        """Delete traces past ``SENTINEL_FORENSIC_RETENTION_DAYS`` (0 = keep all).
+
+        Runs in flight are never touched. The run index forgets purged runs,
+        so it cannot offer a replay of a trace that no longer exists.
+        """
+        days = self._settings.forensic_retention_days
+        store = self._inner_store
+        if days == 0 or not isinstance(store, SqliteForensicStore):
+            return []
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        running = frozenset(t for t, r in self._runs.items() if r.status == "running")
+        purged = await store.purge_older_than(cutoff, keep=running)
+        for trace_id in purged:
+            self._runs.pop(trace_id, None)
+        if purged:
+            _LOG.info(
+                "retention: deleted %d trace(s) older than %d day(s)", len(purged), days
+            )
+        return purged
 
     def _select_driver(self, build: ScenarioBuild) -> Any:  # noqa: ANN401 - AgentDriver
         """Choose the agent that proposes tool calls for a run.
@@ -386,7 +451,11 @@ class RunManager:
         try:
             # Resolve the tenant's policy at run time → registry hot-reloads take
             # effect for subsequent runs without restart.
-            engine = self._registry.engine_for(record.tenant)
+            engine = (
+                self._registry.engine_for(record.tenant)
+                if record.tenant is not None
+                else None
+            )
             if engine is None:
                 raise ValueError(f"no policy registered for tenant {record.tenant!r}")
             await run_demo_session(
@@ -476,7 +545,11 @@ class RunManager:
         """
         if not isinstance(self._inner_store, SqliteForensicStore):
             return 0
+        if self._last_purge is None:
+            self._last_purge = time.monotonic()
+            await self.purge_expired()  # never restore what retention deletes
         trace_ids = await self._inner_store.list_trace_ids()
+        owners = await self._inner_store.run_owners()
         restored = 0
         for trace_id in trace_ids:
             if trace_id in self._runs:
@@ -492,9 +565,18 @@ class RunManager:
                     # control plane only uses scenario for display.
                     scenario = _infer_scenario(s.payload.content)
                     break
+            # Ownership comes from what was recorded when the run started. A
+            # trace with no record predates that (or was written by something
+            # else) and is attributed to NOBODY rather than to the default
+            # tenant: guessing an owner either hides a tenant's history from
+            # it or shows it to someone else.
+            owner = owners.get(trace_id)
+            tenant: str | None = None
+            if owner is not None:
+                tenant, agent_id, scenario = owner
             self._runs[trace_id] = RunRecord(
                 run_id=trace_id, trace_id=trace_id, agent_id=agent_id,
-                scenario=scenario, status="completed",
+                scenario=scenario, tenant=tenant, status="completed",
             )
             restored += 1
         return restored
@@ -616,7 +698,7 @@ class RunManager:
         return alerts
 
     async def aclose(self) -> None:
-        """Cancel any still-running background tasks (clean teardown)."""
+        """Clean shutdown: stop runs, finish pending writes, close the store."""
         # Snapshot: finishing tasks remove themselves from _tasks, so iterating
         # the live dict while awaiting would change it mid-loop.
         tasks = list(self._tasks.values())
@@ -630,3 +712,14 @@ class RunManager:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                 pass
+        # Ownership records and retention are writes, not work to abandon: a
+        # run whose owner was never recorded restores as nobody's.
+        for write in list(self._pending_writes):
+            try:
+                await write
+            except Exception:  # noqa: BLE001 - shutdown must not stop on one write
+                _LOG.exception("pending forensic-store write failed at shutdown")
+        close = getattr(self._inner_store, "close", None)
+        if self._owns_store and callable(close):
+            close()
+            self._owns_store = False  # aclose may be called more than once

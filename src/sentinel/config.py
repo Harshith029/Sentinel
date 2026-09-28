@@ -190,6 +190,13 @@ class Settings(BaseModel):
         default=600,
         description="Requests per credential (or client address) per minute; 0 disables.",
     )
+    forensic_retention_days: int = Field(
+        default=90,
+        description=(
+            "Days a trace is kept in the SQLite forensic store after its last "
+            "span; older traces are deleted whole. 0 keeps everything forever."
+        ),
+    )
     max_result_bytes: int = Field(
         default=1024 * 1024,
         description=(
@@ -318,6 +325,9 @@ def _read_settings_from_env() -> Settings:
         ),
         rate_limit_per_minute=_parse_int_env(
             "SENTINEL_RATE_LIMIT_PER_MINUTE", default=600, minimum=0
+        ),
+        forensic_retention_days=_parse_int_env(
+            "SENTINEL_FORENSIC_RETENTION_DAYS", default=90, minimum=0
         ),
         max_result_bytes=_parse_int_env(
             "SENTINEL_MAX_RESULT_BYTES", default=1024 * 1024, minimum=1024

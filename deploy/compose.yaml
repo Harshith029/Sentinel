@@ -1,0 +1,48 @@
+# Self-host SENTINEL with Docker Compose: no cloud account, no cost.
+#
+#   cp .env.example .env          # then set SENTINEL_API_TOKEN (see below)
+#   docker compose -f deploy/compose.yaml --env-file .env up -d --build
+#   curl http://127.0.0.1:8765/healthz
+#
+# Generate a token:  python -c "import secrets; print(secrets.token_urlsafe(32))"
+#
+# What this gives you over `docker run`:
+#   * forensic history on a named volume, so it survives restarts and upgrades;
+#   * a credential is REQUIRED: compose refuses to start without one, instead of
+#     SENTINEL starting and then refusing every request;
+#   * bound to 127.0.0.1 only. Put a tunnel or reverse proxy in front if other
+#     machines need it (see deploy/DEPLOY.md), and keep your tool servers
+#     reachable only from here.
+services:
+  sentinel:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: sentinel:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      SENTINEL_API_TOKEN: ${SENTINEL_API_TOKEN:?set SENTINEL_API_TOKEN in .env}
+      # 1 = the bundled mock tools (a demo). Real deployments declare their own
+      # servers in SENTINEL_MCP_SERVERS and leave this at 0.
+      SENTINEL_DEMO_MODE: ${SENTINEL_DEMO_MODE:-0}
+      SENTINEL_DATA_DIR: /data
+      SENTINEL_FORENSIC_RETENTION_DAYS: ${SENTINEL_FORENSIC_RETENTION_DAYS:-90}
+      # Your own MCP servers, as JSON: [{"name":"github","url":"https://..."}]
+      SENTINEL_MCP_SERVERS: ${SENTINEL_MCP_SERVERS:-}
+      # Your policy (generate one with `sentinel scaffold`), mounted below.
+      SENTINEL_POLICY_FILE: ${SENTINEL_POLICY_FILE:-}
+    volumes:
+      - sentinel-data:/data
+      # - ./policy.yaml:/app/policy.yaml:ro   # then SENTINEL_POLICY_FILE=/app/policy.yaml
+    healthcheck:
+      # The slim image has no curl; Python is always there.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  sentinel-data:

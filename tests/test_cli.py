@@ -24,6 +24,7 @@ from sentinel.cli import (
     build_parser,
     load_config,
     main,
+    serve_port,
 )
 from sentinel.config import reset_settings_cache
 
@@ -282,6 +283,53 @@ def test_every_command_is_registered() -> None:
     parser = build_parser()
     for command in ("init", "check", "scaffold", "serve"):
         assert parser.parse_args([command]).command == command
+
+
+def test_serve_port_order_is_flag_then_platform_then_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hosting platforms say where to listen with PORT; the image must obey it.
+
+    The Dockerfile used to pass --port 8765, which beat PORT, so a platform
+    that routes to its own port (Render, Koyeb, Cloud Run) reached nothing.
+    """
+    monkeypatch.delenv("PORT", raising=False)
+    assert serve_port({}, None) == 8765
+    assert serve_port({"port": 9000}, None) == 9000
+
+    monkeypatch.setenv("PORT", "10000")
+    assert serve_port({"port": 9000}, None) == 10000  # environment beats the file
+    assert serve_port({"port": 9000}, 7000) == 7000   # an explicit flag beats both
+
+
+@pytest.mark.parametrize("bad", ["eighty", "0", "70000", "-1"])
+def test_a_bad_platform_port_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    monkeypatch.setenv("PORT", bad)
+    with pytest.raises(ConfigError, match="not a port number"):
+        serve_port({}, None)
+
+
+def test_the_image_takes_its_port_from_the_environment() -> None:
+    dockerfile = (Path(__file__).parent.parent / "deploy" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    cmd = [line for line in dockerfile.splitlines() if line.startswith("CMD")]
+    assert cmd and "--port" not in cmd[0], "a --port flag in CMD overrides PORT"
+    assert "PORT=8765" in dockerfile
+
+
+def test_the_compose_file_refuses_to_start_without_a_credential() -> None:
+    compose = yaml.safe_load(
+        (Path(__file__).parent.parent / "deploy" / "compose.yaml").read_text(encoding="utf-8")
+    )
+    service = compose["services"]["sentinel"]
+    assert service["environment"]["SENTINEL_API_TOKEN"].startswith(
+        "${SENTINEL_API_TOKEN:?"
+    ), "compose must fail at startup without a token, not serve a 503 service"
+    assert all(p.startswith("127.0.0.1:") for p in service["ports"]), "not loopback-only"
+    assert "sentinel-data:/data" in service["volumes"]
 
 
 def test_serve_dashboard_is_opt_in() -> None:

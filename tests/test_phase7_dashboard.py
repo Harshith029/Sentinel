@@ -57,3 +57,15 @@ async def test_healthz_reports_demo_mode() -> None:
         data = (await client.get("/healthz")).json()
         assert data["status"] == "ok"
         assert data["mode"] == "DEMO MODE"
+
+
+async def test_healthz_reports_production_mode_when_not_a_demo() -> None:
+    """It used to say DEMO MODE unconditionally, whatever was running."""
+    manager = RunManager(demo_mode=False)
+    transport = httpx.ASGITransport(app=create_app(manager))
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            data = (await client.get("/healthz")).json()
+        assert data["mode"] == "PRODUCTION MODE"
+    finally:
+        await manager.aclose()

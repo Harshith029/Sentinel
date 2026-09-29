@@ -367,12 +367,31 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     return scaffold_main()
 
 
+def serve_port(config: dict[str, Any], cli_port: int | None) -> int:
+    """The port ``serve`` listens on: ``--port`` > ``PORT`` > config file > 8765.
+
+    ``PORT`` is how hosting platforms (Render, Koyeb, Cloud Run, ...) tell a
+    container where to listen, so it beats a checked-in config file, the same
+    way every other environment variable does here. A bad value is an error:
+    silently listening on the default would leave the platform routing to a
+    port nothing is on.
+    """
+    if cli_port is not None:
+        return cli_port
+    raw = os.environ.get("PORT", "").strip()
+    if raw:
+        if not raw.isdigit() or not 0 < int(raw) < 65536:
+            raise ConfigError(f"PORT={raw!r} is not a port number (1-65535)")
+        return int(raw)
+    return int(_resolve(config, "port", None, 8765))
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     apply_config(config)
 
     host = _resolve(config, "host", args.host, "127.0.0.1")
-    port = int(_resolve(config, "port", args.port, 8765))
+    port = serve_port(config, args.port)
     dashboard = bool(_resolve(config, "dashboard", args.dashboard or None, False))
 
     # Enforcement must be visible where the operator is looking, not only in the

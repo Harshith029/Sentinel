@@ -59,7 +59,8 @@ Read this before deploying anything.
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
 | Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; tenant (agent) credentials cannot |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
-| Azure deployment (Bicep) | **Never deployed or smoke-tested**; see `GET /capabilities` |
+| Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
+| Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
 
 `SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
@@ -213,10 +214,17 @@ and config values.
 
 ## Deployment
 
+Self-hosting is free and needs no cloud account. With a `SENTINEL_API_TOKEN` in
+`.env`:
+
 ```bash
-docker build -t sentinel -f deploy/Dockerfile .
-docker run --rm -p 8765:8765 -v $(pwd)/sentinel.yaml:/app/sentinel.yaml sentinel
+docker compose -f deploy/compose.yaml --env-file .env up -d --build
 ```
+
+This keeps forensic history on a volume, refuses to start without the token, and
+listens on loopback only. [`deploy/DEPLOY.md`](./deploy/DEPLOY.md) covers the local
+demo, reaching SENTINEL from other machines (free options, and which ones we have
+tested), platforms that set `PORT`, and the optional, untested Azure template.
 
 Put your tool servers on an internal network reachable **only** by SENTINEL — that
 topology is what makes interception unbypassable.

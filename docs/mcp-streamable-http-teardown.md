@@ -57,6 +57,16 @@ listed so the next investigation does not spend its time here again.
 * **Always the same shape.** The blocked task sits in
   `GetQueuedCompletionStatus`, waiting on IOCP for a completion that never
   arrives, inside an MCP client handshake.
+* **Still intermittent after the session idle timeout (2026-09-29).** Commit
+  `98f51a2` gave the SDK session manager `session_idle_timeout`, which wraps
+  each server session in an extra cancel scope. With it, 2 of 11 full runs hung,
+  one of them in `test_capacity_pressure_cannot_launder_provenance` (the other
+  run was `-q`, so the test is unknown); without it, 0 of 15. A controlled A/B
+  on the same tree then gave 0 hangs in 6 runs with the timeout and 0 in 6
+  without. That does not attribute the hang to the timeout: 2/11 against 0/15
+  is within what chance produces at the ~1-in-8 baseline measured above. The
+  timeout stays, because it closes a real leak (abandoned sessions were never
+  released), and every test remains bounded.
 
 Because it cannot be attributed, it is **contained** rather than fixed: every
 test is bounded (`timeout = 120` in `pyproject.toml`), so a wedge becomes a named

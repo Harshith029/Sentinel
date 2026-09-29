@@ -731,7 +731,12 @@ def create_app(
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
-        return {"status": "ok", "mode": "DEMO MODE"}
+        # The mode actually running. This used to be the literal "DEMO MODE",
+        # so a production deployment's health check reported it was a demo.
+        return {
+            "status": "ok",
+            "mode": "DEMO MODE" if mgr.demo_mode else "PRODUCTION MODE",
+        }
 
     @app.get("/")
     async def dashboard() -> FileResponse:

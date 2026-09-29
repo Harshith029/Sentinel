@@ -246,6 +246,11 @@ class RunManager:
         return self._bus
 
     @property
+    def demo_mode(self) -> bool:
+        """Whether this manager runs the offline demo pipeline."""
+        return self._demo_mode
+
+    @property
     def registry(self) -> PolicyRegistry:
         return self._registry
 

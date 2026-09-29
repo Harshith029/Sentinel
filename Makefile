@@ -29,9 +29,14 @@ help:
 	@echo "  make gitleaks-scan — pre-commit run gitleaks --all-files"
 	@echo "  make clean         — remove caches and build artifacts"
 
+# The REST demo runs on the bundled mock tools only, on loopback, so it opts in
+# to anonymous mode. Without it SENTINEL is fail-closed and every data route
+# answers 503, which is what this target used to do out of the box.
+dashboard: export SENTINEL_ALLOW_ANONYMOUS = 1
 dashboard:  ## Phase 7: serve the live dashboard + control plane at http://127.0.0.1:8765
 	$(PY) -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
 
+# The real /mcp gateway is NOT anonymous: set SENTINEL_API_TOKEN first.
 serve:  ## Phase 9: serve the dashboard + control plane + REAL /mcp wire transport
 	$(PY) -m uvicorn sentinel.control.app:create_gateway_app --factory --host 127.0.0.1 --port 8765
 

@@ -298,17 +298,18 @@ async def test_anomalous_lineage_is_denied_not_silently_trusted() -> None:
     lineage and blocks the call for an unrelated reason.
     """
     async with proxy_session() as h:
-        # Ancestry references a span that is not in the graph: traversal is
-        # incomplete, so provenance can no longer be proven clean. Stands in for
-        # any way ancestry becomes uncomputable — a dangling reference, a cycle,
-        # a truncated or partially-restored graph.
-        h.proxy._frontier = [*h.proxy._frontier, "dangling-ancestor-span"]
+        # The session's lineage is unknown. Provenance used to be a graph walk,
+        # and this test broke the walk with a dangling ancestor; it is now kept
+        # as a running union of labels (review F11), and "unknown" is the state
+        # that union has before a session is seeded. Either way the property
+        # is the same: unknown provenance must not authorize as clean.
+        h.proxy._lineage = None  # noqa: SLF001
 
         blocked = await h.agent.call_tool(
             "send_email", {"to": "cfo@corp.example", "subject": "q3", "body": "fine"}
         )
-        assert blocked.isError is True, "uncomputable provenance was treated as clean"
-        assert "provenance graph anomaly" in result_text(blocked)
+        assert blocked.isError is True, "unknown provenance was treated as clean"
+        assert "provenance unknown" in result_text(blocked)
         # Fails CLOSED: nothing reached the downstream tool server.
         assert h.downstream.executions == []
 

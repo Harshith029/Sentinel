@@ -14,6 +14,12 @@ All notable changes to this project are documented here. Format follows
   was turning strict mode off for every tool. Approve a reviewed tool instead:
   `catalogue_approvals` maps a tool to the fingerprint of its exact definition,
   which `sentinel check` prints. A changed definition is flagged again.
+- Provenance cost grew with the square of a session's length: every call
+  re-walked a graph in which each call derived from every earlier result.
+  Measured per call: 1.5 ms at call 100, 13 ms at 400, 40 ms at 800, on the
+  event loop every session shares. Provenance is now kept as a running union of
+  labels, which gives the same answers (checked against the walk) at a flat
+  ~0.1 ms per call through 1,600 calls.
 
 ## [0.2.1] — 2026-10-04
 

@@ -21,13 +21,14 @@ The pipeline, in the exact order §Phase 4 mandates, for every proxied call:
 This interception bus is entirely SEPARATE from any HTTP/FastAPI layer (Phase 6):
 it operates at the MCP message boundary.
 
-Provenance is tracked in an in-memory per-session graph plus a "context
-frontier" — the user input node and every tool RESULT the agent has since
-observed. A new proposal derives from the frontier, so a ``send_email`` issued
-after a ``web_fetch`` computes as tainted through the real §4.2 walk. Because the
-graph lives in memory and a per-session lock serializes intercepts, provenance
-never depends on store write-ordering — the Phase-2 fail-closed-on-missing-parent
-watch item cannot produce a transient false taint here.
+Provenance is tracked per session as the union of trust labels over everything
+the agent has observed: the user input and every tool RESULT since. A new
+proposal derives from all of it, so a ``send_email`` issued after a
+``web_fetch`` is tainted. The union is kept incrementally (one set operation per
+call) and gives the same answer as the §4.2 graph walk over the same lineage;
+see :mod:`sentinel.provenance.graph` for that model. Because it lives in memory
+and a per-session lock serializes intercepts, provenance never depends on store
+write-ordering.
 
 The proxy is agent-agnostic by construction: it knows nothing about Foundry,
 Claude, or any specific client. Any MCP speaker is secured identically.
@@ -61,7 +62,6 @@ from sentinel.labels import AGENT, RETRIEVED_CONTENT, USER, Label
 from sentinel.mcp_proxy.content import mcp_error, result_text, summarize_result
 from sentinel.mcp_proxy.router import DownstreamConnection
 from sentinel.observability import log_allowed, log_blocked, log_injection_flagged
-from sentinel.provenance.graph import ProvenanceGraph
 from sentinel.provenance.model import ProvenanceNode
 from sentinel.provenance.sanitizer import StructuredExtractor, get_schema
 from sentinel.shield import InputShield
@@ -227,11 +227,12 @@ class SentinelProxy:
         # which owns the pinned catalogue and the drift monitor.
         self._catalogue_gate = catalogue_gate
 
-        self._graph = ProvenanceGraph()
-        self._frontier: list[str] = []  # span_ids the agent has observed
+        # The union of trust labels over everything the agent has observed in
+        # this session. None until start() seeds it: unknown, not clean.
+        self._lineage: frozenset[Label] | None = None
         self._root_span_id: str | None = None
-        # Serializes intercepts so the provenance graph/frontier mutate as a
-        # consistent causal chain (and the watch-item ordering issue can't arise).
+        # Serializes intercepts so the lineage changes as a consistent causal
+        # chain (and the watch-item ordering issue can't arise).
         self._lock = asyncio.Lock()
         self._server: Server = self._build_server()
 
@@ -255,10 +256,7 @@ class SentinelProxy:
             trace_id=self._trace_id,
         )
         self._root_span_id = span.span_id
-        self._graph.add(
-            ProvenanceNode(span_id=span.span_id, label=origin_label, derived_from=())
-        )
-        self._frontier.append(span.span_id)
+        self._lineage = frozenset({origin_label})
 
         # Layer-1 scan of the user prompt itself (§5), recorded for forensics.
         if self._input_shield is not None:
@@ -332,20 +330,13 @@ class SentinelProxy:
                     f"tool {name!r} refused"
                 )
 
-            # 1. Record the proposal and its provenance ancestry. The proposal
-            #    node derives from the whole context frontier (user input + every
-            #    result observed so far), so taint propagates by lineage.
+            # 1. Record the proposal. It derives from everything the agent has
+            #    observed in this session (the user input and every result
+            #    since), so its provenance is the session's lineage.
             proposed = await self._emitter.emit(
                 ToolCallProposed(tool_name=name, arguments=dict(arguments)),
                 trace_id=self._trace_id,
                 parent_span_id=self._root_span_id,
-            )
-            self._graph.add(
-                ProvenanceNode(
-                    span_id=proposed.span_id,
-                    label=AGENT,
-                    derived_from=tuple(self._frontier),
-                )
             )
             # 1b. Only tools in the APPROVED catalogue may be called. The agent
             #     is only ever shown the pinned catalogue, but nothing stopped
@@ -372,29 +363,22 @@ class SentinelProxy:
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
-            # The call's provenance is that of what it was derived FROM. Its own
-            # node is always AGENT, so counting it made a rule such as
-            # `effective_provenance != {USER}` deny every call, including a
-            # first call made on the user's request alone.
-            lineage = self._graph.effective_provenance(
-                proposed.span_id, include_self=False
-            )
-            if lineage.anomalous:
-                # A cycle or a dangling ancestor means the traversal did not
-                # complete, so this call's provenance is UNKNOWN — not clean.
-                # ProvenanceGraph.is_tainted is fail-closed for exactly this
-                # reason, but the enforcement path reached past it to `.labels`
-                # and the engine then derived taint as `RETRIEVED_CONTENT in
-                # provenance`. A broken lineage whose surviving labels happened
-                # to omit that flag therefore authorized as untrusted-free.
-                #
-                # We refuse before consulting policy: an anomaly means the state
-                # policy would reason over is itself corrupt, so evaluating rules
-                # against it would launder "unknown" into "allowed". This is a
-                # deterministic deny, not a policy decision.
+            # The call's provenance is that of what it was derived FROM, never
+            # its own AGENT label: counting that made `effective_provenance !=
+            # {USER}` deny every call, including a first call made on the
+            # user's request alone.
+            lineage = self._lineage
+            if lineage is None:
+                # A session whose lineage was never seeded has UNKNOWN
+                # provenance, not clean provenance. Treating "unknown" as an
+                # empty set would make `RETRIEVED_CONTENT in provenance` false
+                # and authorize the call as untainted (audit F-12). Refused
+                # before policy is consulted: the state policy would reason
+                # over is missing, so this is a deterministic deny, not a
+                # policy decision.
                 reason = (
-                    "provenance graph anomaly: lineage could not be computed "
-                    f"(malformed={lineage.malformed}, missing={len(lineage.missing)})"
+                    "provenance unknown: this session's lineage was never seeded, "
+                    "so the call cannot be shown to be untainted"
                 )
                 await self._emitter.emit(
                     ToolBlocked(
@@ -408,11 +392,10 @@ class SentinelProxy:
                 )
                 log_blocked(
                     name, reason=reason, rule=None,
-                    trace_id=self._trace_id, agent_id=self._agent_id,
-                    provenance=tuple(sorted(lineage.labels)),
+                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
-            provenance = lineage.labels
+            provenance = lineage
 
             # 2. Authorize (Phase 2) and record the full decision trace.
             call = ToolCall(
@@ -524,20 +507,21 @@ class SentinelProxy:
                 trace_id=self._trace_id,
                 parent_span_id=proposed.span_id,
             )
-            # The result becomes part of what the agent has observed: add it to
-            # the graph and the frontier so future calls derive from it. A
-            # declassified value starts FRESH — derived_from is empty, so the
-            # walk never reaches its tainted origin, and cleared_from records
-            # that origin for audit without making it an ancestor.
-            self._graph.add(
-                ProvenanceNode(
-                    span_id=executed.span_id,
-                    label=label,
-                    derived_from=() if cleared_from else (proposed.span_id,),
-                    cleared_from=cleared_from,
-                )
-            )
-            self._frontier.append(executed.span_id)
+            # The result becomes part of what the agent has observed, so every
+            # later call derives from it. An ordinary result carries its own
+            # label plus everything its call derived from, which includes the
+            # call itself (AGENT). A declassified value starts FRESH: only the
+            # sanitizer's label, none of its tainted origin.
+            #
+            # This is the union a graph walk over the whole session used to
+            # recompute on every call. Every call derived from every earlier
+            # result, so the walk's cost grew with the square of the session
+            # length (measured: 1.5 ms per call at call 100, 40 ms at call 800,
+            # on the one event loop every session shares). Kept incrementally,
+            # it is one set union per call; tests/test_provenance_incremental.py
+            # checks it gives the same answer as the walk.
+            gained = frozenset({label}) if cleared_from else frozenset({label, AGENT})
+            self._lineage = lineage | gained
 
             # Layer-1 scan of the RETRIEVED content (§5). Flag-only: it records an
             # InjectionScanned span and feeds the trust scorer a hard signal, but

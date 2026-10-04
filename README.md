@@ -2,13 +2,12 @@
 
 <img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="680">
 
-[![PyPI](https://img.shields.io/pypi/v/sentinel?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/sentinel/)
-[![Python](https://img.shields.io/pypi/pyversions/sentinel?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/sentinel/)
+[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/sentinel-prox/)
+[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/sentinel-prox/)
 [![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/SENTINEL/ci.yml?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=CI)](https://github.com/Harshith029/SENTINEL/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/LICENSE-MIT-3B82F6?style=for-the-badge&labelColor=0B1220)](./LICENSE)
 [![Live demo](https://img.shields.io/badge/DEMO-LIVE-6366F1?style=for-the-badge&labelColor=0B1220)](https://sentinel-i63x.onrender.com)
 
-[![tests](https://img.shields.io/badge/TESTS-370%20PASSING-22D3EE?style=for-the-badge&labelColor=0B1220)](./tests)
 [![mypy](https://img.shields.io/badge/MYPY-STRICT-3B82F6?style=for-the-badge&labelColor=0B1220)](http://mypy-lang.org/)
 [![ruff](https://img.shields.io/badge/LINT-RUFF-3B82F6?style=for-the-badge&labelColor=0B1220)](https://github.com/astral-sh/ruff)
 [![no eval](https://img.shields.io/badge/CODEBASE-NO%20EVAL-22D3EE?style=for-the-badge&labelColor=0B1220)](./src/sentinel/authorization/ast.py)
@@ -17,9 +16,11 @@
 
 </div>
 
-SENTINEL sits between your agent and your MCP tool servers, tracks where every byte of
-context came from, and refuses actions whose data originated in untrusted content —
-**even when the attack slipped past your content filter**.
+SENTINEL sits between your agent and your MCP tool servers, tracks which tool results
+each action could have been influenced by, and refuses the actions you guard when that
+lineage includes untrusted content — **even when the attack slipped past your content
+filter**. Read *Known limitations* before relying on it: the lineage is per MCP session,
+and only the tools you write rules for are guarded.
 
 <div align="center">
 <img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/dashboard.png" alt="SENTINEL blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
@@ -30,7 +31,7 @@ because its lineage traces back to untrusted content.</i></sub>
 </div>
 
 ```bash
-pip install sentinel    # imports and CLI are both `sentinel`
+pip install sentinel-prox # the import package and CLI are both `sentinel`
 sentinel init             # write sentinel.yaml
 sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
 sentinel scaffold > policy.yaml
@@ -55,13 +56,27 @@ Read this before deploying anything.
 | Authentication | Every endpoint gated; fails closed when unconfigured |
 | Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
-| Stable agent identity across reconnect | Derived from the authenticated credential; quarantine survives reconnect (per process, and only when authenticated) |
+| Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
 | Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; tenant (agent) credentials cannot |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
 | Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
 | Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
+
+### Known limitations
+
+These are open, verified, and not yet fixed. Each one changes what SENTINEL
+protects you from.
+
+| Limitation | What it means for you |
+|---|---|
+| **Taint is per MCP session** | Lineage covers the calls made in one MCP session. A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried from one call to the next, so a page read in one call does not taint an email sent in the next. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects. |
+| **Every tool result is untrusted** | All tool output is labelled retrieved content, including your own internal systems. A benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Only per-tool declassification (a value that validates against a strict schema) clears taint. |
+| **Only guarded tools are guarded** | A tool with no rules can carry tainted data out: a URL's query string in a fetch tool, for example. The bundled example policy leaves `web_fetch` unrestricted. Rules are deny-only and there is no notion of an outbound "sink" yet. |
+| **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
+| **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
+| **The dashboard is always served** | `dashboard: false` in `sentinel.yaml` does not unmount `/` or the demo endpoints. |
 
 `SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
 With neither it nor `SENTINEL_ALLOW_ANONYMOUS=1` set, the service refuses to
@@ -214,10 +229,10 @@ and config values.
 
 ## Deployment
 
-Self-hosting is free and needs no cloud account. With a `SENTINEL_API_TOKEN` in
-`.env`:
+Self-hosting is free and needs no cloud account:
 
 ```bash
+python -c "import secrets; print('SENTINEL_API_TOKEN=' + secrets.token_urlsafe(32))" > .env
 docker compose -f deploy/compose.yaml --env-file .env up -d --build
 ```
 

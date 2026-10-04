@@ -1,10 +1,11 @@
 # Self-host SENTINEL with Docker Compose: no cloud account, no cost.
 #
-#   cp .env.example .env          # then set SENTINEL_API_TOKEN (see below)
+#   python -c "import secrets; print('SENTINEL_API_TOKEN=' + secrets.token_urlsafe(32))" > .env
 #   docker compose -f deploy/compose.yaml --env-file .env up -d --build
 #   curl http://127.0.0.1:8765/healthz
 #
-# Generate a token:  python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Don't start from a copy of .env.example: it holds local-development values,
+# including SENTINEL_DEMO_MODE=1.
 #
 # What this gives you over `docker run`:
 #   * forensic history on a named volume, so it survives restarts and upgrades;
@@ -24,8 +25,10 @@ services:
       - "127.0.0.1:8765:8765"
     environment:
       SENTINEL_API_TOKEN: ${SENTINEL_API_TOKEN:?set SENTINEL_API_TOKEN in .env}
-      # 1 = the bundled mock tools (a demo). Real deployments declare their own
-      # servers in SENTINEL_MCP_SERVERS and leave this at 0.
+      # 0 = production: optional paid backends are used when configured, and
+      # /healthz reports PRODUCTION MODE. 1 = the offline demo pipeline. Which
+      # tools are proxied is decided by SENTINEL_MCP_SERVERS, not by this: with
+      # none declared, SENTINEL fronts its bundled mock tools in either mode.
       SENTINEL_DEMO_MODE: ${SENTINEL_DEMO_MODE:-0}
       SENTINEL_DATA_DIR: /data
       SENTINEL_FORENSIC_RETENTION_DAYS: ${SENTINEL_FORENSIC_RETENTION_DAYS:-90}

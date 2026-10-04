@@ -27,11 +27,14 @@ and the port is bound to loopback. Never use it in front of real tools.
 forensic history on a named volume, loopback-only binding and a health check.
 
 ```bash
-cp .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(32))"   # put this in .env as SENTINEL_API_TOKEN
+python -c "import secrets; print('SENTINEL_API_TOKEN=' + secrets.token_urlsafe(32))" > .env
 docker compose -f deploy/compose.yaml --env-file .env up -d --build
 curl http://127.0.0.1:8765/healthz        # {"status":"ok","mode":"PRODUCTION MODE"}
 ```
+
+Start from a `.env` that holds only what this deployment needs. Copying
+`.env.example` brings its local-development values with it, including
+`SENTINEL_DEMO_MODE=1`, and the service then reports itself as a demo.
 
 Point your agent at `http://127.0.0.1:8765/mcp` with
 `Authorization: Bearer <your token>`. Declare your own MCP servers with

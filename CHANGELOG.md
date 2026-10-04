@@ -4,10 +4,38 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Not yet published to PyPI. `sentinel-prox` 0.1.1 is the only installable
+release and predates every change below, including the security fixes: on
+0.1.1, `/mcp` is open when no token is set, request arguments can override
+operator policy configuration, and forensic payloads are stored unredacted.
+
+### Security
+- Authentication is fail-closed: no credential and no explicit
+  `SENTINEL_ALLOW_ANONYMOUS=1` means 503, on `/mcp` and every data route.
+- Per-tenant credentials, an operator-only admin token, and tenant isolation of
+  runs, events, MCP sessions and restored history.
+- An MCP session is bound to the principal that opened it.
+- Argument, recipient, lineage and declassification bypasses closed (see the
+  review findings in the git log: F6, F7, F8, F14, F16).
+- Payloads are redacted before they are stored or logged.
+- Seven dependencies with known vulnerabilities upgraded.
+
+### Changed
+- Quarantine is recorded, not enforced, unless `SENTINEL_ENFORCE_QUARANTINE=1`.
+- `sentinel check` runs `serve`'s own startup checks.
+- The approved tool catalogue is enforced on every call and re-checked on a
+  schedule.
+
+### Added
+- Resource limits, forensic retention and clean shutdown, `deploy/compose.yaml`,
+  `PORT` support, and a much broader CI.
+
 ## [0.1.1] — 2026-08-08
 
 ### Fixed
-- **`pip install sentinel` was broken on a clean machine.** Dependencies
+- **`pip install sentinel-prox` was broken on a clean machine.** Dependencies
   declared only lower bounds, so a fresh install resolved `mcp` 2.0.0 — a major
   release that removed `create_connected_server_and_client_session`, making the
   package fail on import. Every direct dependency now carries an upper bound as
@@ -20,8 +48,10 @@ deploy. Floors-only dependency ranges are now treated as a defect.
 
 ## [0.1.0] — 2026-08-07
 
-First packaged release. Published to PyPI as **`sentinel`**; the import
-package and CLI command are both `sentinel`.
+First packaged release. Published to PyPI as **`sentinel-prox`** (and later
+yanked in favour of 0.1.1); the import package and CLI command are both
+`sentinel`. An earlier edit of this file said `sentinel`, which is an unrelated
+project on PyPI.
 
 ### Added
 

@@ -88,7 +88,7 @@ One-time setup on PyPI (before the first upload), at
 
 | Field | Value |
 |---|---|
-| PyPI Project Name | `sentinel` |
+| PyPI Project Name | `sentinel-prox` (the `name` in `pyproject.toml`; `sentinel` on PyPI is an unrelated project) |
 | Owner | `Harshith029` |
 | Repository name | `SENTINEL` |
 | Workflow name | `release.yml` |

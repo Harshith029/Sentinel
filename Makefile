@@ -33,6 +33,7 @@ help:
 # to anonymous mode. Without it SENTINEL is fail-closed and every data route
 # answers 503, which is what this target used to do out of the box.
 dashboard: export SENTINEL_ALLOW_ANONYMOUS = 1
+dashboard: export SENTINEL_DASHBOARD = 1
 dashboard:  ## Phase 7: serve the live dashboard + control plane at http://127.0.0.1:8765
 	$(PY) -m uvicorn sentinel.control.app:create_app --factory --host 127.0.0.1 --port 8765
 

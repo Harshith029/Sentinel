@@ -76,7 +76,6 @@ protects you from.
 | **Only guarded tools are guarded** | A tool with no rules can carry tainted data out: a URL's query string in a fetch tool, for example. The bundled example policy leaves `web_fetch` unrestricted. Rules are deny-only and there is no notion of an outbound "sink" yet. |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
-| **The dashboard is always served** | `dashboard: false` in `sentinel.yaml` does not unmount `/` or the demo endpoints. |
 
 `SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
 With neither it nor `SENTINEL_ALLOW_ANONYMOUS=1` set, the service refuses to

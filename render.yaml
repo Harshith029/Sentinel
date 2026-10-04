@@ -38,3 +38,7 @@ services:
       # recording the threshold crossing only (see README, known limitations).
       - key: SENTINEL_ENFORCE_QUARANTINE
         value: "1"
+      # The dashboard and its attack buttons are the point of this sandbox. A
+      # real deployment leaves this unset: off, they answer 404.
+      - key: SENTINEL_DASHBOARD
+        value: "1"

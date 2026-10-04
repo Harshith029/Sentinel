@@ -197,6 +197,14 @@ class Settings(BaseModel):
             "span; older traces are deleted whole. 0 keeps everything forever."
         ),
     )
+    dashboard: bool = Field(
+        default=False,
+        description=(
+            "Serve the demo surface: the dashboard, the scenario-run and "
+            "baseline endpoints, the browser session cookie and the API docs. "
+            "Off, they answer 404. For demos only."
+        ),
+    )
     enforce_quarantine: bool = Field(
         default=False,
         description=(
@@ -338,6 +346,7 @@ def _read_settings_from_env() -> Settings:
         forensic_retention_days=_parse_int_env(
             "SENTINEL_FORENSIC_RETENTION_DAYS", default=90, minimum=0
         ),
+        dashboard=_parse_bool_env("SENTINEL_DASHBOARD", default=False),
         enforce_quarantine=_parse_bool_env("SENTINEL_ENFORCE_QUARANTINE", default=False),
         max_result_bytes=_parse_int_env(
             "SENTINEL_MAX_RESULT_BYTES", default=1024 * 1024, minimum=1024

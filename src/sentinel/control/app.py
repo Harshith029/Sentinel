@@ -281,6 +281,7 @@ def create_app(
     manager: RunManager | None = None,
     *,
     enable_mcp_gateway: bool | None = None,
+    dashboard: bool | None = None,
 ) -> FastAPI:
     """Build the control-plane app.
 
@@ -290,11 +291,27 @@ def create_app(
     same pipeline. When on, the app gains a lifespan that connects the downstream
     tool servers and runs the MCP session manager for the app's lifetime. The
     bare ``create_app()`` leaves it off so the REST-only flows are unchanged.
+
+    ``dashboard`` (default: the ``SENTINEL_DASHBOARD`` setting, off) serves the
+    demo surface: the dashboard and its assets, the endpoints that start canned
+    or custom scenario runs and baselines, the browser session cookie, and the
+    interactive API docs. Off, every one of them answers 404, exactly like a
+    route that does not exist. They used to be served unconditionally, with the
+    `dashboard: false` setting only changing a startup message: a production
+    deployment exposed scenario runs any tenant could start (with an LLM
+    configured, on a paid model with arbitrary text) and, unauthenticated, the
+    dashboard and an OpenAPI document listing every route.
     """
     mgr = manager if manager is not None else RunManager()
     if enable_mcp_gateway is None:
         enable_mcp_gateway = get_settings().enable_mcp_gateway
+    demo = get_settings().dashboard if dashboard is None else dashboard
     gateway = SentinelGateway(mgr) if enable_mcp_gateway else None
+    # The interactive docs are part of the demo surface: unauthenticated, they
+    # publish the whole route map.
+    docs: dict[str, Any] = (
+        {} if demo else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    )
 
     if gateway is not None:
         gw = gateway  # non-None binding for the closure (mypy-narrowed)
@@ -304,9 +321,14 @@ def create_app(
             async with gw:
                 yield
 
-        app = FastAPI(title="SENTINEL control plane", lifespan=_lifespan)
+        app = FastAPI(title="SENTINEL control plane", lifespan=_lifespan, **docs)
     else:
-        app = FastAPI(title="SENTINEL control plane")
+        app = FastAPI(title="SENTINEL control plane", **docs)
+
+    def require_demo() -> None:
+        """Make a demo route indistinguishable from a missing one when off."""
+        if not demo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     # Outermost last: the rate limiter refuses a flood before the body limiter
     # reads a byte, and both sit in front of every route AND the /mcp mount.
     app.add_middleware(BodySizeLimit)
@@ -400,7 +422,7 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
 
-    @app.post("/runs", dependencies=[Depends(require_auth)])
+    @app.post("/runs", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def start_run(body: StartRunRequest, request: Request) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(
@@ -411,7 +433,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/runs/custom", dependencies=[Depends(require_auth)])
+    @app.post("/runs/custom", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def start_custom_run(body: CustomRunRequest, request: Request) -> dict[str, Any]:
         """Start a user-supplied attack (paste a task / URL / page / attacker).
 
@@ -438,7 +460,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/runs/custom/baseline", dependencies=[Depends(require_auth)])
+    @app.post("/runs/custom/baseline", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def custom_baseline(body: CustomRunRequest) -> dict[str, Any]:
         """Run the same custom attack WITHOUT SENTINEL and report what arrived.
 
@@ -461,7 +483,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return await mgr.run_baseline(build)
 
-    @app.post("/attack/{scenario}", dependencies=[Depends(require_auth)])
+    @app.post("/attack/{scenario}", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def launch_attack(
         scenario: str, request: Request, agent_id: str | None = None
     ) -> dict[str, Any]:
@@ -477,7 +499,10 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()
 
-    @app.post("/attack/{scenario}/baseline", dependencies=[Depends(require_auth)])
+    @app.post(
+        "/attack/{scenario}/baseline",
+        dependencies=[Depends(require_demo), Depends(require_auth)],
+    )
     async def attack_baseline(scenario: str) -> dict[str, Any]:
         """Run a named scenario WITHOUT SENTINEL — the "before" half of the demo."""
         try:
@@ -671,7 +696,7 @@ def create_app(
         streams.active += 1
         return _BoundedEventSource(publisher(), on_close=streams.release)
 
-    @app.get("/demo/sanitization", dependencies=[Depends(require_auth)])
+    @app.get("/demo/sanitization", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def sanitization_demo() -> dict[str, Any]:
         """Run the REAL StructuredExtractor so the UI can show validation, not
         'AI cleaning': the strict schema, the extracted TYPED value, and the
@@ -703,7 +728,7 @@ def create_app(
             },
         }
 
-    @app.post("/auth/session")
+    @app.post("/auth/session", dependencies=[Depends(require_demo)])
     async def open_session(request: Request, response: Response) -> dict[str, str]:
         """Exchange a bearer token for an HttpOnly session cookie.
 
@@ -731,7 +756,7 @@ def create_app(
         )
         return {"status": "ok"}
 
-    @app.post("/auth/logout")
+    @app.post("/auth/logout", dependencies=[Depends(require_demo)])
     async def close_session(response: Response) -> dict[str, str]:
         """Drop the session cookie. Deliberately needs no credential."""
         response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict")
@@ -746,8 +771,8 @@ def create_app(
             "mode": "DEMO MODE" if mgr.demo_mode else "PRODUCTION MODE",
         }
 
-    @app.get("/")
-    async def dashboard() -> FileResponse:
+    @app.get("/", dependencies=[Depends(require_demo)])
+    async def dashboard_page() -> FileResponse:
         # The dashboard is a single self-contained page served from the same
         # origin as the API, so its EventSource/fetch calls are same-origin.
         # no-store so an iterating dev always gets the latest markup (no stale
@@ -761,7 +786,8 @@ def create_app(
     # Same-origin static assets (the dashboard's fonts). No CDN — these are
     # bundled with the app, so the page renders identically offline; they're
     # cacheable (only the HTML at "/" is no-store).
-    app.mount("/assets", StaticFiles(directory=_STATIC_DIR), name="assets")
+    if demo:
+        app.mount("/assets", StaticFiles(directory=_STATIC_DIR), name="assets")
 
     if gateway is not None:
         # The real MCP wire transport. An external client POSTs/GETs MCP messages

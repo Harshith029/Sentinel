@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- The demo surface is off unless `SENTINEL_DASHBOARD=1` (or `sentinel serve
+  --dashboard`, or `dashboard: true`): the dashboard and its assets, the
+  scenario-run, custom-run, attack and baseline endpoints, the browser session
+  cookie, and the API docs. Off, they answer 404. Before, they were served by
+  every deployment, and the dashboard plus an OpenAPI document listing every
+  route needed no credential at all.
+
 ## [0.2.0] — 2026-10-04
 
 **Upgrade from 0.1.1.** It predates every change below, including the security

@@ -104,6 +104,11 @@ jobs:
           curl -fsS http://127.0.0.1:8765/healthz
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/runs)
           test "$code" = "503" || { echo "::error::no credential configured, expected 503, got $code"; exit 1; }
+          # The demo surface (dashboard, scenario runs, API docs) is off by default.
+          for path in / /openapi.json /docs; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8765$path")
+            test "$code" = "404" || { echo "::error::$path served by default ($code)"; exit 1; }
+          done
           uid=$(docker exec sentinel id -u)
           test "$uid" != "0" || { echo "::error::the container runs as root"; exit 1; }
       - name: Container logs

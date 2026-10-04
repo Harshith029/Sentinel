@@ -12,12 +12,15 @@ openly. Each option below says which of the two it uses.
 
 ```bash
 docker build -t sentinel -f deploy/Dockerfile .
-docker run --rm -p 127.0.0.1:8765:8765 -e SENTINEL_ALLOW_ANONYMOUS=1 sentinel
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -e SENTINEL_ALLOW_ANONYMOUS=1 -e SENTINEL_DASHBOARD=1 sentinel
 # open http://localhost:8765 and click "Launch attack"
 ```
 
 Or from a checkout: `make install`, then `make dashboard`.
 
+`SENTINEL_DASHBOARD=1` serves the dashboard and the demo endpoints behind its
+buttons; without it they answer 404, which is what a real deployment wants.
 Anonymous mode is fine here: the tools are in-memory mocks with no side effects,
 and the port is bound to loopback. Never use it in front of real tools.
 

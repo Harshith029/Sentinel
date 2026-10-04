@@ -386,13 +386,29 @@ def serve_port(config: dict[str, Any], cli_port: int | None) -> int:
     return int(_resolve(config, "port", None, 8765))
 
 
+def serve_dashboard(config: dict[str, Any], cli_flag: bool) -> bool:
+    """Whether ``serve`` exposes the demo surface: ``--dashboard`` > env > file > off.
+
+    This setting used to change only a startup message: the dashboard and the
+    demo endpoints were served either way.
+    """
+    if cli_flag:
+        return True
+    raw = os.environ.get("SENTINEL_DASHBOARD", "").strip()
+    if raw:
+        from sentinel.config import _parse_bool_env
+
+        return _parse_bool_env("SENTINEL_DASHBOARD", default=False)
+    return bool(_resolve(config, "dashboard", None, False))
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     apply_config(config)
 
     host = _resolve(config, "host", args.host, "127.0.0.1")
     port = serve_port(config, args.port)
-    dashboard = bool(_resolve(config, "dashboard", args.dashboard or None, False))
+    dashboard = serve_dashboard(config, args.dashboard)
 
     # Enforcement must be visible where the operator is looking, not only in the
     # forensic store. Blocks log at WARNING; payloads are never written.
@@ -413,7 +429,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     from sentinel.control.app import create_app
 
-    app = create_app(enable_mcp_gateway=True)
+    app = create_app(enable_mcp_gateway=True, dashboard=dashboard)
     print(f"SENTINEL proxy on http://{host}:{port}/mcp")
     suffix = "" if dashboard else " (dashboard disabled)"
     print(f"  point your agent's MCP endpoint at that URL{suffix}")

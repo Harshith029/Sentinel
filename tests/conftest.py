@@ -52,6 +52,10 @@ def _force_demo_mode(
     # into anonymous mode explicitly — the same switch an operator must set for
     # a local demo. Auth itself is covered by tests/test_control_plane_auth.py.
     monkeypatch.setenv("SENTINEL_ALLOW_ANONYMOUS", "1")
+    # The demo surface (dashboard, scenario runs, attacks) is off by default in
+    # a real deployment. Most tests drive the pipeline through those endpoints,
+    # so they opt in; tests/test_demo_surface.py covers the default.
+    monkeypatch.setenv("SENTINEL_DASHBOARD", "1")
     monkeypatch.setenv(
         "SENTINEL_DATA_DIR", str(tmp_path_factory.mktemp("sentinel_data"))
     )

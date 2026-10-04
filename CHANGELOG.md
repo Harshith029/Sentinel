@@ -4,12 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-10-04
 
-Not yet published to PyPI. `sentinel-prox` 0.1.1 is the only installable
-release and predates every change below, including the security fixes: on
-0.1.1, `/mcp` is open when no token is set, request arguments can override
-operator policy configuration, and forensic payloads are stored unredacted.
+**Upgrade from 0.1.1.** It predates every change below, including the security
+fixes: on 0.1.1, `/mcp` is open when no token is set, request arguments can
+override operator policy configuration, and forensic payloads are stored
+unredacted.
+
+Read the README's *Known limitations* before relying on 0.2.0: taint is
+tracked per MCP session, every tool result is treated as untrusted, only
+tools with rules are guarded, and downstream servers must be unauthenticated
+streamable-HTTP endpoints.
 
 ### Security
 - Authentication is fail-closed: no credential and no explicit

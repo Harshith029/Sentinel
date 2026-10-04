@@ -462,9 +462,17 @@ def create_app(
         return await mgr.run_baseline(build)
 
     @app.post("/attack/{scenario}", dependencies=[Depends(require_auth)])
-    async def launch_attack(scenario: str, agent_id: str | None = None) -> dict[str, Any]:
+    async def launch_attack(
+        scenario: str, request: Request, agent_id: str | None = None
+    ) -> dict[str, Any]:
         try:
-            record = mgr.start_scenario(scenario, agent_id=agent_id)
+            # The caller's own tenant. This route used to leave it out, so every
+            # tenant's attack runs landed in, and used up, the default tenant's
+            # run quota.
+            record = mgr.start_scenario(
+                scenario, agent_id=agent_id,
+                tenant=_effective_tenant(request, DEFAULT_TENANT),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return record.to_payload()

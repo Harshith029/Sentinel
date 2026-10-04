@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from email.utils import getaddresses
 from typing import Final
 
 import mcp.types as mcp_types
@@ -69,18 +70,89 @@ from sentinel.trust.scorer import TrustScorer
 PROXY_SERVER_NAME: Final[str] = "sentinel"
 
 
+# Every argument that can name a message recipient. All of them are parsed:
+# checking only `to` let `cc`/`bcc` carry data anywhere.
+_ADDRESS_FIELDS: Final[tuple[str, ...]] = ("to", "cc", "bcc", "recipient", "recipients")
+# Values no operator allowlist will contain, so `recipient_domain not in
+# allowed_domains` denies. Used when one domain cannot honestly be named.
+_MULTIPLE_DOMAINS: Final[str] = "<multiple-domains>"
+_UNPARSEABLE_ADDRESS: Final[str] = "<unparseable-address>"
+# Fields SENTINEL derives. The agent never gets to supply them.
+_DERIVED_FIELDS: Final[tuple[str, ...]] = ("recipient_domain", "recipient_domains")
+
+
+def _recipient_domains(value: object) -> list[str] | None:
+    """Every recipient domain in one address field, or ``None`` if any is unparseable.
+
+    Handles a single string, a comma-separated string and a list, and takes the
+    domain from the parsed ADDRESS, so a display name such as
+    ``"cfo@corp.example" <x@evil.test>`` yields ``evil.test``.
+    """
+    items = value if isinstance(value, (list, tuple)) else [value]
+    domains: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            return None
+        for _name, address in getaddresses([item]):
+            if "@" not in address:
+                return None
+            domain = address.rsplit("@", 1)[1].strip().rstrip(".").lower()
+            if not domain:
+                return None
+            domains.append(domain)
+    return domains
+
+
 def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     """Normalize raw MCP arguments into the engine's evaluation namespace.
 
-    Adds typed/derived fields the policy references (e.g. ``recipient_domain``
-    from an email ``to``/``recipient``). Conservative and tiny by design — the
-    engine consumes a normalized :class:`ToolCall`, per §2B.
+    Adds the derived fields policy references: ``recipient_domain`` (the one
+    domain every recipient shares) and ``recipient_domains`` (all of them).
+
+    It used to take everything after the last ``@`` of ``to`` alone, so
+    ``"attacker@evil.test,cfo@corp.example"`` normalized to ``corp.example``
+    and was delivered; ``cc``/``bcc`` were never looked at; and with a list
+    ``to``, a ``recipient_domain`` the AGENT supplied was used as-is. Now every
+    address field is parsed, derived fields are always SENTINEL's own, and a
+    recipient set that does not resolve to a single parseable domain gets a
+    value no allowlist contains, so an allowlist rule denies it.
     """
     namespace = dict(arguments)
-    recipient = namespace.get("to") or namespace.get("recipient")
-    if isinstance(recipient, str) and "@" in recipient:
-        namespace["recipient_domain"] = recipient.rsplit("@", 1)[-1]
+    for field in _DERIVED_FIELDS:
+        namespace.pop(field, None)
+    fields = [
+        namespace[name] for name in _ADDRESS_FIELDS
+        if namespace.get(name) not in (None, "", [], ())
+    ]
+    if not fields:
+        return namespace
+    domains: list[str] = []
+    for value in fields:
+        parsed = _recipient_domains(value)
+        if parsed is None:
+            namespace["recipient_domain"] = _UNPARSEABLE_ADDRESS
+            namespace["recipient_domains"] = [_UNPARSEABLE_ADDRESS]
+            return namespace
+        domains.extend(parsed)
+    distinct = sorted(set(domains))
+    namespace["recipient_domains"] = distinct
+    namespace["recipient_domain"] = distinct[0] if len(distinct) == 1 else _MULTIPLE_DOMAINS
     return namespace
+
+
+def _only_text(result: mcp_types.CallToolResult) -> bool:
+    """Whether a result is nothing but text, so a schema check sees all of it.
+
+    Declassification validates ``result_text``, which reads only text blocks.
+    An image, an embedded resource, or ``structuredContent`` would reach the
+    agent unexamined, so a result carrying any of them is never declassified.
+    An error result is not a value either.
+    """
+    return (
+        not result.isError
+        and result.structuredContent is None
+        and all(isinstance(block, mcp_types.TextContent) for block in result.content)
+    )
 
 
 def _result_size(result: mcp_types.CallToolResult) -> int:
@@ -300,7 +372,13 @@ class SentinelProxy:
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
-            lineage = self._graph.effective_provenance(proposed.span_id)
+            # The call's provenance is that of what it was derived FROM. Its own
+            # node is always AGENT, so counting it made a rule such as
+            # `effective_provenance != {USER}` deny every call, including a
+            # first call made on the user's request alone.
+            lineage = self._graph.effective_provenance(
+                proposed.span_id, include_self=False
+            )
             if lineage.anomalous:
                 # A cycle or a dangling ancestor means the traversal did not
                 # complete, so this call's provenance is UNKNOWN — not clean.
@@ -414,7 +492,7 @@ class SentinelProxy:
             # the result exactly as tainted as it was.
             cleared_from: str | None = None
             schema_name = self._engine.declassifier_for(name)
-            if schema_name is not None:
+            if schema_name is not None and _only_text(result):
                 source = ProvenanceNode(
                     span_id=proposed.span_id, label=label, derived_from=()
                 )
@@ -424,6 +502,15 @@ class SentinelProxy:
                 if sanitized is not None:
                     label = self._sanitizer.output_label
                     cleared_from = proposed.span_id
+                    # Hand the agent exactly the value that was declassified and
+                    # nothing else. Returning the original result let anything
+                    # the schema never looked at ride along as trusted.
+                    result = mcp_types.CallToolResult(
+                        content=[
+                            mcp_types.TextContent(type="text", text=str(sanitized.value))
+                        ],
+                        isError=False,
+                    )
 
             executed = await self._emitter.emit(
                 ToolExecuted(

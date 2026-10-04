@@ -82,10 +82,14 @@ class ProvenanceGraph:
     def get(self, span_id: str) -> ProvenanceNode | None:
         return self._nodes.get(span_id)
 
-    def effective_provenance(self, span_id: str) -> ProvenanceResult:
+    def effective_provenance(
+        self, span_id: str, *, include_self: bool = True
+    ) -> ProvenanceResult:
         """Union of trust labels over the transitive ``derived_from`` ancestry.
 
         Iterative, cycle-safe (three-colour) DFS — see the module docstring.
+        ``include_self=False`` leaves out the starting node's own label (its
+        ancestors still count), for asking what a node was derived FROM.
         """
         labels: set[Label] = set()
         gray: set[str] = set()   # on the current DFS path
@@ -115,7 +119,8 @@ class ProvenanceGraph:
                 continue
             gray.add(sid)
             stack.append((sid, True))  # schedule the gray→black transition
-            labels.add(node.label)
+            if include_self or sid != span_id:
+                labels.add(node.label)
             for parent in node.derived_from:
                 stack.append((parent, False))
 

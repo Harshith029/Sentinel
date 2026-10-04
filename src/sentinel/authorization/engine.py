@@ -181,12 +181,17 @@ class AuthorizationEngine:
         assert rule.condition is not None  # guaranteed by the compiler
         try:
             return rule.condition.evaluate(namespace), None
-        except ConditionError as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure to evaluate is a deny
             # Fail-closed: an unevaluable deny predicate becomes a deny, recorded.
+            # Not only ConditionError: comparing values of the wrong type raises
+            # TypeError, and a malformed decimal raises InvalidOperation. Those
+            # used to escape the engine, so the call still failed, but with no
+            # decision and no block in the forensic record.
             _LOG.warning(
                 "fail-closed deny: rule %r could not be evaluated: %s", rule.id, exc
             )
-            return True, f"evaluation error (fail-closed deny): {exc}"
+            kind = "" if isinstance(exc, ConditionError) else f"{type(exc).__name__}: "
+            return True, f"evaluation error (fail-closed deny): {kind}{exc}"
 
     def decision_payload(self, call: ToolCall) -> AuthorizationDecided:
         """Authorize ``call`` and render the AuthorizationDecided forensic span."""

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Ordinary tool descriptions stopped SENTINEL from starting. The catalogue
+  scan is a heuristic, and flagged three of four plain descriptions in testing
+  (for example "Send an email to a recipient, e.g. user@example.com."); strict
+  mode, the default, then refused the whole catalogue, and the only way past
+  was turning strict mode off for every tool. Approve a reviewed tool instead:
+  `catalogue_approvals` maps a tool to the fingerprint of its exact definition,
+  which `sentinel check` prints. A changed definition is flagged again.
+
 ## [0.2.1] — 2026-10-04
 
 ### Security

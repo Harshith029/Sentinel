@@ -7,8 +7,8 @@ earlier: tool discovery is served from the cache once preflight has passed.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 
 import mcp.types as mcp_types
 
@@ -35,9 +35,11 @@ class ToolSchemaCache:
     """
 
     tools: tuple[mcp_types.Tool, ...]
-    # What the catalogue scan found. Only ever non-empty in flag-only mode
-    # (``strict=False``); strict mode raises instead of returning a cache.
+    # What the catalogue scan found and no approval covers. Only ever non-empty
+    # in flag-only mode (``strict=False``); strict mode raises instead.
     findings: tuple[CatalogueFinding, ...] = ()
+    # Findings an operator approved by fingerprint: served, and still reported.
+    acknowledged: tuple[CatalogueFinding, ...] = ()
 
     @property
     def names(self) -> frozenset[str]:
@@ -61,8 +63,15 @@ async def preflight(
     required_tools: Iterable[str],
     shield: object | None = None,
     strict: bool = True,
+    approved: Mapping[str, str] | None = None,
 ) -> ToolSchemaCache:
     """Health-check ``downstream``, vet its catalogue, and cache the schema.
+
+    ``approved`` maps tool name to the fingerprint of a definition an operator
+    reviewed and accepted (``SENTINEL_CATALOGUE_APPROVALS``). The scanner is a
+    heuristic: "Send an email to a recipient, e.g. user@example.com." trips it.
+    Before approvals, the only way past a false positive was turning strict
+    mode off for every tool at once.
 
     Fails loudly (``PreflightError``) if the catalogue cannot be fetched, a
     required tool is absent, or — when ``shield`` is supplied — a tool's own
@@ -95,12 +104,60 @@ async def preflight(
         )
 
     if shield is not None:
-        findings = await scan_descriptions(cache.tools, shield)
+        scanned = await scan_descriptions(cache.tools, shield)
+        findings, acknowledged = _apply_approvals(scanned, cache.tools, approved or {})
         if findings and strict:
-            raise PreflightError(
-                "downstream tool catalogue appears poisoned; refusing to serve it:\n  "
-                + "\n  ".join(str(f) for f in findings)
+            raise PreflightError(_refusal(findings, cache.tools))
+        if findings or acknowledged:
+            cache = ToolSchemaCache(
+                tools=cache.tools, findings=tuple(findings), acknowledged=tuple(acknowledged)
             )
-        if findings:
-            cache = ToolSchemaCache(tools=cache.tools, findings=tuple(findings))
     return cache
+
+
+def _apply_approvals(
+    findings: Sequence[CatalogueFinding],
+    tools: Sequence[mcp_types.Tool],
+    approved: Mapping[str, str],
+) -> tuple[list[CatalogueFinding], list[CatalogueFinding]]:
+    """Split findings into those still standing and those an operator approved.
+
+    An approval covers one EXACT definition: the fingerprint of the tool's name,
+    description and schema. If the tool has changed since, the approval does not
+    match and the finding stands, saying so.
+    """
+    prints = fingerprint_catalogue(tools)
+    standing: list[CatalogueFinding] = []
+    acknowledged: list[CatalogueFinding] = []
+    for finding in findings:
+        current = prints.get(finding.tool_name)
+        approval = approved.get(finding.tool_name)
+        if approval is not None and approval == current:
+            acknowledged.append(finding)
+        elif approval is not None:
+            standing.append(
+                replace(
+                    finding,
+                    detail=finding.detail + "; an approval exists for an earlier "
+                    "definition of this tool, which has changed since",
+                )
+            )
+        else:
+            standing.append(finding)
+    return standing, acknowledged
+
+
+def _refusal(findings: Sequence[CatalogueFinding], tools: Sequence[mcp_types.Tool]) -> str:
+    """The refusal, with what an operator needs to act on it."""
+    prints = fingerprint_catalogue(tools)
+    flagged = sorted({f.tool_name for f in findings})
+    return (
+        "downstream tool catalogue appears poisoned; refusing to serve it:\n  "
+        + "\n  ".join(str(f) for f in findings)
+        + "\n\nThe scanner is a heuristic and flags ordinary descriptions too. After "
+        "reviewing each definition, approve exactly that definition in sentinel.yaml:\n"
+        "  catalogue_approvals:\n"
+        + "".join(f"    {name}: {prints[name]}\n" for name in flagged if name in prints)
+        + "(or as JSON in SENTINEL_CATALOGUE_APPROVALS). If a tool's definition "
+        "changes, its approval stops matching and it is flagged again."
+    )

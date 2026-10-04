@@ -85,6 +85,37 @@ def fingerprint_tool(tool: mcp_types.Tool) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+_FINGERPRINT_HEX_LENGTH = 64
+
+
+def parse_approvals(raw: str | None) -> dict[str, str]:
+    """``{tool_name: fingerprint}`` from ``SENTINEL_CATALOGUE_APPROVALS`` (JSON).
+
+    An approval says an operator reviewed one tool's EXACT definition and
+    accepts it despite scanner findings. Malformed input is an error, not an
+    empty map: silently dropping approvals would refuse a catalogue the
+    operator believes approved, and a typo'd fingerprint must not look valid.
+    """
+    if not raw or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"SENTINEL_CATALOGUE_APPROVALS is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("SENTINEL_CATALOGUE_APPROVALS must be an object of tool -> fingerprint")
+    approvals: dict[str, str] = {}
+    for name, fingerprint in parsed.items():
+        value = str(fingerprint).strip().lower()
+        if len(value) != _FINGERPRINT_HEX_LENGTH or any(c not in "0123456789abcdef" for c in value):
+            raise ValueError(
+                f"SENTINEL_CATALOGUE_APPROVALS: {name!r} needs a 64-character hex "
+                "fingerprint, as printed by `sentinel check`"
+            )
+        approvals[str(name)] = value
+    return approvals
+
+
 def fingerprint_catalogue(tools: Sequence[mcp_types.Tool]) -> dict[str, str]:
     """``{tool_name: fingerprint}`` for a whole catalogue (order-independent)."""
     return {tool.name: fingerprint_tool(tool) for tool in tools}

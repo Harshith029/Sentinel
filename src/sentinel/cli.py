@@ -70,6 +70,12 @@ dashboard: false
 # always fails closed regardless.
 catalogue_strict: true
 
+# The marker scan is a heuristic and also flags ordinary descriptions. After
+# reviewing a flagged tool, approve that exact definition by the fingerprint
+# `sentinel check` prints. If the tool changes, it is flagged again.
+# catalogue_approvals:
+#   send_email: <64-character fingerprint from `sentinel check`>
+
 # SECRETS DO NOT BELONG IN THIS FILE. `api_token` is a valid key here, but this
 # file lives in your repository and is easy to commit by accident. Set it in the
 # environment instead, where your platform's secret store can deliver it:
@@ -83,6 +89,7 @@ _ENV_MAP: dict[str, tuple[str, Any]] = {
     "servers": ("SENTINEL_MCP_SERVERS", json.dumps),
     "policy": ("SENTINEL_POLICY_FILE", str),
     "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", lambda v: "1" if v else "0"),
+    "catalogue_approvals": ("SENTINEL_CATALOGUE_APPROVALS", json.dumps),
     "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", lambda v: "1" if v else "0"),
     "api_token": ("SENTINEL_API_TOKEN", str),
 }

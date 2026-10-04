@@ -69,7 +69,7 @@ from starlette.types import Message, Receive, Scope, Send
 
 from sentinel.authn import auth_configured, bearer_credential, resolve_tenant
 from sentinel.authorization.registry import DEFAULT_TENANT
-from sentinel.catalogue import CatalogueFinding, CatalogueMonitor
+from sentinel.catalogue import CatalogueFinding, CatalogueMonitor, parse_approvals
 from sentinel.config import Settings, get_settings
 from sentinel.control.manager import RunManager
 from sentinel.demo.preflight import ToolSchemaCache, preflight
@@ -222,6 +222,7 @@ async def gateway_preflight(
         required_tools=() if declared else REQUIRED_TOOLS,
         shield=InputShield.from_settings(settings),
         strict=settings.catalogue_strict,
+        approved=parse_approvals(settings.catalogue_approvals),
     )
 
 
@@ -315,6 +316,8 @@ class SentinelGateway:
         # Flag-only findings from the connect-time scan (strict mode refuses
         # to start instead, so there these are always empty).
         self._preflight_findings: tuple[CatalogueFinding, ...] = ()
+        # Scanner findings an operator approved by fingerprint (served anyway).
+        self._acknowledged_findings: tuple[CatalogueFinding, ...] = ()
         self._recheck_task: asyncio.Task[None] | None = None
         # Live session → its proxy. Weakly keyed, so an entry lives exactly as
         # long as the transport's session does (see _TrackedSession).
@@ -408,6 +411,9 @@ class SentinelGateway:
                 "unknown_tools": "default-denied until policy is written",
             },
             "catalogue_findings": [str(f) for f in self._preflight_findings],
+            "catalogue_approved_findings": [
+                str(f) for f in self._acknowledged_findings
+            ],
             "catalogue_monitor": (
                 self._monitor.status() if self._monitor is not None else {}
             ),
@@ -452,6 +458,7 @@ class SentinelGateway:
         self._cache = cache.tools
         self._approved = cache.names
         self._preflight_findings = cache.findings
+        self._acknowledged_findings = cache.acknowledged
         if cache.findings:
             # Flag-only mode: the operator chose to serve this catalogue, but
             # it must not be served silently. These used to be discarded.

@@ -31,6 +31,7 @@ from sentinel.config import reset_settings_cache
 _CLI_VARS = (
     "SENTINEL_MCP_SERVERS", "SENTINEL_POLICY_FILE",
     "SENTINEL_CATALOGUE_STRICT", "SENTINEL_REAL_WEB_FETCH", "SENTINEL_API_TOKEN",
+    "SENTINEL_CATALOGUE_APPROVALS",
 )
 
 
@@ -227,6 +228,23 @@ def test_check_does_not_pass_flag_only_findings(
     assert main(["check"]) == 1
     err = capsys.readouterr().err
     assert "FINDING(S)" in err and "poisoned_description: helper" in err
+
+
+def test_check_says_how_to_approve_a_flagged_tool_and_honours_the_approval(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The scanner flags this ordinary description (review F10)."""
+    from sentinel.catalogue import fingerprint_tool
+
+    ordinary = _tool("send_email", "Send an email to a recipient, e.g. user@example.com.")
+    _serve_in_memory(monkeypatch, _tool("lookup"), ordinary)
+    _configure()
+    assert main(["check"]) == 1
+    err = capsys.readouterr().err
+    assert f"send_email: {fingerprint_tool(ordinary)}" in err
+
+    _configure(catalogue_approvals={"send_email": fingerprint_tool(ordinary)})
+    assert main(["check"]) == 0, capsys.readouterr().err
 
 
 def test_check_fails_when_serve_would_refuse_every_request(

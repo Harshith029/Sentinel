@@ -258,6 +258,14 @@ class Settings(BaseModel):
             "at call time when True, only reported when False."
         ),
     )
+    catalogue_approvals: str | None = Field(
+        default=None,
+        description=(
+            "JSON object of tool name -> fingerprint: tool definitions an "
+            "operator reviewed and accepts despite catalogue-scanner findings. "
+            "Covers that exact definition only."
+        ),
+    )
     catalogue_recheck_seconds: int = Field(
         default=300,
         description=(
@@ -354,6 +362,7 @@ def _read_settings_from_env() -> Settings:
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
+        catalogue_approvals=os.environ.get("SENTINEL_CATALOGUE_APPROVALS") or None,
         catalogue_recheck_seconds=_parse_int_env(
             "SENTINEL_CATALOGUE_RECHECK_SECONDS", default=300, minimum=0
         ),

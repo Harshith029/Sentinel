@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # (`sentinel`, `sentinel-mcp`, `mcp-sentinel` and `sentinely` were all
 # unavailable on PyPI, so the published distribution is `sentinel`.)
 name = "sentinel-prox"
-version = "0.2.0"
+version = "0.2.1"
 description = "Provenance-aware security proxy for AI agents: block prompt-injection actions at the MCP tool boundary."
 requires-python = ">=3.11"
 authors = [{ name = "Pali Krishna Harshith" }]

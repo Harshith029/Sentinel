@@ -225,7 +225,10 @@ class RunManager:
         self._store = BroadcastStore(self._inner_store, self._bus)
         self._emitter = SpanEmitter(self._store)
         self._registry = build_policy_registry(self._settings)  # multi-tenant policies
-        self._scorer = TrustScorer(self._emitter, load_default_trust_config())
+        self._scorer = TrustScorer(
+            self._emitter, load_default_trust_config(),
+            enforce=self._settings.enforce_quarantine,
+        )
         # Build the shield FROM SETTINGS so AZURE MODE actually carries the
         # Content-Safety endpoint/key (demo_mode alone left it unconfigured).
         self._shield = InputShield.from_settings(self._settings)
@@ -595,6 +598,8 @@ class RunManager:
             "agent_id": agent_id,
             "score": self._scorer.score(agent_id),
             "quarantined": self._scorer.is_quarantined(agent_id),
+            "below_threshold": self._scorer.crossed_threshold(agent_id),
+            "quarantine_enforced": self._scorer.enforces_quarantine,
         }
 
     def reset(self, agent_id: str) -> dict[str, Any]:

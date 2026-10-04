@@ -153,14 +153,19 @@ def log_blocked(
     )
 
 
-def log_quarantined(agent_id: str, *, trace_id: str, score: float) -> None:
-    """Containment kicked in — the agent is cut off until reset."""
+def log_quarantined(
+    agent_id: str, *, trace_id: str, score: float, enforced: bool = True
+) -> None:
+    """The trust score crossed the quarantine threshold, enforced or not."""
+    consequence = (
+        "further tool calls refused" if enforced else "NOT enforced; calls continue"
+    )
     security_logger().warning(
-        "QUARANTINE  agent=%s  score=%.1f  further tool calls refused",
-        agent_id, score,
+        "QUARANTINE  agent=%s  score=%.1f  %s",
+        agent_id, score, consequence,
         extra={
             "event": "agent_quarantined", "agent_id": agent_id,
-            "trace_id": trace_id, "score": score,
+            "trace_id": trace_id, "score": score, "enforced": enforced,
         },
     )
 

@@ -426,7 +426,7 @@ let es=null, pollTimer=null, currentTrace=null, agentId=null, cutoff=0, lastSeen
 let spanQueue=[], drainTimer=null, autoplayed=false, logN=0; const REVEAL_MS=340;
 const seen = new Set();
 let state = fresh();
-function fresh(){ return {spans:[], steps:[], byProp:{}, byExec:{}, task:null, trust:[], score:100, quarantine:null, scenario:null, baseline:null, launching:false}; }
+function fresh(){ return {spans:[], steps:[], byProp:{}, byExec:{}, task:null, trust:[], score:100, quarantine:null, quarantineAdvisory:null, scenario:null, baseline:null, launching:false}; }
 function setConn(t, c){ $('conn').textContent=t; $('led').className='led'+(c?(' '+c):''); }
 
 /* launch */
@@ -473,7 +473,7 @@ function applySpan(span){
   else if(t==='ToolBlocked'){ const s=state.byProp[span.parent_span_id]; if(s) s.blocked=p; }
   else if(t==='InjectionScanned'){ if(p.target&&p.target.indexOf('tool_result:')===0){ const s=state.byExec[span.parent_span_id]; if(s) s.injection=p; } }
   else if(t==='TrustUpdated'){ state.trust.push(p); state.score=p.new_score; }
-  else if(t==='AgentQuarantined') state.quarantine=p;
+  else if(t==='AgentQuarantined'){ if(p.enforced===false) state.quarantineAdvisory=p; else state.quarantine=p; }
 }
 
 /* render */
@@ -501,6 +501,7 @@ function logLine(span){
   else if(t==='ToolBlocked'){ lvl='BLOCK'; cls='block'; msg=esc(p.tool_name)+'  ✗ '+esc(p.reason)+'  · never persisted'; }
   else if(t==='InjectionScanned'){ lvl='SHIELD'; cls=p.attack_detected?'warn':'dim'; msg=esc(p.target)+'  detected='+p.attack_detected+'  ('+esc(p.shield)+')'; }
   else if(t==='TrustUpdated'){ lvl='TRUST'; cls='trust'; const d=p.delta>0?'+'+p.delta.toFixed(0):p.delta.toFixed(0); msg=esc(cleanReason(p.reason))+'   score '+p.previous_score.toFixed(0)+'→'+p.new_score.toFixed(0)+' ('+d+')'; }
+  else if(t==='AgentQuarantined'&&p.enforced===false){ lvl='TRUST'; msg='trust below threshold — score '+p.score_at_quarantine.toFixed(1)+'; quarantine not enforced, calls continue'; }
   else if(t==='AgentQuarantined'){ lvl='QUAR'; cls='block'; msg='agent quarantined — score '+p.score_at_quarantine.toFixed(1)+' < threshold, lane disabled'; }
   else { lvl=t.slice(0,6).toUpperCase(); msg=''; }
   return '<div class="ln '+cls+'"><span class="seq">'+seq+'</span><span class="lvl">'+lvl+'</span><span class="msg">'+msg+'</span></div>';
@@ -578,7 +579,7 @@ function renderChain(){
     ['taint acquired','lineage = '+setOf(tainted?tainted.origin:['…']),'amb'],
     ['action blocked','rule '+esc(rule),'red'],
     ['trust drops', drop.length?(drop.length+' penalt'+(drop.length>1?'ies':'y')+' · floor '+Math.round(state.score)):'—','red'],
-    ['quarantine', state.quarantine?('score '+state.quarantine.score_at_quarantine.toFixed(1)+' < threshold, lane disabled'):'not reached', state.quarantine?'red':'off'],
+    ['quarantine', state.quarantine?('score '+state.quarantine.score_at_quarantine.toFixed(1)+' < threshold, lane disabled'):(state.quarantineAdvisory?('score '+state.quarantineAdvisory.score_at_quarantine.toFixed(1)+' < threshold, not enforced'):'not reached'), state.quarantine?'red':(state.quarantineAdvisory?'amb':'off')],
   ];
   c.innerHTML=rows.map((r,i)=>{ const last=i===rows.length-1;
     return '<div class="kc '+r[2]+'"><span class="br">'+(last?'└─':'├─')+'</span><span class="n">0'+(i+1)+'</span><span><span class="lbl">'+r[0]+'</span><span class="dsc">'+r[1]+'</span></span></div>'; }).join('');

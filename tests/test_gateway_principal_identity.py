@@ -44,13 +44,19 @@ async def _quarantine(scorer: Any, agent_id: str, trace_id: str) -> None:
         )
 
 
-async def test_quarantine_survives_a_reconnect() -> None:
+async def test_quarantine_survives_a_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
     """The headline case: reconnecting must not clear a quarantine.
 
     Observed before the fix — session A quarantined at score 10, session B from
     the same caller opened at 100 and unquarantined. Every hard signal the
     scorer had accumulated was discarded by closing a socket.
+
+    Enforcement is opt-in; this tests the mechanism when an operator turns it on.
     """
+    from sentinel.config import reset_settings_cache
+
+    monkeypatch.setenv("SENTINEL_ENFORCE_QUARANTINE", "1")
+    reset_settings_cache()
     manager = RunManager(store=InMemoryForensicStore())
     gateway = SentinelGateway(manager)
     async with gateway:

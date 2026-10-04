@@ -19,9 +19,17 @@ Mechanism, kept deliberately simple:
   penalties from the config. No probability involved.
 
 Score is in [0, 100], starts at ``starting_score``. Below ``quarantine_threshold``
-the agent is quarantined: an :class:`AgentQuarantined` span is emitted once, and
-every later attempt is refused with a visible :class:`ToolBlocked` ("quarantined")
-span — denials never go silent.
+an :class:`AgentQuarantined` span is emitted once. If the scorer ENFORCES
+quarantine, every later attempt is refused with a visible :class:`ToolBlocked`
+("quarantined") span — denials never go silent. If it does not, the span says
+so (``enforced=False``) and calls continue.
+
+Enforcement is off unless the deployment turns it on
+(``SENTINEL_ENFORCE_QUARANTINE``). Nothing ever raises a score, so an agent
+making only ALLOWED calls drifts below the threshold: measured, 15–21 calls of
+varied use, and 40–157 even when 95% of its traffic follows one fixed cycle. As
+enforced containment that is an outage generator, not a safeguard, until the
+model has recovery and a narrower scope.
 
 Concurrency: each agent has its own :class:`asyncio.Lock`, held across the whole
 read → emit → commit sequence. The ``await emit`` sits BETWEEN reading the old
@@ -101,6 +109,8 @@ class _AgentState:
     transitions: deque[tuple[str, str]]
     last_tool: str | None = None
     quarantined: bool = False
+    # The threshold crossing has been recorded (once), enforced or not.
+    reported_crossing: bool = False
 
 
 def _clamp(value: float) -> float:
@@ -110,11 +120,19 @@ def _clamp(value: float) -> float:
 class TrustScorer:
     """Per-agent trust scoring with serialized updates and quarantine."""
 
-    def __init__(self, emitter: SpanEmitter, config: TrustConfig) -> None:
+    def __init__(
+        self, emitter: SpanEmitter, config: TrustConfig, *, enforce: bool = True
+    ) -> None:
         self._emitter = emitter
         self._config = config
+        # Whether crossing the threshold isolates the agent, or is only recorded.
+        self._enforce = enforce
         self._agents: dict[str, _AgentState] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def enforces_quarantine(self) -> bool:
+        return self._enforce
 
     # --- read-only views (do not create state) -------------------------------
 
@@ -123,8 +141,16 @@ class TrustScorer:
         return state.score if state is not None else self._config.starting_score
 
     def is_quarantined(self, agent_id: str) -> bool:
+        """Whether this agent's calls are being refused. Never true when not enforcing."""
         state = self._agents.get(agent_id)
         return state.quarantined if state is not None else False
+
+    def crossed_threshold(self, agent_id: str) -> bool:
+        """Whether the score has fallen below the threshold, enforced or not."""
+        state = self._agents.get(agent_id)
+        return state is not None and (
+            state.quarantined or state.score < self._config.quarantine_threshold
+        )
 
     def reset(self, agent_id: str) -> None:
         """Clear an agent's trust state (score back to starting, un-quarantined).
@@ -155,18 +181,29 @@ class TrustScorer:
     async def _maybe_quarantine(
         self, state: _AgentState, agent_id: str, trace_id: str, parent_span_id: str | None
     ) -> None:
-        if state.quarantined or state.score >= self._config.quarantine_threshold:
+        if state.quarantined or state.reported_crossing:
             return
-        state.quarantined = True
+        if state.score >= self._config.quarantine_threshold:
+            return
+        state.reported_crossing = True
+        state.quarantined = self._enforce
+        consequence = (
+            "tool calls refused until reset"
+            if self._enforce
+            else "NOT enforced (SENTINEL_ENFORCE_QUARANTINE is off); calls continue"
+        )
         payload = AgentQuarantined(
             agent_id=agent_id,
             score_at_quarantine=state.score,
             reason=(
                 f"trust score {state.score:.2f} fell below quarantine_threshold "
-                f"{self._config.quarantine_threshold:.2f}; tool calls refused until reset"
+                f"{self._config.quarantine_threshold:.2f}; {consequence}"
             ),
+            enforced=self._enforce,
         )
-        log_quarantined(agent_id, trace_id=trace_id, score=state.score)
+        log_quarantined(
+            agent_id, trace_id=trace_id, score=state.score, enforced=self._enforce
+        )
         await self._emitter.emit(payload, trace_id=trace_id, parent_span_id=parent_span_id)
 
     # --- update paths --------------------------------------------------------

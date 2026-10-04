@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
 import pytest
@@ -19,6 +19,17 @@ from sentinel.forensics.store import (
 # Two distinct, valid (non-zero) trace ids for cross-partition / multi-trace tests.
 TRACE_A = "a" * 32
 TRACE_B = "b" * 32
+
+
+@pytest.fixture(autouse=True)
+def _fresh_settings() -> Iterator[None]:
+    """Settings are cached; a test that changes the environment must not leak
+    the cached result into the tests after it. Reset on both sides."""
+    from sentinel.config import reset_settings_cache
+
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
 
 
 @pytest.fixture(autouse=True)

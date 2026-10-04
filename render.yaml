@@ -33,3 +33,8 @@ services:
       # in front of your own MCP servers they would not be.
       - key: SENTINEL_ALLOW_ANONYMOUS
         value: "1"
+      # The demo's "trust collapse" attack exists to show quarantine cutting an
+      # agent off, so the sandbox enforces it. Real deployments default to
+      # recording the threshold crossing only (see README, known limitations).
+      - key: SENTINEL_ENFORCE_QUARANTINE
+        value: "1"

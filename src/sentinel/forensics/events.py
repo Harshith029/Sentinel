@@ -151,12 +151,17 @@ class TrustUpdated(_FrozenPayload):
 
 
 class AgentQuarantined(_FrozenPayload):
-    """An agent crossed the quarantine threshold and was isolated (Phase 3 logic)."""
+    """An agent crossed the quarantine threshold (Phase 3 logic).
+
+    ``enforced`` says whether that isolated it. With quarantine enforcement off
+    (the default) the crossing is recorded and the agent keeps working.
+    """
 
     event_type: Literal["AgentQuarantined"] = "AgentQuarantined"
     agent_id: str
     score_at_quarantine: float
     reason: str
+    enforced: bool = True
 
 
 class ToolExecuted(_FrozenPayload):

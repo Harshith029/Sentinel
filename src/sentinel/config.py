@@ -197,6 +197,15 @@ class Settings(BaseModel):
             "span; older traces are deleted whole. 0 keeps everything forever."
         ),
     )
+    enforce_quarantine: bool = Field(
+        default=False,
+        description=(
+            "Whether an agent whose trust score falls below the threshold is "
+            "cut off. Off by default: the score never recovers, so agents "
+            "making only allowed calls cross it within tens of calls. When off, "
+            "the crossing is still recorded (AgentQuarantined, enforced=false)."
+        ),
+    )
     max_result_bytes: int = Field(
         default=1024 * 1024,
         description=(
@@ -329,6 +338,7 @@ def _read_settings_from_env() -> Settings:
         forensic_retention_days=_parse_int_env(
             "SENTINEL_FORENSIC_RETENTION_DAYS", default=90, minimum=0
         ),
+        enforce_quarantine=_parse_bool_env("SENTINEL_ENFORCE_QUARANTINE", default=False),
         max_result_bytes=_parse_int_env(
             "SENTINEL_MAX_RESULT_BYTES", default=1024 * 1024, minimum=1024
         ),

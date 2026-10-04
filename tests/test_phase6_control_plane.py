@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+import pytest
 
+from sentinel.config import reset_settings_cache
 from sentinel.control.app import create_app
 from sentinel.control.events import EventBus
 from sentinel.control.manager import RunManager
@@ -192,7 +194,10 @@ async def test_run_replay_endpoint_shows_kill_chain() -> None:
         await manager.aclose()
 
 
-async def test_trust_and_reset_endpoints() -> None:
+async def test_trust_and_reset_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Enforcement is opt-in; the trust-collapse demo exercises it when enabled.
+    monkeypatch.setenv("SENTINEL_ENFORCE_QUARANTINE", "1")
+    reset_settings_cache()
     manager = RunManager()
     try:
         async with _client(manager) as client:

@@ -376,6 +376,7 @@ class RunManager:
             input_shield=self._shield,
             tool_schema_cache=cache,
             catalogue_gate=catalogue_gate,
+            tenant=tenant,
         )
         self._runs[trace_id] = RunRecord(
             run_id=trace_id,
@@ -476,6 +477,7 @@ class RunManager:
                 emitter=self._emitter,
                 engine=engine,
                 scorer=self._scorer,
+                tenant=record.tenant,
                 input_shield=self._shield,
                 trace_id=record.trace_id,
                 extra_pages=build.extra_pages,
@@ -593,18 +595,19 @@ class RunManager:
         # Deterministic: ordered by (trace_id, seq) from the inner store.
         return await replay(self._inner_store, trace_id)
 
-    def trust(self, agent_id: str) -> dict[str, Any]:
+    def trust(self, agent_id: str, tenant: str = DEFAULT_TENANT) -> dict[str, Any]:
         return {
             "agent_id": agent_id,
-            "score": self._scorer.score(agent_id),
-            "quarantined": self._scorer.is_quarantined(agent_id),
-            "below_threshold": self._scorer.crossed_threshold(agent_id),
+            "tenant": tenant,
+            "score": self._scorer.score(agent_id, tenant=tenant),
+            "quarantined": self._scorer.is_quarantined(agent_id, tenant=tenant),
+            "below_threshold": self._scorer.crossed_threshold(agent_id, tenant=tenant),
             "quarantine_enforced": self._scorer.enforces_quarantine,
         }
 
-    def reset(self, agent_id: str) -> dict[str, Any]:
-        self._scorer.reset(agent_id)
-        return self.trust(agent_id)
+    def reset(self, agent_id: str, tenant: str = DEFAULT_TENANT) -> dict[str, Any]:
+        self._scorer.reset(agent_id, tenant=tenant)
+        return self.trust(agent_id, tenant)
 
     def capabilities(self) -> dict[str, Any]:
         """DEMO-vs-AZURE capability matrix (the 'Azure is load-bearing' delta).

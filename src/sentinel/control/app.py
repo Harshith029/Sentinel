@@ -534,14 +534,22 @@ def create_app(
         return _serialize_replay(rep)
 
     @app.get("/agents/{agent_id}/trust", dependencies=[Depends(require_auth)])
-    async def get_trust(agent_id: str, request: Request) -> dict[str, Any]:
+    async def get_trust(
+        agent_id: str, request: Request, tenant: str = DEFAULT_TENANT
+    ) -> dict[str, Any]:
+        # A tenant credential always means its own tenant; the operator, who
+        # is not scoped to one, names it.
+        scope = _effective_tenant(request, tenant)
         _owned_agent(agent_id, request)
-        return mgr.trust(agent_id)
+        return mgr.trust(agent_id, scope)
 
     @app.post("/agents/{agent_id}/reset", dependencies=[Depends(require_admin)])
-    async def reset_trust(agent_id: str, request: Request) -> dict[str, Any]:
+    async def reset_trust(
+        agent_id: str, request: Request, tenant: str = DEFAULT_TENANT
+    ) -> dict[str, Any]:
+        scope = _effective_tenant(request, tenant)
         _owned_agent(agent_id, request)
-        return mgr.reset(agent_id)
+        return mgr.reset(agent_id, scope)
 
     @app.get("/capabilities", dependencies=[Depends(require_auth)])
     async def capabilities() -> dict[str, Any]:

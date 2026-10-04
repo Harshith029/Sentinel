@@ -200,6 +200,7 @@ class SentinelProxy:
         tool_schema_cache: Sequence[mcp_types.Tool] | None = None,
         max_result_bytes: int | None = None,
         catalogue_gate: Callable[[str], str | None] | None = None,
+        tenant: str | None = None,
     ) -> None:
         self._downstream = downstream
         self._max_result_bytes = (
@@ -226,6 +227,8 @@ class SentinelProxy:
         # is outside the approved catalogue, or None. Supplied by the gateway,
         # which owns the pinned catalogue and the drift monitor.
         self._catalogue_gate = catalogue_gate
+        # Whose agent this is: trust state is kept per (tenant, agent).
+        self._tenant = tenant
 
         # The union of trust labels over everything the agent has observed in
         # this session. None until start() seeds it: unknown, not clean.
@@ -316,10 +319,10 @@ class SentinelProxy:
         async with self._lock:
             # 0. Containment: a quarantined agent's calls are refused up front,
             #    and the refusal stays VISIBLE (Phase 3).
-            if self._scorer.is_quarantined(self._agent_id):
+            if self._scorer.is_quarantined(self._agent_id, tenant=self._tenant):
                 await self._scorer.record_quarantined_block(
                     self._agent_id, name, trace_id=self._trace_id,
-                    parent_span_id=self._root_span_id,
+                    parent_span_id=self._root_span_id, tenant=self._tenant
                 )
                 log_blocked(
                     name, reason="agent quarantined", rule="quarantine",
@@ -415,7 +418,7 @@ class SentinelProxy:
             if not decision.allowed:
                 await self._scorer.record_blocked_call(
                     self._agent_id, name, reason=decision.reason,
-                    trace_id=self._trace_id, parent_span_id=proposed.span_id,
+                    trace_id=self._trace_id, parent_span_id=proposed.span_id, tenant=self._tenant
                 )
                 await self._emitter.emit(
                     ToolBlocked(
@@ -438,7 +441,7 @@ class SentinelProxy:
             # 3. Allowed: transition telemetry feeds the anomaly model.
             await self._scorer.record_tool_transition(
                 self._agent_id, name, trace_id=self._trace_id,
-                parent_span_id=proposed.span_id,
+                parent_span_id=proposed.span_id, tenant=self._tenant
             )
 
             # 4. Forward across the second MCP hop and tag the RESULT's provenance.
@@ -548,6 +551,6 @@ class SentinelProxy:
                         self._agent_id,
                         target=f"tool_result:{name}",
                         trace_id=self._trace_id,
-                        parent_span_id=executed.span_id,
+                        parent_span_id=executed.span_id, tenant=self._tenant
                     )
             return result

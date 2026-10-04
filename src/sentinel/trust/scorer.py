@@ -113,6 +113,18 @@ class _AgentState:
     reported_crossing: bool = False
 
 
+def _key(agent_id: str, tenant: str | None) -> str:
+    """Where an agent's trust state lives: per (tenant, agent).
+
+    Keyed by agent alone, two tenants that used the same agent id shared one
+    score, so one could read the other's trust and push its score down (with
+    quarantine enforced, quarantine it). Agent ids are not secrets: callers
+    choose them for demo runs, and they appear in logs and exports. Without a
+    tenant (direct use of the scorer), the agent id alone is the key.
+    """
+    return agent_id if tenant is None else f"{tenant}\x1f{agent_id}"
+
+
 def _clamp(value: float) -> float:
     return max(MIN_SCORE, min(MAX_SCORE, value))
 
@@ -136,46 +148,46 @@ class TrustScorer:
 
     # --- read-only views (do not create state) -------------------------------
 
-    def score(self, agent_id: str) -> float:
-        state = self._agents.get(agent_id)
+    def score(self, agent_id: str, *, tenant: str | None = None) -> float:
+        state = self._agents.get(_key(agent_id, tenant))
         return state.score if state is not None else self._config.starting_score
 
-    def is_quarantined(self, agent_id: str) -> bool:
+    def is_quarantined(self, agent_id: str, *, tenant: str | None = None) -> bool:
         """Whether this agent's calls are being refused. Never true when not enforcing."""
-        state = self._agents.get(agent_id)
+        state = self._agents.get(_key(agent_id, tenant))
         return state.quarantined if state is not None else False
 
-    def crossed_threshold(self, agent_id: str) -> bool:
+    def crossed_threshold(self, agent_id: str, *, tenant: str | None = None) -> bool:
         """Whether the score has fallen below the threshold, enforced or not."""
-        state = self._agents.get(agent_id)
+        state = self._agents.get(_key(agent_id, tenant))
         return state is not None and (
             state.quarantined or state.score < self._config.quarantine_threshold
         )
 
-    def reset(self, agent_id: str) -> None:
+    def reset(self, agent_id: str, *, tenant: str | None = None) -> None:
         """Clear an agent's trust state (score back to starting, un-quarantined).
 
         Administrative; not intended to run concurrently with in-flight updates.
         Drops the per-agent lock too, so repeated reset/short-lived agents (e.g.
         one per live MCP session) don't accumulate lock objects unbounded.
         """
-        self._agents.pop(agent_id, None)
-        self._locks.pop(agent_id, None)
+        self._agents.pop(_key(agent_id, tenant), None)
+        self._locks.pop(_key(agent_id, tenant), None)
 
     # --- internal helpers ----------------------------------------------------
 
-    def _lock(self, agent_id: str) -> asyncio.Lock:
+    def _lock(self, key: str) -> asyncio.Lock:
         # setdefault is a single, await-free dict op → atomic within the loop.
-        return self._locks.setdefault(agent_id, asyncio.Lock())
+        return self._locks.setdefault(key, asyncio.Lock())
 
-    def _state(self, agent_id: str) -> _AgentState:
-        state = self._agents.get(agent_id)
+    def _state(self, key: str) -> _AgentState:
+        state = self._agents.get(key)
         if state is None:
             state = _AgentState(
                 score=self._config.starting_score,
                 transitions=deque(maxlen=self._config.window_size),
             )
-            self._agents[agent_id] = state
+            self._agents[key] = state
         return state
 
     async def _maybe_quarantine(
@@ -215,10 +227,12 @@ class TrustScorer:
         *,
         trace_id: str,
         parent_span_id: str | None = None,
+        tenant: str | None = None,
     ) -> Span:
         """Score one observed tool transition and emit its TrustUpdated span."""
-        async with self._lock(agent_id):
-            state = self._state(agent_id)
+        key = _key(agent_id, tenant)
+        async with self._lock(key):
+            state = self._state(key)
             from_tool = state.last_tool if state.last_tool is not None else START
             stats = transition_stats(state.transitions, from_tool, tool_name)
             penalty = transition_penalty(stats, self._config.max_transition_penalty)
@@ -259,9 +273,11 @@ class TrustScorer:
         *,
         trace_id: str,
         parent_span_id: str | None,
+        tenant: str | None,
     ) -> Span:
-        async with self._lock(agent_id):
-            state = self._state(agent_id)
+        key = _key(agent_id, tenant)
+        async with self._lock(key):
+            state = self._state(key)
             previous = state.score
             new_score = _clamp(previous - penalty)
             payload = TrustUpdated(
@@ -287,6 +303,7 @@ class TrustScorer:
         reason: str,
         trace_id: str,
         parent_span_id: str | None = None,
+        tenant: str | None = None,
     ) -> Span:
         """Apply the fixed blocked-call penalty (a hard signal from authorization)."""
         weight = self._config.blocked_call_penalty
@@ -295,7 +312,8 @@ class TrustScorer:
             f"(blocked_call_penalty={weight:.2f}); reason={reason}"
         )
         return await self._apply_fixed_penalty(
-            agent_id, weight, detail, trace_id=trace_id, parent_span_id=parent_span_id
+            agent_id, weight, detail, trace_id=trace_id, parent_span_id=parent_span_id,
+            tenant=tenant,
         )
 
     async def record_injection(
@@ -305,6 +323,7 @@ class TrustScorer:
         target: str,
         trace_id: str,
         parent_span_id: str | None = None,
+        tenant: str | None = None,
     ) -> Span:
         """Apply the fixed injection-detected penalty (a hard signal from Layer 1)."""
         weight = self._config.injection_detected_penalty
@@ -313,7 +332,8 @@ class TrustScorer:
             f"(injection_detected_penalty={weight:.2f})"
         )
         return await self._apply_fixed_penalty(
-            agent_id, weight, detail, trace_id=trace_id, parent_span_id=parent_span_id
+            agent_id, weight, detail, trace_id=trace_id, parent_span_id=parent_span_id,
+            tenant=tenant,
         )
 
     async def record_quarantined_block(
@@ -323,6 +343,7 @@ class TrustScorer:
         *,
         trace_id: str,
         parent_span_id: str | None = None,
+        tenant: str | None = None,
     ) -> Span:
         """Emit a VISIBLE ToolBlocked for a call refused because of quarantine.
 
@@ -337,7 +358,7 @@ class TrustScorer:
             ),
             blocked_by="quarantine",
         )
-        async with self._lock(agent_id):
+        async with self._lock(_key(agent_id, tenant)):
             return await self._emitter.emit(
                 payload, trace_id=trace_id, parent_span_id=parent_span_id
             )

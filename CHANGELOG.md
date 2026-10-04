@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- Trust is kept per (tenant, agent). Keyed by agent id alone, a tenant that
+  used another tenant's agent id could read that agent's trust score and push
+  it down (with quarantine enforced, quarantine it), and an operator reset of
+  one tenant's agent reset every tenant's agent with that id.
+  `/agents/{id}/trust` and `/reset` act in the caller's tenant; the operator
+  names one with `?tenant=`.
+
 ### Fixed
 - Ordinary tool descriptions stopped SENTINEL from starting. The catalogue
   scan is a heuristic, and flagged three of four plain descriptions in testing

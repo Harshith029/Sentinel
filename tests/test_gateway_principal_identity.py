@@ -22,6 +22,7 @@ from sentinel.authorization.policy import load_default_policy
 from sentinel.control.manager import RunManager
 from sentinel.control.mcp_gateway import SentinelGateway, _principal_id
 from sentinel.forensics.store import InMemoryForensicStore
+from sentinel.mcp_proxy.content import result_text
 
 
 class _FakeSession:
@@ -35,13 +36,21 @@ class _FakeRequest:
         self.headers = {"authorization": authorization} if authorization else {}
 
 
-async def _quarantine(scorer: Any, agent_id: str, trace_id: str) -> None:
-    """Three blocked calls: 100 -> 70 -> 40 -> 10, below the threshold of 40."""
+async def _quarantine(scorer: Any, proxy: Any) -> None:
+    """Three blocked calls: 100 -> 70 -> 40 -> 10, below the threshold of 40.
+
+    Recorded against the proxy's own (tenant, agent): trust is kept per tenant,
+    so a penalty under any other key would not touch this agent at all.
+    """
     for _ in range(3):
         await scorer.record_blocked_call(
-            agent_id, "send_email", reason="denied",
-            trace_id=trace_id, parent_span_id=None,
+            proxy._agent_id, "send_email", reason="denied",
+            trace_id=proxy._trace_id, parent_span_id=None, tenant=proxy._tenant,
         )
+
+
+def _quarantined(scorer: Any, proxy: Any) -> bool:
+    return bool(scorer.is_quarantined(proxy._agent_id, tenant=proxy._tenant))
 
 
 async def test_quarantine_survives_a_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,8 +76,8 @@ async def test_quarantine_survives_a_reconnect(monkeypatch: pytest.MonkeyPatch) 
         first = _FakeSession()
         proxy_a = await gateway._proxy_for_session(first, principal=principal)  # noqa: SLF001
         assert proxy_a is not None
-        await _quarantine(scorer, proxy_a._agent_id, proxy_a._trace_id)  # noqa: SLF001
-        assert scorer.is_quarantined(proxy_a._agent_id)  # noqa: SLF001
+        await _quarantine(scorer, proxy_a)
+        assert _quarantined(scorer, proxy_a)
 
         del first, proxy_a  # the transport drops the session
         gc.collect()
@@ -77,10 +86,11 @@ async def test_quarantine_survives_a_reconnect(monkeypatch: pytest.MonkeyPatch) 
         second = _FakeSession()
         proxy_b = await gateway._proxy_for_session(second, principal=principal)  # noqa: SLF001
         assert proxy_b is not None
-        assert scorer.is_quarantined(proxy_b._agent_id), (  # noqa: SLF001
-            "reconnecting cleared the quarantine"
-        )
-        assert scorer.score(proxy_b._agent_id) < 40  # noqa: SLF001
+        assert _quarantined(scorer, proxy_b), "reconnecting cleared the quarantine"
+        # ...and the reconnected session's calls are actually refused.
+        refused = await proxy_b.handle_call("web_fetch", {"url": "https://corp.example/"})
+        assert refused.isError is True
+        assert "quarantined" in result_text(refused)
 
 
 async def test_a_different_credential_is_a_different_principal() -> None:
@@ -101,12 +111,12 @@ async def test_a_different_credential_is_a_different_principal() -> None:
         s1 = _FakeSession()
         p1 = await gateway._proxy_for_session(s1, principal=bad)  # noqa: SLF001
         assert p1 is not None
-        await _quarantine(scorer, p1._agent_id, p1._trace_id)  # noqa: SLF001
+        await _quarantine(scorer, p1)
 
         s2 = _FakeSession()
         p2 = await gateway._proxy_for_session(s2, principal=good)  # noqa: SLF001
         assert p2 is not None
-        assert not scorer.is_quarantined(p2._agent_id)  # noqa: SLF001
+        assert not _quarantined(scorer, p2)
 
 
 def test_principal_comes_from_the_credential_not_a_client_claim() -> None:

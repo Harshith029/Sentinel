@@ -122,16 +122,28 @@ def _persistence_row(settings: Settings, store: object | None) -> Capability:
 
 
 def _observability_row(settings: Settings) -> Capability:
-    azure = bool(settings.applicationinsights_connection_string)
+    """Structured local logs, always: nothing exports to Application Insights.
+
+    This row used to report "Azure Monitor · Application Insights" as active
+    whenever APPLICATIONINSIGHTS_CONNECTION_STRING was set, but no code ever
+    initialized an exporter. A connection string that is set is now reported as
+    unused, so an operator does not believe telemetry is flowing.
+    """
+    unused = bool(settings.applicationinsights_connection_string)
     return Capability(
         key="observability",
         name="Observability",
         demo="Structured local logs",
-        azure="Azure Monitor · Application Insights",
-        active="Azure Monitor · Application Insights" if azure else "Structured local logs",
-        degraded=not azure,
-        backend="azure_monitor" if azure else "local_logs",
-        cost=_PAID if azure else _FREE,
+        azure="Azure Monitor · Application Insights (not implemented)",
+        active=(
+            "Structured local logs (APPLICATIONINSIGHTS_CONNECTION_STRING is set "
+            "but not used: no exporter is wired)"
+            if unused
+            else "Structured local logs"
+        ),
+        degraded=True,
+        backend="local_logs",
+        cost=_FREE,
     )
 
 

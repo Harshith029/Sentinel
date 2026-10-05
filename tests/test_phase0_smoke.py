@@ -17,11 +17,8 @@ from pydantic import ValidationError
 
 from sentinel.config import Settings, get_settings, reset_settings_cache
 from sentinel.tracing import (
-    get_tracer,
-    init_tracing,
     new_span_id_hex,
     new_trace_id_hex,
-    reset_tracing_for_tests,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,20 +63,7 @@ def test_settings_is_frozen() -> None:
         s.demo_mode = False  # type: ignore[misc]
 
 
-# --- OTel tracer + ID shape -------------------------------------------------
-
-
-def test_tracer_initializes_and_produces_span() -> None:
-    reset_tracing_for_tests()
-    init_tracing()
-    tracer = get_tracer("sentinel.tests")
-    with tracer.start_as_current_span("smoke") as span:
-        ctx = span.get_span_context()
-        assert ctx.trace_id != 0
-        assert ctx.span_id != 0
-        # 128-bit trace id, 64-bit span id (W3C Trace Context).
-        assert ctx.trace_id < 2**128
-        assert ctx.span_id < 2**64
+# --- OTel-format IDs --------------------------------------------------------
 
 
 _TRACE_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -104,13 +88,6 @@ def test_trace_ids_are_unique() -> None:
     # broken or hand-rolled. Asserting a high lower bound rather than ==500
     # lets a freakishly-unlucky CI run pass.
     assert len(ids) > 495
-
-
-def test_init_tracing_is_idempotent() -> None:
-    reset_tracing_for_tests()
-    init_tracing()
-    init_tracing()  # must not raise
-    init_tracing()
 
 
 # --- Phase 0 artifacts present and non-empty --------------------------------

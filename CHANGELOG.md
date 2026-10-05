@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- `/capabilities` reported "Azure Monitor · Application Insights" as active
+  whenever `APPLICATIONINSIGHTS_CONNECTION_STRING` was set, but nothing ever
+  initialized an exporter. Observability is reported as what it is, structured
+  local logs, and a connection string that is set is reported as unused. The
+  never-called tracer setup was removed; trace and span ids are still minted
+  in OpenTelemetry format.
 - Ordinary tool descriptions stopped SENTINEL from starting. The catalogue
   scan is a heuristic, and flagged three of four plain descriptions in testing
   (for example "Send an email to a recipient, e.g. user@example.com."); strict

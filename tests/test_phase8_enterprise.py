@@ -135,8 +135,23 @@ def test_capabilities_report_paid_backends_only_when_configured() -> None:
     assert rows["prompt_shields"]["backend"] == "azure"
     assert rows["classifier"]["backend"] == "azure_openai"
     assert rows["persistence"]["backend"] == "cosmos"
-    assert rows["observability"]["backend"] == "azure_monitor"
     assert all(rows[k]["cost"] == "paid" for k in ("prompt_shields", "classifier", "persistence"))
+
+
+def test_application_insights_is_never_reported_as_running() -> None:
+    """No exporter is ever initialized, so a connection string changes nothing.
+
+    This row used to say "Azure Monitor · Application Insights" whenever the
+    connection string was set (review F17).
+    """
+    row = _rows(
+        mode_summary(
+            Settings(demo_mode=False, applicationinsights_connection_string="InstrumentationKey=x")
+        )
+    )["observability"]
+    assert row["backend"] == "local_logs"
+    assert row["cost"] == "free"
+    assert "not used" in str(row["active"])
 
 
 # --- audit endpoint: blocked attempts carry a classifier label ---------------

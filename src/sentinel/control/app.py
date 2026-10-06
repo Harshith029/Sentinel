@@ -48,7 +48,7 @@ from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 from sentinel.control.events import BroadcastEvent
 from sentinel.control.limits import BodySizeLimit, RateLimit
-from sentinel.control.manager import RunManager, RunQuotaExceeded
+from sentinel.control.manager import RunManager, RunQuotaExceeded, valid_tenant_name
 from sentinel.control.mcp_gateway import SentinelGateway
 from sentinel.demo.scenario import (
     CustomScenarioSpec,
@@ -614,8 +614,11 @@ def create_app(
     @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_admin)])
     async def reload_tenant_policy(tenant: str, body: PolicyReloadRequest) -> dict[str, Any]:
         """Hot-reload a tenant's policy on version bump (rejects malformed)."""
+        if not valid_tenant_name(tenant):
+            # The name becomes a file name under the data directory.
+            raise HTTPException(status_code=400, detail=f"invalid tenant name {tenant!r}")
         try:
-            result = mgr.reload_policy(tenant, body.policy)
+            result = await mgr.reload_policy(tenant, body.policy)
         except PolicyLoadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {

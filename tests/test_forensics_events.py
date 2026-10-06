@@ -10,6 +10,7 @@ from sentinel.forensics.events import (
     AuthorizationDecided,
     InjectionScanned,
     InputReceived,
+    PolicyChanged,
     RuleEvaluation,
     ToolBlocked,
     ToolCallProposed,
@@ -52,11 +53,19 @@ ALL_PAYLOADS = [
         blocked_by="authorization",
         matched_rule_id="r1",
     ),
+    PolicyChanged(
+        tenant="acme",
+        outcome="applied",
+        version=4,
+        previous_version=3,
+        policy_sha256="0" * 64,
+        detail="hot-reloaded v3 → v4",
+    ),
 ]
 
 
-def test_there_are_exactly_eight_event_types() -> None:
-    assert len(EVENT_TYPES) == 8
+def test_there_are_exactly_nine_event_types() -> None:
+    assert len(EVENT_TYPES) == 9
     assert {p.event_type for p in ALL_PAYLOADS} == EVENT_TYPES
 
 

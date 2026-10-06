@@ -170,6 +170,20 @@ def log_quarantined(
     )
 
 
+def log_policy_change(
+    tenant: str, *, outcome: str, version: int | None, previous: int | None, trace_id: str
+) -> None:
+    """The operator submitted a tenant policy: applied, ignored or rejected."""
+    security_logger().warning(
+        "POLICY  tenant=%s  %s  v%s -> v%s",
+        tenant, outcome.upper(), previous, version,
+        extra={
+            "event": "policy_change", "tenant": tenant, "outcome": outcome,
+            "version": version, "previous_version": previous, "trace_id": trace_id,
+        },
+    )
+
+
 def log_injection_flagged(target: str, *, trace_id: str, shield: str) -> None:
     """Layer-1 flagged content. Informational: the shield flags, it does not block."""
     security_logger().info(

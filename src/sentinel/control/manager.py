@@ -15,19 +15,26 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import logging
 import os
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import mcp.types as mcp_types
 
 from sentinel.authn import tenant_credentials, tenant_policy_paths
-from sentinel.authorization.policy import CompiledPolicy, load_default_policy, load_policy
+from sentinel.authorization.policy import (
+    CompiledPolicy,
+    PolicyLoadError,
+    load_default_policy,
+    load_policy,
+)
 from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry, ReloadResult
 from sentinel.classifier import AttackClassifier
 from sentinel.classifier.attack_classifier import BlockedAttempt
@@ -47,6 +54,7 @@ from sentinel.forensics.events import (
     AuthorizationDecided,
     InjectionScanned,
     InputReceived,
+    PolicyChanged,
     ToolBlocked,
 )
 from sentinel.forensics.replay import TraceReplay, replay
@@ -57,6 +65,7 @@ from sentinel.forensics.store import (
 )
 from sentinel.mcp_proxy.proxy import SentinelProxy
 from sentinel.mcp_proxy.router import DownstreamConnection
+from sentinel.observability import log_policy_change
 from sentinel.shield import InputShield
 from sentinel.trust.config import load_default_trust_config
 from sentinel.trust.scorer import TrustScorer
@@ -141,7 +150,53 @@ def build_policy_registry(settings: Settings) -> PolicyRegistry:
     for tenant in tenant_credentials():
         if tenant not in explicit and registry.get(tenant) is None:
             registry.register(tenant, deployment)
+    _overlay_saved_policies(registry)
     return registry
+
+
+# Tenant names become file names under the data directory, so only these.
+_TENANT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def valid_tenant_name(name: str) -> bool:
+    return _TENANT_NAME.fullmatch(name) is not None and ".." not in name
+
+
+def policy_dir() -> Path:
+    """Where operator-submitted tenant policies are saved."""
+    return Path(os.environ.get("SENTINEL_DATA_DIR", "var")) / "policies"
+
+
+def _overlay_saved_policies(registry: PolicyRegistry) -> None:
+    """Apply policies saved by earlier hot-reloads, where newer than configured.
+
+    A hot-reload used to live only in memory, so a restart silently put the
+    configured file back. The same rule as the reload itself decides between
+    the two: the higher ``policy_version`` wins, so an operator who bumps the
+    configured file past a saved copy gets their file.
+    """
+    directory = policy_dir()
+    if not directory.is_dir():
+        return
+    for path in sorted(directory.glob("*.yaml")):
+        tenant = path.stem
+        if not valid_tenant_name(tenant):
+            _LOG.warning("ignoring saved policy with an invalid tenant name: %s", path)
+            continue
+        saved = _load_policy_file(str(path), what=f"saved policy for tenant {tenant!r}")
+        current = registry.get(tenant)
+        if current is None or saved.policy_version > current.policy_version:
+            registry.register(tenant, saved)
+
+
+def _save_policy(tenant: str, text: str) -> None:
+    """Write a tenant's policy atomically: the old file or the new, never half."""
+    directory = policy_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{tenant}.yaml"
+    staging = directory / f".{tenant}.yaml.tmp"
+    staging.write_text(text, encoding="utf-8")
+    os.replace(staging, target)
 
 
 def _default_store(settings: Settings) -> ForensicStore:
@@ -651,9 +706,69 @@ class RunManager:
             for t in self._registry.tenants()
         ]
 
-    def reload_policy(self, tenant: str, policy_text: str) -> ReloadResult:
-        """Hot-reload a tenant's policy on version bump (raises on malformed)."""
-        return self._registry.reload_if_newer(tenant, policy_text)
+    async def reload_policy(self, tenant: str, policy_text: str) -> ReloadResult:
+        """Hot-reload a tenant's policy on version bump; save it; record the attempt.
+
+        Before: the new policy lived only in memory (a restart silently put the
+        configured file back) and nothing recorded that it had changed, or who
+        tried to change it. Now an applied policy is saved under the data
+        directory BEFORE it takes effect, so a failed write changes nothing, and
+        every attempt (applied, ignored as not newer, rejected as malformed)
+        becomes a PolicyChanged record in the affected tenant's history.
+
+        Raises ``ValueError`` for an unusable tenant name and ``PolicyLoadError``
+        for a policy that does not load (after recording the rejection).
+        """
+        if not valid_tenant_name(tenant):
+            raise ValueError(f"invalid tenant name {tenant!r}")
+        digest = hashlib.sha256(policy_text.encode("utf-8")).hexdigest()
+        previous = self._registry.version(tenant)
+        try:
+            candidate = load_policy(policy_text)
+        except PolicyLoadError as exc:
+            await self._record_policy_change(
+                tenant, "rejected", None, previous, digest, str(exc)
+            )
+            raise
+        if previous is None or candidate.policy_version > previous:
+            _save_policy(tenant, policy_text)
+        result = self._registry.reload_if_newer(tenant, policy_text)
+        await self._record_policy_change(
+            tenant, "applied" if result.reloaded else "ignored",
+            candidate.policy_version, previous, digest, result.detail,
+        )
+        return result
+
+    async def _record_policy_change(
+        self,
+        tenant: str,
+        outcome: Literal["applied", "ignored", "rejected"],
+        version: int | None,
+        previous: int | None,
+        digest: str,
+        detail: str,
+    ) -> None:
+        """One trace per attempt, owned by the tenant whose policy it concerns."""
+        trace_id = self._emitter.new_trace_id()
+        await self._emitter.emit(
+            PolicyChanged(
+                tenant=tenant, outcome=outcome, version=version,
+                previous_version=previous, policy_sha256=digest,
+                # A YAML error can quote the submitted text; keep it short.
+                detail=detail[:300],
+            ),
+            trace_id=trace_id,
+        )
+        record = RunRecord(
+            run_id=trace_id, trace_id=trace_id, agent_id="operator",
+            scenario="policy-change", tenant=tenant, status="completed",
+        )
+        self._runs[trace_id] = record
+        self._persist_owner(record)
+        log_policy_change(
+            tenant, outcome=outcome, version=version, previous=previous,
+            trace_id=trace_id,
+        )
 
     # --- SOC audit (the classifier's ONE consumer) -----------------------------
 

@@ -21,6 +21,9 @@ All notable changes to this project are documented here. Format follows
   local logs, and a connection string that is set is reported as unused. The
   never-called tracer setup was removed; trace and span ids are still minted
   in OpenTelemetry format.
+- After a restart, run history was rebuilt longest-trace-first rather than
+  most-recent-first: the store ordered traces by their span count. It now
+  orders them by each trace's newest span.
 - Ordinary tool descriptions stopped SENTINEL from starting. The catalogue
   scan is a heuristic, and flagged three of four plain descriptions in testing
   (for example "Send an email to a recipient, e.g. user@example.com."); strict

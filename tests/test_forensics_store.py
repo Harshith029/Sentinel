@@ -193,3 +193,27 @@ async def test_sqlite_list_trace_ids_most_recent_first(
         assert traces == [TRACE_A, TRACE_B]
     finally:
         store.close()
+
+
+async def test_sqlite_lists_by_recency_not_by_trace_length(
+    tmp_path: Path, make_span: Callable[..., Span]
+) -> None:
+    """A long old trace must not outrank a short new one (review F32).
+
+    The order came from MAX(seq), and seq counts spans within a trace, so the
+    longest trace was listed first however old it was.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    old = datetime.now(UTC) - timedelta(days=1)
+    new = datetime.now(UTC)
+    store = SqliteForensicStore(tmp_path / "spans.db")
+    try:
+        for seq in range(5):  # TRACE_A: older, and longer
+            span = make_span(trace_id=TRACE_A, seq=seq, span_id=f"a{seq:015x}")
+            await store.put(span.model_copy(update={"timestamp": old + timedelta(seconds=seq)}))
+        span = make_span(trace_id=TRACE_B, seq=0, span_id="b" + "1" * 15)
+        await store.put(span.model_copy(update={"timestamp": new}))
+        assert await store.list_trace_ids() == [TRACE_B, TRACE_A]
+    finally:
+        store.close()

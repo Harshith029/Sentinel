@@ -57,7 +57,7 @@ class ToolCall:
         1. **arguments** — chosen by the agent, which may be acting on injected
            content. Untrusted.
         2. **config** — declared by the operator in the policy document.
-        3. **provenance** — computed by Whence itself and never supplied.
+        3. **provenance** — computed by SENTINEL itself and never supplied.
 
         The ordering is load-bearing, not stylistic. With arguments written
         LAST, a call carrying an argument named ``allowed_domains`` overwrote the

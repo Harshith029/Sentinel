@@ -11,7 +11,7 @@
 policy_version: 3
 
 # Deployment values the rules below resolve against. These are the EXAMPLE
-# topology's values; replace them with your own when you point Whence at your
+# topology's values; replace them with your own when you point SENTINEL at your
 # servers. They live here rather than in code so each tenant's policy carries
 # its own, and so nothing has to guess them at runtime.
 config:

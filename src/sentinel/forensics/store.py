@@ -339,9 +339,12 @@ class SqliteForensicStore:
             return await asyncio.to_thread(self._list_traces_blocking)
 
     def _list_traces_blocking(self) -> list[str]:
+        # Ordered by each trace's newest span. This used to order by MAX(seq),
+        # but seq counts spans WITHIN a trace, so that put the longest traces
+        # first, not the most recent.
         cursor = self._conn.execute(
-            "SELECT trace_id, MAX(seq) AS last_seq FROM spans GROUP BY trace_id "
-            "ORDER BY last_seq DESC"
+            "SELECT trace_id FROM spans GROUP BY trace_id "
+            "ORDER BY MAX(julianday(json_extract(body, '$.timestamp'))) DESC, trace_id"
         )
         return [row[0] for row in cursor.fetchall()]
 

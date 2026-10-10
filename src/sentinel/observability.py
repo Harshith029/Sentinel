@@ -23,7 +23,7 @@ the *decision* (tool, rule, provenance labels, trace id) and never the data.
 Nor does the forensic store hold the payload: spans are redacted at the emitter
 before persistence (:mod:`sentinel.redaction`), so what survives there is the
 argument NAMES, types, lengths and a salted fingerprint — enough to investigate
-a call, not enough to reconstruct it. Whence deliberately keeps no copy of the
+a call, not enough to reconstruct it. SENTINEL deliberately keeps no copy of the
 caller's data anywhere. An earlier version of this note claimed the store held
 "the full payload under access control", which was wrong on both counts: nothing
 holds the full payload, and the read endpoints were unauthenticated when it was

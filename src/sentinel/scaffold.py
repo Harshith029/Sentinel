@@ -158,7 +158,11 @@ def _main() -> int:  # pragma: no cover - thin CLI wrapper
 
     async def run() -> str:
         async with AsyncExitStack() as stack:
-            topology = await connect_downstream(servers, stack)
+            topology = await connect_downstream(
+                servers,
+                stack,
+                operation_timeout_seconds=get_settings().downstream_timeout_seconds,
+            )
             return scaffold_policy(topology.catalogues)
         raise AssertionError("unreachable")  # pragma: no cover
 

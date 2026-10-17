@@ -91,6 +91,7 @@ _ENV_MAP: dict[str, tuple[str, Any]] = {
     "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", lambda v: "1" if v else "0"),
     "catalogue_approvals": ("SENTINEL_CATALOGUE_APPROVALS", json.dumps),
     "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", lambda v: "1" if v else "0"),
+    "downstream_timeout_seconds": ("SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", str),
     "api_token": ("SENTINEL_API_TOKEN", str),
 }
 
@@ -311,7 +312,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     async def probe() -> bool:
         ok = True
         async with AsyncExitStack() as stack:
-            topology = await connect_downstream(servers, stack)
+            topology = await connect_downstream(
+                servers,
+                stack,
+                operation_timeout_seconds=get_settings().downstream_timeout_seconds,
+            )
             for name, tools in sorted(topology.catalogues.items()):
                 names = ", ".join(sorted(t.name for t in tools))
                 print(f"  {name:<16} {len(tools)} tool(s): {names}")

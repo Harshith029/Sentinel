@@ -15,12 +15,16 @@ from a config namespace. Two defects made that namespace untrustworthy:
 
 from __future__ import annotations
 
+import logging
 import textwrap
+
+import pytest
 
 from sentinel.authorization.engine import AuthorizationEngine, ToolCall
 from sentinel.authorization.policy import load_policy
 from sentinel.control.manager import RunManager
 from sentinel.forensics.store import InMemoryForensicStore
+from sentinel.mcp_proxy.proxy import default_normalize
 
 POLICY = textwrap.dedent(
     """
@@ -192,3 +196,41 @@ tools:
     decision = proxy._current_engine().authorize(ToolCall(name="web_fetch"))  # noqa: SLF001
     assert decision.decision == "DENY"
     assert decision.matched_rule_id == "emergency-stop"
+
+
+def test_a_rule_may_compare_against_a_field_sentinel_derives() -> None:
+    """Derived fields describe the call and no agent can set them, so they stay.
+
+    The AUTHZ-1 filter drops comparands from a call's arguments. Applied to
+    ``recipient_domains`` too, it turned this denylist into a rule that denied
+    every message.
+    """
+    engine = AuthorizationEngine(
+        load_policy(
+            "policy_version: 1\ntools:\n  send_email:\n    rules:\n"
+            "      - id: never-evil\n"
+            '        deny_if: "\'evil.test\' in recipient_domains"\n'
+        )
+    )
+
+    def decide(to: str) -> str:
+        call = ToolCall(
+            name="send_email", arguments=default_normalize({"to": to}), provenance=frozenset()
+        )
+        return engine.authorize(call).decision
+
+    assert decide("cfo@corp.example") == "ALLOW"
+    assert decide("cfo@corp.example, x@evil.test") == "DENY"
+
+
+def test_an_undeclared_comparand_is_reported_when_the_policy_loads(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="sentinel.authorization.engine"):
+        AuthorizationEngine(
+            load_policy(
+                "policy_version: 1\ntools:\n  send_email:\n    rules:\n"
+                '      - id: domain\n        deny_if: "recipient_domain not in allowed_domains"\n'
+            )
+        )
+    assert "'allowed_domains'" in caplog.text and "denies every" in caplog.text

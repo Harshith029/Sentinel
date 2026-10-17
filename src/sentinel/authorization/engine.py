@@ -30,6 +30,15 @@ from sentinel.labels import RETRIEVED_CONTENT, Label, trust_rank
 
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.authorization.engine")
 
+# Argument fields the proxy's normalizer computes from a call (see
+# sentinel.mcp_proxy.proxy.default_normalize), discarding any value the agent
+# supplied under the same name.
+DERIVED_FIELDS: Final[frozenset[str]] = frozenset(
+    {"recipient_domain", "recipient_domains", "url_host"}
+)
+# Written by the engine itself, after arguments and config (see authorize()).
+_COMPUTED: Final[frozenset[str]] = frozenset({"effective_provenance", "is_tainted"})
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -99,13 +108,26 @@ class AuthorizationEngine:
     def __init__(self, policy: CompiledPolicy) -> None:
         self._policy = policy
         # Per tool: the names its rules compare AGAINST (allowlists, caps).
-        # Only the operator's config may supply them; see authorize().
-        self._comparands: dict[str, frozenset[str]] = {
-            tool: frozenset().union(
-                *(comparand_names(r.condition) for r in rules if r.condition is not None)
-            )
-            for tool, rules in policy.tools.items()
-        }
+        # Only the operator's config may supply them; see authorize(). Fields
+        # SENTINEL derives are exempt: they describe the call but no agent
+        # chooses them, so `"evil.test" in recipient_domains` keeps working.
+        self._comparands: dict[str, frozenset[str]] = {}
+        for tool, rules in policy.tools.items():
+            names: set[str] = set()
+            for rule in rules:
+                if rule.condition is None:
+                    continue
+                for name in comparand_names(rule.condition) - DERIVED_FIELDS - _COMPUTED:
+                    names.add(name)
+                    if name not in policy.config:
+                        _LOG.warning(
+                            "policy rule %r compares against %r, which the policy's "
+                            "config does not declare; that rule denies every %r call",
+                            rule.id,
+                            name,
+                            tool,
+                        )
+            self._comparands[tool] = frozenset(names)
 
     @property
     def policy_version(self) -> int:

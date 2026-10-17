@@ -618,7 +618,11 @@ class SentinelGateway:
         hardcoded map, so SENTINEL proxies servers it has never seen. Fails closed
         on an unreachable server or a cross-server tool-name collision.
         """
-        topology = await connect_downstream(servers, self._stack)
+        topology = await connect_downstream(
+            servers,
+            self._stack,
+            operation_timeout_seconds=get_settings().downstream_timeout_seconds,
+        )
         self._router = topology.router
         self._downstream_mode = "declared"
         self._topology = topology
@@ -653,10 +657,16 @@ class SentinelGateway:
         # Same factory as the declared-servers path: one place decides connect
         # timeout, redirect policy, HTTP-client ownership and termination policy,
         # so the deployment wiring cannot drift from the product path.
+        timeout = get_settings().downstream_timeout_seconds
         clients: dict[str, Any] = {}
         for key in required_keys:
-            clients[key] = await open_downstream_session(urls[key], self._stack)
-        self._router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
+            clients[key] = await open_downstream_session(
+                urls[key], self._stack, operation_timeout_seconds=timeout
+            )
+        self._router = ToolRouter(
+            {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER},
+            operation_timeout_seconds=timeout,
+        )
         self._downstream_mode = "remote-http"
 
     async def __aexit__(self, *exc: object) -> None:

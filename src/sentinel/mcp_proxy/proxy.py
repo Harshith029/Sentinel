@@ -47,6 +47,7 @@ import mcp.types as mcp_types
 from mcp.server.lowlevel import Server
 
 from sentinel.authorization.engine import (
+    DERIVED_FIELDS,
     AuthorizationEngine,
     ToolCall,
     to_decision_payload,
@@ -81,8 +82,6 @@ _ADDRESS_FIELDS: Final[tuple[str, ...]] = ("to", "cc", "bcc", "recipient", "reci
 # allowed_domains` denies. Used when one domain cannot honestly be named.
 _MULTIPLE_DOMAINS: Final[str] = "<multiple-domains>"
 _UNPARSEABLE_ADDRESS: Final[str] = "<unparseable-address>"
-# Fields SENTINEL derives. The agent never gets to supply them.
-_DERIVED_FIELDS: Final[tuple[str, ...]] = ("recipient_domain", "recipient_domains")
 _UNPARSEABLE_URL: Final[str] = "<unparseable-url>"
 
 
@@ -138,7 +137,7 @@ def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     value no allowlist contains, so an allowlist rule denies it.
     """
     namespace = dict(arguments)
-    for field in (*_DERIVED_FIELDS, "url_host"):
+    for field in DERIVED_FIELDS:
         namespace.pop(field, None)
     if "url" in namespace:
         namespace["url_host"] = _url_host(namespace["url"])

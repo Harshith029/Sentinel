@@ -234,7 +234,10 @@ Predicates support `== != < >= in "not in"`, set literals (`{USER}`), tool argum
 and config values. In a comparison the left side describes the call and the right
 side is what you allow: a variable on the right (`allowed_domains`, `max_amount`) is
 read from `config` only, never from the call's arguments. If you forget to declare
-it, the rule denies rather than letting the agent supply its own allowlist.
+it, the rule denies every call rather than letting the agent supply its own
+allowlist, and SENTINEL logs a warning naming the rule when the policy loads. The
+fields SENTINEL derives from a call (`recipient_domain`, `recipient_domains`,
+`url_host`) may appear on either side, so `"evil.test" in recipient_domains` works.
 
 ## Deployment
 
@@ -270,6 +273,8 @@ the service. The defaults sit well above normal use and only affect abuse.
 | `SENTINEL_MAX_RETAINED_RUNS` | 1000 | Oldest *finished* run leaves the run index; its spans stay in the forensic store |
 | `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 | `503` |
 | `SENTINEL_MAX_RESULT_BYTES` | 1 MiB | The tool result is withheld and the agent gets an error. The call is still recorded |
+| `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` | 30 | Per downstream operation (connect + initialize, tool listing, one tool call). A timed-out call returns an error to the agent and is recorded like any other result. Raise it for tools that run longer |
+| MCP sessions on `/mcp` | 512 per tenant (fixed) | `initialize` is answered with a JSON-RPC error; open sessions are never evicted to make room |
 
 `GET /events` returns at most 1000 events per call, with `next_since` to resume.
 

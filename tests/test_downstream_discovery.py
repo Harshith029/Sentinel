@@ -209,3 +209,30 @@ async def test_discovered_tools_are_still_default_denied() -> None:
     decision = engine.authorize(ToolCall(name="create_issue", arguments={}))
     assert decision.decision == "DENY"
     assert "default-deny" in decision.reason
+
+
+def test_the_downstream_deadline_is_an_operator_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fixed 30s deadline would break any tool that legitimately runs longer."""
+    from sentinel import scaffold
+    from sentinel.config import get_settings, reset_settings_cache
+
+    seen: list[float] = []
+
+    async def fake_connect(servers, stack, *, operation_timeout_seconds):  # type: ignore[no-untyped-def]
+        seen.append(operation_timeout_seconds)
+        return type("Topology", (), {"catalogues": {"srv": [tool("alpha")]}})()
+
+    monkeypatch.setattr("sentinel.downstream.connect_downstream", fake_connect)
+    monkeypatch.setenv("SENTINEL_MCP_SERVERS", '[{"name":"srv","url":"https://srv.test/mcp"}]')
+    monkeypatch.setenv("SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", "300")
+    reset_settings_cache()
+    try:
+        assert scaffold._main() == 0  # noqa: SLF001
+        assert seen == [300]
+
+        monkeypatch.setenv("SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", "0")
+        reset_settings_cache()
+        with pytest.raises(ValueError, match="SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS"):
+            get_settings()
+    finally:
+        reset_settings_cache()

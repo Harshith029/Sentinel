@@ -6,7 +6,77 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Catalogue fingerprints cover the whole tool definition: title, annotations,
+  output schema, icons and metadata as well as the description and input
+  schema. Existing `catalogue_approvals` entries no longer match. Re-run
+  `sentinel check` and approve the new fingerprints.
+- `POST /runs/custom` and `/runs/custom/baseline` reject `allowed_domains`,
+  and any other unknown field, with `422`. A run is authorized by the tenant's
+  policy only. `examples/run_custom_attack.py` lost `--allowed-domains`.
+- The bundled policy (version 4) denies `web_fetch` to hosts outside its
+  `allowed_fetch_hosts`. SENTINEL derives `url_host` from the `url` argument.
+- A variable on the right of a comparison (`allowed_domains`, `max_amount`) is
+  read from the policy's `config` only, never from the call's arguments. A
+  rule whose comparand is not declared denies, and a warning names it when the
+  policy loads. `in` with a string on the right is an error (deny), not a
+  substring match.
+- Python API: `SentinelProxy(authorization_config=...)` and
+  `run_demo_session(authorization_config=...)` are gone, and `ToolCall.config`
+  is ignored. The engine takes configuration from the policy it compiled.
+- A tenant at its MCP session limit is refused at `initialize`, with a
+  JSON-RPC error. It used to be refused at its first tool call.
+- `GET /events?since=` and the SSE stream answer `409`, with the range still
+  available, for a cursor that has expired from the buffer or comes from
+  another process; a follower already streaming gets a `resync-required`
+  event. A malformed `Last-Event-ID` is a `422`; it used to be ignored.
+- Open MCP sessions use the tenant's current policy on every call, so a policy
+  reload applies to them at once.
+
+### Added
+- `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` (default 30, also
+  `downstream_timeout_seconds` in `sentinel.yaml`): a deadline for each
+  downstream operation. Before, a downstream server that accepted a connection
+  and never answered held startup, discovery or a tool call forever.
+- `SENTINEL_MCP_ALLOWED_HOST` for the demo tool servers, so they keep MCP's
+  Host-header check when deployed behind an internal hostname.
+
 ### Security
+- An agent could pass the allowlist that judged it: with no `config` block
+  declaring `allowed_domains`, a call's own `allowed_domains` argument decided
+  the rule.
+- A policy with a duplicate YAML key is rejected. PyYAML kept the last value,
+  so a second entry for a tool silently replaced its rules. `sentinel scaffold`
+  also flattens U+0085 (NEL), which ends a YAML comment: a downstream tool
+  description containing it could add entries to the generated policy.
+- `web_fetch` connects to the address it validated (the original host stays
+  the `Host` header and TLS SNI name), which closes the DNS-rebinding window
+  between check and connect. It also blocks 100.64.0.0/10 and refuses URLs
+  with user info.
+- The downstream MCP client refuses a cross-origin redirect. A 307 or 308
+  would have replayed a tool call's JSON-RPC body to another host.
+- A request with more than one `Authorization` header is refused. Different
+  parts of the gateway read different copies, so one request could
+  authenticate as one tenant and run as another.
+- A non-ASCII bearer token fails authentication instead of raising a 500.
+- A `SENTINEL_API_TOKENS` table with a repeated tenant, a token shared by two
+  tenants, or a non-string value is rejected whole. It does not fall back to
+  `SENTINEL_API_TOKEN`, which would otherwise also act as the operator.
+- MCP sessions count against their tenant's limit from `initialize`. Sessions
+  that had not yet made a tool call were not counted, and the limit was
+  global, so one tenant could take every slot.
+- A regex in the local injection scanner took quadratic time on crafted text.
+  It is replaced by a bounded search. Local-scanner flags no longer lower an
+  agent's trust score, because the heuristic also flags ordinary text.
+- Forensic spans store each argument name as a keyed fingerprint. A caller
+  could put data, or a fake log line, in the name.
+- Control characters in logged identifiers are escaped, so a tool name cannot
+  forge extra log lines.
+- The dashboard's audit view renders the export as text, not HTML.
+- Trace and span ids come from `secrets`.
+- A downstream tool that raises is recorded like any other result and its
+  output is withheld. The call used to skip its execution record, and the
+  exception text could reach the agent.
 - Trust is kept per (tenant, agent). Keyed by agent id alone, a tenant that
   used another tenant's agent id could read that agent's trust score and push
   it down (with quarantine enforced, quarantine it), and an operator reset of
@@ -37,6 +107,18 @@ All notable changes to this project are documented here. Format follows
   event loop every session shares. Provenance is now kept as a running union of
   labels, which gives the same answers (checked against the walk) at a flat
   ~0.1 ms per call through 1,600 calls.
+- Shutdown closed the run manager, which checkpoints SQLite and drains pending
+  writes, only when the MCP gateway was enabled. It now always does.
+- Run history is restored from SQLite once at startup and respects
+  `SENTINEL_MAX_RETAINED_RUNS`. Every `GET /runs` used to re-add every evicted
+  run.
+- `/capabilities` reported Azure Key Vault as in use whenever
+  `AZURE_KEY_VAULT_URI` was set. Nothing reads it.
+- `deploy/compose.yaml` left `SENTINEL_MCP_SERVERS` and `SENTINEL_POLICY_FILE`
+  set but empty when not supplied, which masked `sentinel.yaml` and selected
+  the bundled demo servers and policy. They are now omitted.
+- `deploy/main.bicep` scales the proxy to one replica, not ten: sessions, the
+  event bus and the run index live in process memory.
 
 ## [0.2.1] — 2026-10-04
 

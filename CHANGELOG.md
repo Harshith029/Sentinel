@@ -164,6 +164,10 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Security log lines (allow, block, quarantine, injection flag) name the
+  tenant, as `tenant` in JSON and `[tenant ...]` in text.
+- `/capabilities` reports the manager's running mode; a manager built with
+  `demo_mode=False` still said DEMO MODE.
 - Discovery follows `tools/list` pagination (up to 100 pages). Only the first
   page was read, so a large server's later tools were never routed or scanned.
 - Documentation now matches the code. The README described a per-call graph

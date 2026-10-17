@@ -137,3 +137,23 @@ def test_logging_is_off_until_configured() -> None:
     logging.getLogger("sentinel").handlers.clear()
     # Should not raise, and should not print anywhere we control.
     log_allowed("t", trace_id="e" * 32, agent_id="a", provenance=())
+
+
+async def test_security_lines_name_the_tenant() -> None:
+    """A multi-tenant operator could not tell whose block a line recorded."""
+    stream = _capture()
+    await run_demo_session(
+        ScriptedAgentDriver([ToolInvocation("delete_record", {"id": 1})]),
+        user_input="delete it",
+        tenant="acme",
+    )
+    blocked = [line for line in stream.getvalue().splitlines() if "BLOCK" in line]
+    assert blocked and all("[tenant acme]" in line for line in blocked)
+
+    stream = _capture(fmt="json")
+    log_blocked(
+        "send_email", reason="r", rule="x", trace_id="d" * 32, agent_id="a",
+        provenance=(), tenant="acme",
+    )
+    record = json.loads(stream.getvalue().splitlines()[-1])
+    assert record["tenant"] == "acme"

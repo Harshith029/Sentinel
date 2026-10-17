@@ -655,6 +655,7 @@ class RunManager:
             shield_backend=self._shield.backend,
             classifier_backend=self._classifier.backend,
             store=self._inner_store,
+            demo_mode=self._demo_mode,
         )
         summary["deployment_verification"] = {
             "status": "unverified",

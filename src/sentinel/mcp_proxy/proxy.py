@@ -404,6 +404,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(
                     f"SENTINEL: agent {self._agent_id!r} is quarantined; tool {name!r} refused"
@@ -443,6 +444,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
@@ -480,6 +482,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
             provenance = lineage
@@ -525,6 +528,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=decision.effective_provenance,
+                    tenant=self._tenant,
                 )
                 # The agent learns which rule refused it, not the evaluation
                 # detail (a missing config name, an operand type): that stays
@@ -551,6 +555,7 @@ class SentinelProxy:
                 trace_id=self._trace_id,
                 agent_id=self._agent_id,
                 provenance=decision.effective_provenance,
+                tenant=self._tenant,
             )
             try:
                 result = await self._downstream.call_tool(name, dict(arguments))
@@ -657,6 +662,7 @@ class SentinelProxy:
                         f"tool_result:{name}",
                         trace_id=self._trace_id,
                         shield=verdict.shield,
+                        tenant=self._tenant,
                     )
                     if verdict.penalize_trust:
                         await self._scorer.record_injection(

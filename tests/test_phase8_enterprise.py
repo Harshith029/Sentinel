@@ -308,3 +308,14 @@ def test_foundry_registration_lists_only_real_tools_and_never_an_empty_list() ->
     assert set(PROXIED_TOOLS) <= served
     with pytest.raises(ValueError, match="explicitly"):
         build_sentinel_mcp_tool(server_url="https://sentinel.example/mcp", allowed_tools=[])
+
+
+async def test_the_capability_mode_follows_the_running_manager() -> None:
+    """A manager built with demo_mode=False still reported DEMO MODE."""
+    manager = RunManager(demo_mode=False)
+    try:
+        summary = manager.capabilities()
+        assert summary["mode"] == "PRODUCTION MODE"
+        assert summary["demo_mode"] is False
+    finally:
+        await manager.aclose()

@@ -234,7 +234,12 @@ class TrustScorer:
             excess -= 1
 
     async def _maybe_quarantine(
-        self, state: _AgentState, agent_id: str, trace_id: str, parent_span_id: str | None
+        self,
+        state: _AgentState,
+        agent_id: str,
+        trace_id: str,
+        parent_span_id: str | None,
+        tenant: str | None = None,
     ) -> None:
         if state.quarantined or state.reported_crossing:
             return
@@ -257,7 +262,11 @@ class TrustScorer:
             enforced=self._enforce,
         )
         log_quarantined(
-            agent_id, trace_id=trace_id, score=state.score, enforced=self._enforce
+            agent_id,
+            trace_id=trace_id,
+            score=state.score,
+            enforced=self._enforce,
+            tenant=tenant,
         )
         await self._emitter.emit(payload, trace_id=trace_id, parent_span_id=parent_span_id)
 
@@ -305,7 +314,7 @@ class TrustScorer:
             state.transitions.append((from_tool, tool_name))
             state.last_tool = tool_name
             state.score = new_score
-            await self._maybe_quarantine(state, agent_id, trace_id, parent_span_id)
+            await self._maybe_quarantine(state, agent_id, trace_id, parent_span_id, tenant)
             return span
 
     async def _apply_fixed_penalty(
@@ -335,7 +344,7 @@ class TrustScorer:
                 payload, trace_id=trace_id, parent_span_id=parent_span_id
             )
             state.score = new_score
-            await self._maybe_quarantine(state, agent_id, trace_id, parent_span_id)
+            await self._maybe_quarantine(state, agent_id, trace_id, parent_span_id, tenant)
             return span
 
     async def record_blocked_call(

@@ -486,7 +486,15 @@ class SentinelProxy:
                     agent_id=self._agent_id,
                     provenance=decision.effective_provenance,
                 )
-                return mcp_error(f"SENTINEL blocked {name!r}: {decision.reason}")
+                # The agent learns which rule refused it, not the evaluation
+                # detail (a missing config name, an operand type): that stays
+                # in the forensic record and the log for the operator.
+                shown = (
+                    f"denied by rule {decision.matched_rule_id!r}"
+                    if decision.matched_rule_id is not None
+                    else decision.reason
+                )
+                return mcp_error(f"SENTINEL blocked {name!r}: {shown}")
 
             # 3. Allowed: transition telemetry feeds the anomaly model.
             await self._scorer.record_tool_transition(

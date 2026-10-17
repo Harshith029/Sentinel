@@ -230,8 +230,11 @@ tools:
         deny_always: true
 ```
 
-Predicates support `== != < >= in "not in"`, set literals (`{USER}`), tool arguments,
-and config values. In a comparison the left side describes the call and the right
+Predicates support `== != < >= in "not in"`, `and`/`or`/`not`, set literals
+(`{USER}`), `true`/`false`, tool arguments, and config values. There is no null, and a
+predicate may nest at most 64 levels; use a set for long lists of alternatives.
+Numbers must be finite, a numeric string compares as a number, and a boolean never
+equals a number. In a comparison the left side describes the call and the right
 side is what you allow: a variable on the right (`allowed_domains`, `max_amount`) is
 read from `config` only, never from the call's arguments. If you forget to declare
 it, the rule denies every call rather than letting the agent supply its own

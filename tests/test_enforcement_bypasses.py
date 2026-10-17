@@ -312,3 +312,21 @@ async def test_an_attack_run_lands_in_the_callers_tenant(
     finally:
         await manager.aclose()
         reset_settings_cache()
+
+
+async def test_the_agent_is_told_which_rule_refused_it_but_not_the_internals() -> None:
+    """The refusal used to carry the evaluation detail: here, a config name."""
+    policy = load_policy(
+        "policy_version: 1\ntools:\n  send_email:\n    rules:\n"
+        '      - id: domain\n        deny_if: "recipient_domain not in secret_allowlist_name"\n'
+    )
+    proxy, _, store = _proxy(AuthorizationEngine(policy))
+    await proxy.start(user_input="send it")
+    refused = await proxy.handle_call("send_email", {"to": "cfo@corp.example"})
+    text = result_text(refused)
+    assert refused.isError and "'domain'" in text
+    assert "secret_allowlist_name" not in text
+    # The operator still has the full reason in the forensic record.
+    rep = await replay(store, proxy.trace_id)
+    blocked = [s.payload for s in rep.ordered if s.event_type == "ToolBlocked"]
+    assert "secret_allowlist_name" in blocked[0].reason  # type: ignore[attr-defined]

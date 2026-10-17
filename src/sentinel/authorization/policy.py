@@ -180,6 +180,12 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
     }
     for tool_name, tool_doc in doc.tools.items():
         compiled: list[CompiledRule] = []
+        ids = [rule.id for rule in tool_doc.rules]
+        repeated = sorted({rule_id for rule_id in ids if ids.count(rule_id) > 1})
+        if repeated:
+            # The forensic record and the agent's refusal name a rule by id; two
+            # rules sharing one make every decision citing it ambiguous.
+            raise PolicyLoadError(f"tool {tool_name!r}: duplicate rule id(s) {repeated}")
         for rule in tool_doc.rules:
             if rule.deny_always:
                 compiled.append(CompiledRule(id=rule.id, deny_always=True, condition=None))

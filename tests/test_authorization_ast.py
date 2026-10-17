@@ -79,3 +79,63 @@ def test_in_on_a_string_is_not_allowlist_membership() -> None:
     cmp = Comparison(Variable("domain"), "in", Variable("allowed"))
     with pytest.raises(ConditionError, match="not a collection"):
         cmp.evaluate({"domain": "corp.example", "allowed": "corp.example"})
+
+
+def _engine_for(predicate: str):  # type: ignore[no-untyped-def]
+    from sentinel.authorization.engine import AuthorizationEngine
+    from sentinel.authorization.policy import load_policy
+
+    return AuthorizationEngine(
+        load_policy(
+            "policy_version: 1\nconfig: {cap: 1000}\ntools:\n  t:\n    rules:\n"
+            f"      - id: r\n        deny_if: '{predicate}'\n"
+        )
+    )
+
+
+def test_true_and_false_are_literals_an_agent_cannot_redefine() -> None:
+    """`true` used to parse as a variable, so an argument named "true" set it."""
+    from sentinel.authorization.engine import ToolCall
+    from sentinel.labels import RETRIEVED_CONTENT
+
+    engine = _engine_for("is_tainted == true")
+    forged = ToolCall(
+        name="t", arguments={"true": False}, provenance=frozenset({RETRIEVED_CONTENT})
+    )
+    assert engine.authorize(forged).decision == "DENY"
+    clean = ToolCall(name="t", arguments={}, provenance=frozenset({"USER"}))
+    assert engine.authorize(clean).decision == "ALLOW"
+
+
+def test_null_is_reserved_not_a_variable() -> None:
+    from sentinel.authorization.parser import PolicyParseError, parse_condition
+
+    for word in ("null", "None"):
+        with pytest.raises(PolicyParseError, match="reserved"):
+            parse_condition(f"a == {word}")
+
+
+def test_a_boolean_never_equals_a_number() -> None:
+    cmp = Comparison(Variable("flag"), "==", Variable("one"))
+    assert cmp.evaluate({"flag": True, "one": 1}) is False
+
+
+def test_equality_reads_a_numeric_string_the_way_ordering_does() -> None:
+    """`amount >= cap` already took "1000" as 1000; `amount == cap` did not."""
+    from sentinel.authorization.engine import ToolCall
+
+    engine = _engine_for("amount == cap")
+    call = ToolCall(name="t", arguments={"amount": "1000"}, provenance=frozenset({"USER"}))
+    assert engine.authorize(call).decision == "DENY"
+    # Two strings still compare as strings.
+    assert Comparison(Variable("a"), "==", Variable("b")).evaluate({"a": "5", "b": "5.0"}) is False
+
+
+@pytest.mark.parametrize("amount", ["NaN", "Infinity", "-Infinity", float("nan")])
+def test_non_finite_numbers_are_not_amounts(amount: object) -> None:
+    from sentinel.authorization.engine import ToolCall
+
+    engine = _engine_for("amount >= cap")
+    call = ToolCall(name="t", arguments={"amount": amount}, provenance=frozenset({"USER"}))
+    decision = engine.authorize(call)
+    assert decision.decision == "DENY" and "fail-closed" in decision.reason

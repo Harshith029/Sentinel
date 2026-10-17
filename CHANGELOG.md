@@ -7,6 +7,19 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- Policy language: `true` and `false` are literals (they parsed as variables,
+  so a call's argument named `true` set them), and `null`/`None` are refused.
+  A boolean never equals a number. `==` reads a numeric string as a number,
+  as `<` and `>=` already did, so `"1000"` no longer escapes
+  `amount == 1000`. NaN and the infinities are errors, so the rule denies:
+  `"-Infinity"` used to pass `amount >= max_amount`. A predicate nesting more
+  than 64 levels is refused at load (deep parentheses raised RecursionError,
+  a 500 on reload; long chains loaded and then never evaluated), and so are
+  duplicate rule ids within a tool.
+- The bundled policy (version 5) also denies `transfer_funds` with a negative
+  amount; the cap alone let one through.
+- A blocked agent is told which rule refused it, not the evaluation detail,
+  which could name config values. The forensic record keeps the full reason.
 - Catalogue fingerprints cover the whole tool definition: title, annotations,
   output schema, icons and metadata as well as the description and input
   schema. Existing `catalogue_approvals` entries no longer match. Re-run

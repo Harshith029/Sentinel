@@ -8,7 +8,7 @@
 #   * effective_provenance  — the §4.2 provenance SET (frozenset of labels)
 #   * typed tool args        — e.g. recipient_domain, amount
 #   * config                 — e.g. allowed_domains, max_amount
-policy_version: 3
+policy_version: 4
 
 # Deployment values the rules below resolve against. These are the EXAMPLE
 # topology's values; replace them with your own when you point SENTINEL at your
@@ -16,14 +16,19 @@ policy_version: 3
 # its own, and so nothing has to guess them at runtime.
 config:
   allowed_domains: ["corp.example"]
+  # Every outbound URL is a capability. These are the bundled demo's known
+  # hosts; production operators must replace them with their own reviewable set.
+  allowed_fetch_hosts: ["acme.test", "corp.example", "example.com"]
   max_amount: 1000
 
 tools:
-  # web_fetch is a READ tool: always permitted (no deny rules). It is, however,
-  # the primary SOURCE of taint — its results are tagged RETRIEVED_CONTENT by the
-  # proxy, so any later action derived from a fetched page is caught downstream.
+  # web_fetch is an outbound READ capability. Its target must be an
+  # operator-approved host, AND its results are tagged RETRIEVED_CONTENT, so a
+  # later action derived from a fetched page is caught downstream.
   web_fetch:
-    rules: []
+    rules:
+      - id: fetch-host-allowlist
+        deny_if: "url_host not in allowed_fetch_hosts"
 
   send_email:
     rules:

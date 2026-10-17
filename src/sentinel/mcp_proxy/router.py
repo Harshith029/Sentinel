@@ -7,16 +7,21 @@ satisfies that shape, and :class:`ToolRouter` aggregates several of them behind
 the same interface — routing each ``call_tool`` to the server that owns the
 tool and merging their catalogues for ``list_tools``.
 """
+
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Final, Protocol, runtime_checkable
 
 import mcp.types as mcp_types
-from mcp.client.session import ClientSession
 
-from sentinel.catalogue import CatalogueIntegrityError
+from sentinel.catalogue import CatalogueCollisionError
 from sentinel.mcp_proxy.content import mcp_error
+
+# A downstream HTTP connection may remain open while idle, but individual MCP
+# operations must not be allowed to wait forever for a peer that stops replying.
+DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS: Final[float] = 30.0
 
 
 @runtime_checkable
@@ -37,10 +42,18 @@ class ToolRouter:
     an unrouted tool returns a clean MCP error (it never silently no-ops).
     """
 
-    def __init__(self, routes: Mapping[str, ClientSession]) -> None:
+    def __init__(
+        self,
+        routes: Mapping[str, DownstreamConnection],
+        *,
+        operation_timeout_seconds: float = DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
+    ) -> None:
+        if operation_timeout_seconds <= 0:
+            raise ValueError("operation_timeout_seconds must be positive")
         self._routes = dict(routes)
+        self._operation_timeout_seconds = operation_timeout_seconds
         # De-duplicate the backing sessions while preserving first-seen order.
-        self._sessions: list[ClientSession] = []
+        self._sessions: list[DownstreamConnection] = []
         for session in self._routes.values():
             if session not in self._sessions:
                 self._sessions.append(session)
@@ -57,21 +70,21 @@ class ToolRouter:
         """
         merged: dict[str, mcp_types.Tool] = {}
         collisions: dict[str, int] = {}
-        for session in self._sessions:
-            for tool in (await session.list_tools()).tools:
-                if tool.name in merged:
-                    collisions[tool.name] = collisions.get(tool.name, 1) + 1
-                    continue
-                merged[tool.name] = tool
+        try:
+            # One deadline applies to the merged response, not one deadline per
+            # server. Otherwise a large configured fleet could multiply a 30s
+            # bound into minutes of blocked agent discovery.
+            async with asyncio.timeout(self._operation_timeout_seconds):
+                for session in self._sessions:
+                    for tool in (await session.list_tools()).tools:
+                        if tool.name in merged:
+                            collisions[tool.name] = collisions.get(tool.name, 1) + 1
+                            continue
+                        merged[tool.name] = tool
+        except TimeoutError as exc:
+            raise TimeoutError("downstream tool listing timed out") from exc
         if collisions:
-            raise CatalogueIntegrityError(
-                "downstream tool-name collision (possible cross-server shadowing): "
-                + ", ".join(
-                    f"{name!r} exposed by {count} servers"
-                    for name, count in sorted(collisions.items())
-                )
-                + " — refusing to guess which server is authoritative"
-            )
+            raise CatalogueCollisionError(collisions)
         return mcp_types.ListToolsResult(tools=list(merged.values()))
 
     async def call_tool(
@@ -80,4 +93,8 @@ class ToolRouter:
         session = self._routes.get(name)
         if session is None:
             return mcp_error(f"no downstream server routes tool {name!r}")
-        return await session.call_tool(name, arguments)
+        try:
+            async with asyncio.timeout(self._operation_timeout_seconds):
+                return await session.call_tool(name, arguments)
+        except TimeoutError as exc:
+            raise TimeoutError(f"downstream tool {name!r} timed out") from exc

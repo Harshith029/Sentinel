@@ -4,6 +4,7 @@ Uses httpx.MockTransport + an injected resolver, so every case is deterministic
 and offline. These prove the tool operates on ARBITRARY urls while failing closed
 on the internal-network vectors an SSRF attacker would reach for.
 """
+
 from __future__ import annotations
 
 import httpx
@@ -15,6 +16,7 @@ from sentinel.toolservers.web_fetch import FetchResult, fetch_url, validate_targ
 def _resolver(mapping: dict[str, list[str]]):
     def resolve(host: str) -> list[str]:
         return mapping.get(host, [])
+
     return resolve
 
 
@@ -27,14 +29,16 @@ PUBLIC = _resolver({"public.test": ["93.184.216.34"], "evil.test": ["10.0.0.5"]}
 
 # --- SSRF: refuse internal targets, up front, before any request ---------------
 
+
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1/secret",           # loopback literal
-        "http://169.254.169.254/latest/meta", # cloud metadata (link-local)
-        "http://[::1]/",                       # ipv6 loopback
-        "http://10.0.0.5/",                    # private literal
-        "http://192.168.1.1/",                 # private literal
+        "http://127.0.0.1/secret",  # loopback literal
+        "http://169.254.169.254/latest/meta",  # cloud metadata (link-local)
+        "http://[::1]/",  # ipv6 loopback
+        "http://10.0.0.5/",  # private literal
+        "http://192.168.1.1/",  # private literal
+        "http://100.100.100.200/latest/meta",  # RFC 6598 / cloud metadata
     ],
 )
 async def test_blocks_internal_ip_literals(url: str) -> None:
@@ -61,8 +65,13 @@ async def test_rejects_unresolvable_host() -> None:
 
 # --- happy path over an arbitrary public URL -----------------------------------
 
+
 async def test_fetches_public_text() -> None:
-    def handler(_req: httpx.Request) -> httpx.Response:
+    def handler(req: httpx.Request) -> httpx.Response:
+        # The checked DNS answer is the actual socket/request target; HTTP
+        # virtual hosting still sees the public hostname it was asked for.
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
         return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<h1>hi</h1>")
 
     async with _client(handler) as c:
@@ -71,11 +80,27 @@ async def test_fetches_public_text() -> None:
     assert result.text == "<h1>hi</h1>" and not result.truncated
 
 
+async def test_https_hostname_uses_validated_ip_with_original_sni() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
+        assert req.extensions["sni_hostname"] == "public.test"
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"ok")
+
+    async with _client(handler) as c:
+        result = await fetch_url("https://public.test/secure", resolve=PUBLIC, client=c)
+    assert result.ok and result.text == "ok"
+
+
 # --- redirects are re-validated at every hop -----------------------------------
+
 
 async def test_redirect_to_private_is_blocked_on_second_hop() -> None:
     def handler(req: httpx.Request) -> httpx.Response:
-        assert req.url.host == "public.test"  # the private hop must NEVER be requested
+        # Only the first, public hop is ever requested: to its validated (pinned)
+        # address, still naming the original host. The private hop never is.
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
         return httpx.Response(302, headers={"location": "http://10.0.0.1/internal"})
 
     async with _client(handler) as c:
@@ -84,6 +109,7 @@ async def test_redirect_to_private_is_blocked_on_second_hop() -> None:
 
 
 # --- resource limits ------------------------------------------------------------
+
 
 async def test_size_cap_truncates() -> None:
     def handler(_req: httpx.Request) -> httpx.Response:
@@ -105,6 +131,7 @@ async def test_non_text_is_summarized_not_returned() -> None:
 
 # --- failures never raise -------------------------------------------------------
 
+
 async def test_transport_error_is_returned_not_raised() -> None:
     def handler(_req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
@@ -120,6 +147,7 @@ async def test_as_tool_output_wraps_error_as_text() -> None:
 
 
 # --- validate_target is a pure, reusable guard ---------------------------------
+
 
 def test_validate_target_allows_public_and_blocks_private() -> None:
     assert validate_target("http://public.test/", allow_private=False, resolve=PUBLIC) is None

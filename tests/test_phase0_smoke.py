@@ -2,11 +2,12 @@
 
 These are intentionally small — Phase 0 only proves the foundation is real:
 * DEMO_MODE flag round-trips from env.
-* OTel tracer initializes and produces SPEC-COMPLIANT hex IDs (not UUIDs).
+* A cryptographic ID generator produces SPEC-COMPLIANT hex IDs (not UUIDs).
 * `versions.lock` and `SDK_VERIFICATION.md` exist and are non-empty.
 * The SDK facts recorded in `SDK_VERIFICATION.md` still hold against the
   installed packages (the "fail loudly on drift" rule from Phase 0 item 4).
 """
+
 from __future__ import annotations
 
 import re
@@ -84,7 +85,7 @@ def test_new_span_id_hex_shape() -> None:
 
 def test_trace_ids_are_unique() -> None:
     ids = {new_trace_id_hex() for _ in range(500)}
-    # The OTel ID generator is random; 500 draws colliding would mean it's
+    # The cryptographic generator is random; 500 draws colliding would mean it's
     # broken or hand-rolled. Asserting a high lower bound rather than ==500
     # lets a freakishly-unlucky CI run pass.
     assert len(ids) > 495
@@ -125,9 +126,7 @@ def test_versions_lock_has_real_pins() -> None:
         if "==" in required:
             assert required in lines, f"missing exact pin: {required}"
         else:
-            matches = [
-                line for line in lines if line.split("==", 1)[0].lower() == required.lower()
-            ]
+            matches = [line for line in lines if line.split("==", 1)[0].lower() == required.lower()]
             assert matches, f"missing pin for {required!r}"
             assert "==" in matches[0], f"non-exact pin in versions.lock: {matches[0]}"
     # Pydantic must be a 2.x exact pin (spec §3: "pydantic==<resolve, 2.x>").

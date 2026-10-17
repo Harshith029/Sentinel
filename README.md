@@ -31,7 +31,11 @@ because its lineage traces back to untrusted content.</i></sub>
 </div>
 
 ```bash
-pip install sentinel-prox # the import package and CLI are both `sentinel`
+# PyPI currently serves only insecure 0.1.1. Do NOT install `sentinel-prox`
+# from PyPI until 0.2.1+ has been published.
+git clone https://github.com/Harshith029/Sentinel.git
+cd Sentinel
+python -m pip install . -c versions.lock
 sentinel init             # write sentinel.yaml
 sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
 sentinel scaffold > policy.yaml
@@ -50,6 +54,7 @@ Read this before deploying anything.
 
 | Area | State |
 |---|---|
+| PyPI distribution | **Blocked pending release:** PyPI currently serves vulnerable 0.1.1 only. Install this source checkout until a verified 0.2.1+ release is published. |
 | Provenance tracking + deterministic default-deny enforcement | Working, tested |
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence. Each run's tenant is recorded, so history stays with its tenant across restarts. Traces are deleted after `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90). Not encrypted at rest by SENTINEL (see *Forensic data*) |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting. The poisoning scan is a heuristic that also flags ordinary descriptions; approve a reviewed definition with `catalogue_approvals` (the fingerprint `sentinel check` prints) rather than turning strict mode off |
@@ -73,7 +78,7 @@ protects you from.
 |---|---|
 | **Taint is per MCP session** | Lineage covers the calls made in one MCP session. A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried from one call to the next, so a page read in one call does not taint an email sent in the next. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects. |
 | **Every tool result is untrusted** | All tool output is labelled retrieved content, including your own internal systems. A benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Only per-tool declassification (a value that validates against a strict schema) clears taint. |
-| **Only guarded tools are guarded** | A tool with no rules can carry tainted data out: a URL's query string in a fetch tool, for example. The bundled example policy leaves `web_fetch` unrestricted. Rules are deny-only and there is no notion of an outbound "sink" yet. |
+| **Only guarded tools are guarded** | A tool without policy rules can carry tainted data out. The bundled policy treats `web_fetch` as an outbound capability and constrains its hostname through `allowed_fetch_hosts`; add equivalent rules for every outbound tool you introduce. Rules are deny-only and there is no notion of a general outbound "sink" yet. |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
 
@@ -210,6 +215,8 @@ recommended starting rule, so you edit rather than invent.
 
 ```yaml
 policy_version: 1
+config:
+  allowed_domains: ["corp.example"]
 tools:
   send_email:
     rules:
@@ -224,7 +231,10 @@ tools:
 ```
 
 Predicates support `== != < >= in "not in"`, set literals (`{USER}`), tool arguments,
-and config values.
+and config values. In a comparison the left side describes the call and the right
+side is what you allow: a variable on the right (`allowed_domains`, `max_amount`) is
+read from `config` only, never from the call's arguments. If you forget to declare
+it, the rule denies rather than letting the agent supply its own allowlist.
 
 ## Deployment
 

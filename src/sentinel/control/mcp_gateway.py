@@ -43,10 +43,12 @@ The remote paths share ONE connection factory
 redirect policy, HTTP-client ownership and MCP session-termination policy cannot
 drift between the deployment wiring and the product path.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import time
@@ -94,13 +96,12 @@ from sentinel.shield import InputShield
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.mcp_gateway")
 _GATEWAY_NAME: Final[str] = "sentinel"
 _LIVE_USER_INPUT: Final[str] = "(live MCP session over HTTP)"
-# CONCURRENCY cap — not a lifetime quota. A live session's proxy is NEVER
-# replaced or evicted: evicting it would reset its provenance frontier and let a
-# tainted action through on a fresh clean proxy (a laundering bypass). So under
-# pressure we FAIL CLOSED, refusing NEW sessions rather than resetting existing
-# ones. Sessions the transport has FINISHED with are a different matter: they can
-# never make another call, so reclaiming them is safe by construction and is what
-# keeps the cap a measure of concurrency. See :class:`_TrackedSession`.
+# Per-tenant CONCURRENCY cap — not a lifetime quota. A live session's proxy is
+# NEVER replaced or evicted: evicting it would reset its provenance frontier and
+# let a tainted action through on a fresh clean proxy. So under pressure we FAIL
+# CLOSED, refusing NEW sessions rather than resetting existing ones. Sessions the
+# transport has FINISHED with are a different matter: they can never make another
+# call, so reclaiming them is safe by construction. See :class:`_TrackedSession`.
 _MAX_SESSIONS: Final[int] = 512
 # Backstop for a session the transport never releases (a half-open connection, or
 # a transport-layer leak). Retiring it frees the proxy; it does NOT hand a
@@ -176,6 +177,20 @@ class _TrackedSession:
     last_used: float
 
 
+@dataclass(frozen=True)
+class _ReservedTransportSession:
+    """A counted wire session, even before its first tool call.
+
+    The MCP SDK allocates a transport and an application task when ``initialize``
+    succeeds. Counting only after the first tool call leaves those resources
+    unbounded, so reservation starts at session creation and ends on DELETE or
+    when the SDK no longer reports the session as live.
+    """
+
+    tenant: str
+    owner: str
+
+
 def _request_authorized(scope: Scope) -> bool:
     """Bearer-token gate for the /mcp wire endpoint.
 
@@ -188,10 +203,19 @@ def _request_authorized(scope: Scope) -> bool:
     """
     if not auth_configured():
         return get_settings().allow_anonymous
-    headers = {
-        k.decode("latin-1"): v.decode("latin-1")
-        for k, v in (scope.get("headers") or [])
-    }
+    # A dict comprehension would keep the *last* duplicate Authorization value
+    # while Starlette's Headers (used below for session ownership/identity) can
+    # expose the first. That disagreement lets one request authenticate as one
+    # tenant and execute under another. A repeated security-sensitive header is
+    # malformed, not a value to choose between.
+    authorization = [
+        value.decode("latin-1")
+        for key, value in (scope.get("headers") or [])
+        if key.lower() == b"authorization"
+    ]
+    if len(authorization) != 1:
+        return False
+    headers = {"authorization": authorization[0]}
     # A TENANT credential — per-tenant or the single-tenant token. The operator
     # credential is deliberately not an agent credential: an agent connecting
     # with it would be an agent that can administer. This used to compare
@@ -279,6 +303,72 @@ async def _reject_unauthorized(send: Send) -> None:
     )
 
 
+_CAPACITY_MESSAGE: Final[str] = (
+    "SENTINEL: this tenant is at its MCP session limit; retry when a session ends"
+)
+
+
+async def _reject_capacity(scope: Scope, receive: Receive, send: Send) -> None:
+    """Refuse a new wire session before allocating another SDK transport.
+
+    A POST (``initialize``) is answered inside the protocol: a JSON-RPC error
+    carrying the request's own id, which an MCP client surfaces as an ordinary
+    error. A bare HTTP 503 instead failed the client's transport task, so the
+    caller saw an exception group (and one run hung) rather than a reason.
+    Anything else gets the plain 503.
+    """
+    if scope.get("method") == "POST":
+        request_id: object = None
+        try:
+            message = json.loads(await _read_body(receive))
+            if isinstance(message, dict):
+                request_id = message.get("id")
+        except (ValueError, UnicodeDecodeError):
+            request_id = None
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32000, "message": _CAPACITY_MESSAGE},
+            }
+        ).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+        return
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 503,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": json.dumps({"detail": _CAPACITY_MESSAGE}).encode(),
+        }
+    )
+
+
+async def _read_body(receive: Receive) -> bytes:
+    """The request body (already bounded by the app's body-size middleware)."""
+    chunks: list[bytes] = []
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            break
+        chunks.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            break
+    return b"".join(chunks)
+
+
 class SentinelGateway:
     """A streamable-HTTP MCP server that fronts the SENTINEL pipeline.
 
@@ -327,11 +417,20 @@ class SentinelGateway:
         self._session_lock = asyncio.Lock()
         # MCP session id -> the principal that created it (see handle_asgi).
         self._session_owners: dict[str, str] = {}
+        # MCP session id -> tenant/principal reservation. Unlike ``_sessions``,
+        # this is populated at initialize time, before any tool call can create
+        # a proxy. The limit is intentionally PER TENANT: one tenant must not
+        # consume every transport slot and deny service to all others.
+        self._transport_sessions: dict[str, _ReservedTransportSession] = {}
+        self._pending_transport_sessions: dict[str, int] = {}
+        self._transport_session_lock = asyncio.Lock()
         self._front = self._build_front_server()
         # stateless=False: keep one ServerSession per MCP session so a session's
         # provenance frontier persists across its successive tool calls.
         self._session_manager = StreamableHTTPSessionManager(
-            app=self._front, json_response=False, stateless=False,
+            app=self._front,
+            json_response=False,
+            stateless=False,
             # The transport keeps every session it ever opened until the client
             # sends DELETE; one that just goes away held its task and streams
             # for the life of the process (20 abandoned sessions: all 20 still
@@ -411,12 +510,8 @@ class SentinelGateway:
                 "unknown_tools": "default-denied until policy is written",
             },
             "catalogue_findings": [str(f) for f in self._preflight_findings],
-            "catalogue_approved_findings": [
-                str(f) for f in self._acknowledged_findings
-            ],
-            "catalogue_monitor": (
-                self._monitor.status() if self._monitor is not None else {}
-            ),
+            "catalogue_approved_findings": [str(f) for f in self._acknowledged_findings],
+            "catalogue_monitor": (self._monitor.status() if self._monitor is not None else {}),
         }
 
     async def __aenter__(self) -> SentinelGateway:
@@ -452,9 +547,7 @@ class SentinelGateway:
         # default a poisoned catalogue refuses to boot. (Cross-server tool-name
         # shadowing already fails closed inside ToolRouter.list_tools.)
         settings = get_settings()
-        cache = await gateway_preflight(
-            self._router, declared=bool(declared), settings=settings
-        )
+        cache = await gateway_preflight(self._router, declared=bool(declared), settings=settings)
         self._cache = cache.tools
         self._approved = cache.names
         self._preflight_findings = cache.findings
@@ -518,9 +611,7 @@ class SentinelGateway:
             )
         return None
 
-    async def _connect_declared_downstream(
-        self, servers: Sequence[DownstreamServer]
-    ) -> None:
+    async def _connect_declared_downstream(self, servers: Sequence[DownstreamServer]) -> None:
         """The PRODUCT path: connect the operator's own MCP servers and discover.
 
         Routing comes from ``tools/list`` on each declared server, not from any
@@ -534,17 +625,13 @@ class SentinelGateway:
 
     async def _connect_inmemory_downstream(self) -> None:
         """The DEMO default: three in-process mock tool servers over in-memory MCP."""
-        servers = build_downstream(
-            self._state, real_web=get_settings().real_web_fetch
-        )
+        servers = build_downstream(self._state, real_web=get_settings().real_web_fetch)
         clients: dict[str, ClientSession] = {}
         for key, server in servers.items():
             client = await self._stack.enter_async_context(connect(server))
             await client.initialize()
             clients[key] = client
-        self._router = ToolRouter(
-            {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER}
-        )
+        self._router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
         self._downstream_mode = "memory"
 
     async def _connect_remote_downstream(self, urls: dict[str, str]) -> None:
@@ -569,9 +656,7 @@ class SentinelGateway:
         clients: dict[str, Any] = {}
         for key in required_keys:
             clients[key] = await open_downstream_session(urls[key], self._stack)
-        self._router = ToolRouter(
-            {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER}
-        )
+        self._router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
         self._downstream_mode = "remote-http"
 
     async def __aexit__(self, *exc: object) -> None:
@@ -618,22 +703,51 @@ class SentinelGateway:
             await self._session_manager.handle_request(scope, receive, send)
             if scope.get("method") == "DELETE":
                 self._session_owners.pop(presented, None)
+                self._transport_sessions.pop(presented, None)
             return
 
         # No session id: this request may CREATE a session. The SDK assigns
         # the id itself, so learn it from the response header, which is sent
         # before the client can use the id in a follow-up request.
+        # The ASGI scope has raw headers, whereas the SDK's Request object is
+        # intentionally private. Resolve the tenant from the canonical header
+        # parser used by the auth gate instead.
+        tenant = resolve_tenant(bearer_credential(Headers(scope=scope))) or self._tenant
+        owner = _session_owner(Headers(scope=scope))
+        async with self._transport_session_lock:
+            self._prune_transport_sessions()
+            reserved = sum(
+                1 for session in self._transport_sessions.values() if session.tenant == tenant
+            )
+            pending = self._pending_transport_sessions.get(tenant, 0)
+            at_capacity = reserved + pending >= self._max_sessions
+            if not at_capacity:
+                self._pending_transport_sessions[tenant] = pending + 1
+        if at_capacity:
+            # Answered outside the lock: the refusal reads the request body.
+            await _reject_capacity(scope, receive, send)
+            return
+
         async def recording_send(message: Message) -> None:
             if message["type"] == "http.response.start":
                 for key, value in message.get("headers") or []:
                     if key.lower() == _SESSION_HEADER.encode():
-                        self._record_session_owner(value.decode("latin-1"), owner)
+                        self._record_session_owner(value.decode("latin-1"), owner, tenant=tenant)
             await send(message)
 
-        await self._session_manager.handle_request(scope, receive, recording_send)
+        try:
+            await self._session_manager.handle_request(scope, receive, recording_send)
+        finally:
+            async with self._transport_session_lock:
+                remaining = self._pending_transport_sessions.get(tenant, 1) - 1
+                if remaining:
+                    self._pending_transport_sessions[tenant] = remaining
+                else:
+                    self._pending_transport_sessions.pop(tenant, None)
 
-    def _record_session_owner(self, session_id: str, owner: str) -> None:
+    def _record_session_owner(self, session_id: str, owner: str, *, tenant: str) -> None:
         self._session_owners[session_id] = owner
+        self._transport_sessions[session_id] = _ReservedTransportSession(tenant, owner)
         if len(self._session_owners) <= _OWNER_PRUNE_THRESHOLD:
             return
         # Forget sessions the transport no longer has. Only ever drops ids the
@@ -643,6 +757,16 @@ class SentinelGateway:
         if isinstance(live, dict):
             for session in [s for s in self._session_owners if s not in live]:
                 del self._session_owners[session]
+                self._transport_sessions.pop(session, None)
+
+    def _prune_transport_sessions(self) -> None:
+        """Drop reservations only after the SDK has ended the transport session."""
+        live = getattr(self._session_manager, "_server_instances", None)
+        if not isinstance(live, dict):
+            return
+        for session_id in [sid for sid in self._transport_sessions if sid not in live]:
+            self._transport_sessions.pop(session_id, None)
+            self._session_owners.pop(session_id, None)
 
     async def _verify_catalogue(self) -> tuple[CatalogueFinding, ...]:
         """Re-check the live downstream against the catalogue pinned at connect.
@@ -679,9 +803,7 @@ class SentinelGateway:
             return list(self._cache)
 
         @front.call_tool()  # type: ignore[untyped-decorator]
-        async def _call_tool(
-            name: str, arguments: dict[str, object]
-        ) -> mcp_types.CallToolResult:
+        async def _call_tool(name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
             proxy = await self._proxy_for_current_session()
             if proxy is None:
                 # Fail closed at capacity (see _proxy_for_current_session). We
@@ -702,10 +824,11 @@ class SentinelGateway:
         session's first tool call, so each session is one trace with its own
         provenance frontier and trust.
 
-        Returns ``None`` (caller fails closed) when at capacity for a NEW session,
-        or when the session has been retired. A session that already has a proxy is
-        ALWAYS returned its own proxy — it is never replaced, so its provenance
-        frontier can never be silently reset.
+        Returns ``None`` (caller fails closed) when an unreserved in-process
+        caller is at capacity, or when the session has been retired. Wire sessions
+        reserve their tenant's capacity at initialize time. A session that already
+        has a proxy is ALWAYS returned its own proxy — it is never replaced, so
+        its provenance frontier can never be silently reset.
         """
         context = self._front.request_context
         request = getattr(context, "request", None)
@@ -716,7 +839,10 @@ class SentinelGateway:
         # constructor default stands, which is the single-tenant deployment.
         tenant = resolve_tenant(_credential(request)) or self._tenant
         return await self._proxy_for_session(
-            context.session, principal=_principal_id(request), tenant=tenant
+            context.session,
+            principal=_principal_id(request),
+            tenant=tenant,
+            transport_reserved=True,
         )
 
     async def _proxy_for_session(
@@ -725,6 +851,7 @@ class SentinelGateway:
         *,
         principal: str | None = None,
         tenant: str | None = None,
+        transport_reserved: bool = False,
     ) -> SentinelProxy | None:
         """:meth:`_proxy_for_current_session` with the inputs passed explicitly.
 
@@ -752,7 +879,12 @@ class SentinelGateway:
             # Capacity reached → fail CLOSED. We must NOT evict a live session to
             # make room: that would reset its frontier and let a tainted action
             # through on a fresh, clean proxy (provenance laundering).
-            if self.active_sessions >= self._max_sessions:
+            # Wire sessions reserve their tenant's slot at initialize time,
+            # before the SDK allocates its transport. Do not apply a second,
+            # global proxy-only cap here: it would reintroduce cross-tenant
+            # starvation when a tenant's accepted session makes its first tool
+            # call. The unreserved branch exists for in-process callers/tests.
+            if not transport_reserved and self.active_sessions >= self._max_sessions:
                 return None
             # Identity follows the AUTHENTICATED caller, so trust and quarantine
             # survive a reconnect. Keying on the connection instead — as a random
@@ -772,9 +904,7 @@ class SentinelGateway:
                 catalogue_gate=self._catalogue_refusal,
             )
             await proxy.start(user_input=_LIVE_USER_INPUT)
-            self._sessions[session] = _TrackedSession(
-                agent_id=agent_id, proxy=proxy, last_used=now
-            )
+            self._sessions[session] = _TrackedSession(agent_id=agent_id, proxy=proxy, last_used=now)
             # The run is in-flight only while the transport holds the session.
             # finalize() fires when the session is collected — the same moment
             # the WeakKeyDictionary entry disappears — so the run index stops

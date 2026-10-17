@@ -180,16 +180,22 @@ def _agent_row(settings: Settings) -> Capability:
 
 
 def _secrets_row() -> Capability:
-    vault = bool(os.environ.get("AZURE_KEY_VAULT_URI"))
+    vault_uri_is_unused = bool(os.environ.get("AZURE_KEY_VAULT_URI"))
     return Capability(
         key="secrets",
         name="Secret resolution",
         demo="Environment variables from the platform's secret store",
-        azure="Azure Key Vault + managed identity",
-        active="Azure Key Vault URI configured" if vault else "Environment variables",
-        degraded=not vault,
-        backend="key_vault" if vault else "environment",
-        cost=_PAID if vault else _FREE,
+        azure="Azure Key Vault + managed identity (not implemented)",
+        active=(
+            "Environment variables (AZURE_KEY_VAULT_URI is set but not consumed)"
+            if vault_uri_is_unused
+            else "Environment variables"
+        ),
+        # This process has no Key Vault client. A URI and an ACA role assignment
+        # must not be presented as proof that secrets are being resolved there.
+        degraded=True,
+        backend="environment",
+        cost=_FREE,
     )
 
 

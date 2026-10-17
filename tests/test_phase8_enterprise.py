@@ -154,6 +154,18 @@ def test_application_insights_is_never_reported_as_running() -> None:
     assert "not used" in str(row["active"])
 
 
+def test_key_vault_uri_is_never_reported_as_active_without_a_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured URI is not secret resolution; no Key Vault client exists."""
+    monkeypatch.setenv("AZURE_KEY_VAULT_URI", "https://vault.example")
+    row = _rows(mode_summary(Settings(demo_mode=False)))["secrets"]
+    assert row["backend"] == "environment"
+    assert row["cost"] == "free"
+    assert row["degraded"] is True
+    assert "not consumed" in str(row["active"])
+
+
 # --- audit endpoint: blocked attempts carry a classifier label ---------------
 
 async def test_audit_endpoint_classifies_blocked_attempts() -> None:

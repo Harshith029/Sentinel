@@ -25,6 +25,7 @@ another ``AgentDriver`` handed to the same orchestrator. It is intentionally NOT
 wired in DEMO MODE — it needs SENTINEL's MCP server exposed over a real HTTP
 transport plus a live Azure project; the stage demo stays on DEMO MODE.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,7 @@ from typing import Any, Final
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 from starlette.types import Receive, Scope, Send
@@ -46,7 +47,7 @@ from sentinel.authn import SESSION_COOKIE, auth_configured, is_admin, resolve_te
 from sentinel.authorization.policy import PolicyLoadError
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
-from sentinel.control.events import BroadcastEvent
+from sentinel.control.events import BroadcastEvent, EventCursorExpired
 from sentinel.control.limits import BodySizeLimit, RateLimit
 from sentinel.control.manager import RunManager, RunQuotaExceeded
 from sentinel.control.mcp_gateway import SentinelGateway
@@ -81,9 +82,13 @@ class CustomRunRequest(BaseModel):
     subject: str = "Forwarded as requested"
     include_record: bool = True
     record_id: int = 42
-    allowed_domains: list[str] = ["corp.example"]
     agent_id: str | None = None
     tenant: str = "default"
+
+    # The custom-run endpoint accepts an attack transcript, not policy changes.
+    # Reject obsolete/unknown fields (including ``allowed_domains``) rather than
+    # accepting them and risking confusion about what authorizes the run.
+    model_config = ConfigDict(extra="forbid")
 
 
 class PolicyReloadRequest(BaseModel):
@@ -99,8 +104,7 @@ def _serialize_replay(rep: TraceReplay) -> dict[str, Any]:
         "ordered": [span.model_dump(mode="json") for span in rep.ordered],
         "roots": [span.span_id for span in rep.roots],
         "children": {
-            parent_id: [child.span_id for child in kids]
-            for parent_id, kids in rep.children.items()
+            parent_id: [child.span_id for child in kids] for parent_id, kids in rep.children.items()
         },
     }
 
@@ -108,7 +112,12 @@ def _serialize_replay(rep: TraceReplay) -> dict[str, Any]:
 def _resolve_start_id(request: Request, last_event_id: int) -> int:
     """Last-Event-ID header (reconnect) wins over the query param."""
     header = request.headers.get("last-event-id")
-    if header is not None and header.lstrip("-").isdigit():
+    if header is not None:
+        if not header.isascii() or not header.isdecimal():
+            raise HTTPException(
+                status_code=422,
+                detail="Last-Event-ID must be a non-negative integer",
+            )
         return int(header)
     return last_event_id
 
@@ -313,22 +322,30 @@ def create_app(
         {} if demo else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     )
 
-    if gateway is not None:
-        gw = gateway  # non-None binding for the closure (mypy-narrowed)
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """Own the manager for every served app, not only the MCP variant.
 
-        @asynccontextmanager
-        async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-            async with gw:
+        Closing the manager checkpoints SQLite and drains ownership writes. The
+        old lifecycle only did this indirectly when an MCP gateway was enabled,
+        leaving the normal served control plane to exit with its WAL unwound.
+        """
+        try:
+            if gateway is None:
                 yield
+            else:
+                async with gateway:
+                    yield
+        finally:
+            await mgr.aclose()
 
-        app = FastAPI(title="SENTINEL control plane", lifespan=_lifespan, **docs)
-    else:
-        app = FastAPI(title="SENTINEL control plane", **docs)
+    app = FastAPI(title="SENTINEL control plane", lifespan=_lifespan, **docs)
 
     def require_demo() -> None:
         """Make a demo route indistinguishable from a missing one when off."""
         if not demo:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
     # Outermost last: the rate limiter refuses a flood before the body limiter
     # reads a byte, and both sit in front of every route AND the /mcp mount.
     app.add_middleware(BodySizeLimit)
@@ -342,6 +359,7 @@ def create_app(
             content={"detail": str(exc)},
             headers={"Retry-After": "5"},
         )
+
     app.state.gateway = gateway
 
     streams = _StreamSlots()
@@ -368,8 +386,7 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    f"credential authenticates as tenant {tenant!r}, "
-                    f"cannot act as {claimed!r}"
+                    f"credential authenticates as tenant {tenant!r}, cannot act as {claimed!r}"
                 ),
             )
         return tenant
@@ -417,16 +434,15 @@ def create_app(
         tenant = _scope(request)
         if tenant is None:
             return
-        if not any(
-            r.agent_id == agent_id and r.tenant == tenant for r in mgr.list_runs()
-        ):
+        if not any(r.agent_id == agent_id and r.tenant == tenant for r in mgr.list_runs()):
             raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
 
     @app.post("/runs", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def start_run(body: StartRunRequest, request: Request) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(
-                body.scenario, agent_id=body.agent_id,
+                body.scenario,
+                agent_id=body.agent_id,
                 tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
@@ -449,11 +465,11 @@ def create_app(
             subject=body.subject,
             include_record=body.include_record,
             record_id=body.record_id,
-            allowed_domains=tuple(body.allowed_domains),
         )
         try:
             record = mgr.start_custom(
-                spec, agent_id=body.agent_id,
+                spec,
+                agent_id=body.agent_id,
                 tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
@@ -475,7 +491,6 @@ def create_app(
             subject=body.subject,
             include_record=body.include_record,
             record_id=body.record_id,
-            allowed_domains=tuple(body.allowed_domains),
         )
         try:
             build = build_custom_scenario(spec)
@@ -492,7 +507,8 @@ def create_app(
             # tenant's attack runs landed in, and used up, the default tenant's
             # run quota.
             record = mgr.start_scenario(
-                scenario, agent_id=agent_id,
+                scenario,
+                agent_id=agent_id,
                 tenant=_effective_tenant(request, DEFAULT_TENANT),
             )
         except ValueError as exc:
@@ -518,9 +534,7 @@ def create_app(
         # cost paid once per process. Idempotent: a second call is a no-op.
         await mgr.restore_persisted_runs()
         tenant = _scope(request)
-        runs = [
-            r for r in mgr.list_runs() if tenant is None or r.tenant == tenant
-        ]
+        runs = [r for r in mgr.list_runs() if tenant is None or r.tenant == tenant]
         return {"runs": [r.to_payload() for r in runs]}
 
     @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
@@ -579,9 +593,7 @@ def create_app(
         return gateway.describe()
 
     @app.get("/runs/{run_id}/audit", dependencies=[Depends(require_auth)])
-    async def get_audit(
-        run_id: str, request: Request, format: str = "json"
-    ) -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
+    async def get_audit(run_id: str, request: Request, format: str = "json") -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
         """SOC/SIEM export; blocked attempts carry a classifier label.
 
         ``format=json`` (default): the {trace_id, alerts} object. ``format=jsonl``:
@@ -596,9 +608,7 @@ def create_app(
                 text,
                 media_type="application/x-ndjson",
                 headers={
-                    "Content-Disposition": (
-                        f'attachment; filename="sentinel-{run_id}.jsonl"'
-                    ),
+                    "Content-Disposition": (f'attachment; filename="sentinel-{run_id}.jsonl"'),
                 },
             )
         return {"trace_id": record.trace_id, "alerts": alerts}
@@ -645,7 +655,17 @@ def create_app(
         events: list[Any] = []
         scanned_to = since
         truncated = False
-        for event in mgr.bus.events_since(since):
+        try:
+            source_events = mgr.bus.events_since(since)
+        except EventCursorExpired as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "event cursor expired; reload a current dashboard snapshot",
+                    **exc.to_payload(),
+                },
+            ) from exc
+        for event in source_events:
             if len(events) >= page:
                 truncated = True
                 break
@@ -679,6 +699,20 @@ def create_app(
         start_id = _resolve_start_id(request, since)
         visible = _trace_filter(request)
 
+        # Validate before returning the streaming response so stale cursors get
+        # an ordinary actionable HTTP response rather than a successful stream
+        # that terminates without the history the caller asked for.
+        try:
+            mgr.bus.events_since(start_id)
+        except EventCursorExpired as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "event cursor expired; reload a current dashboard snapshot",
+                    **exc.to_payload(),
+                },
+            ) from exc
+
         def _matches(span_trace: str) -> bool:
             if not visible(span_trace):
                 return False
@@ -687,9 +721,18 @@ def create_app(
         async def publisher() -> AsyncIterator[ServerSentEvent]:
             if follow:
                 # subscribe() drains the buffer THEN tails live, with no gap.
-                async for event in mgr.bus.subscribe(start_id):
-                    if _matches(event.span.trace_id):
-                        yield _to_sse(event)
+                try:
+                    async for event in mgr.bus.subscribe(start_id):
+                        if _matches(event.span.trace_id):
+                            yield _to_sse(event)
+                except EventCursorExpired as exc:
+                    # A very active feed can roll the buffer after the response
+                    # was accepted but before this subscriber reacquires the
+                    # bus lock. End visibly; never skip the missing interval.
+                    yield ServerSentEvent(
+                        event="resync-required",
+                        data=json.dumps(exc.to_payload()),
+                    )
             else:
                 for event in mgr.bus.events_since(start_id):
                     if _matches(event.span.trace_id):
@@ -757,8 +800,10 @@ def create_app(
         # "authentication is disabled" and given no cookie at all.
         presented = request.state.credential
         response.set_cookie(
-            SESSION_COOKIE, presented,
-            httponly=True, samesite="strict",
+            SESSION_COOKIE,
+            presented,
+            httponly=True,
+            samesite="strict",
             secure=request.url.scheme == "https",
             max_age=_SESSION_MAX_AGE_SECONDS,
         )

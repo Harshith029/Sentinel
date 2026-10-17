@@ -297,7 +297,8 @@ async def test_dod16_every_decision_yields_complete_decision_span() -> None:
     assert isinstance(payload, AuthorizationDecided)
     assert payload.tool_name == "send_email"
     assert payload.decision == "DENY"
-    assert payload.policy_version == "3"
+    # The shipped policy's own version, not a literal that goes stale on a bump.
+    assert payload.policy_version == str(engine.policy_version)
     assert payload.is_tainted is True
     assert "RETRIEVED_CONTENT" in payload.effective_provenance
     assert payload.matched_rule_id == "block-untrusted-origin"

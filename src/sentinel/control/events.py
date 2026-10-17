@@ -14,6 +14,7 @@ between "drain the buffer" and "wait for the next one": the buffer snapshot and
 the wait happen under the same lock that :meth:`publish` holds, and a per-client
 cursor advances monotonically.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,6 +42,30 @@ class BroadcastEvent:
 
     def to_payload(self) -> dict[str, Any]:
         return {"event_id": self.event_id, "span": self.span.model_dump(mode="json")}
+
+
+class EventCursorExpired(ValueError):
+    """The requested resume point cannot be replayed without a gap."""
+
+    def __init__(
+        self, *, requested: int, earliest_available: int | None, latest_available: int
+    ) -> None:
+        self.requested = requested
+        self.earliest_available = earliest_available
+        self.latest_available = latest_available
+        if earliest_available is None:
+            detail = "the event stream has restarted"
+        else:
+            detail = f"events before {earliest_available} have expired from the buffer"
+        super().__init__(f"cannot resume after event {requested}: {detail}")
+
+    def to_payload(self) -> dict[str, int | None]:
+        """Machine-readable recovery information for poll and SSE clients."""
+        return {
+            "requested": self.requested,
+            "earliest_available": self.earliest_available,
+            "latest_available": self.latest_available,
+        }
 
 
 class EventBus:
@@ -77,8 +102,35 @@ class EventBus:
         buffer — up to 100 000 events — on every poll and every subscriber
         wake-up.
         """
+        self._assert_cursor_available(last_event_id)
         start = bisect.bisect_right(self._events, last_event_id, key=_event_id)
         return self._events[start:]
+
+    def _assert_cursor_available(self, last_event_id: int) -> None:
+        """Reject a stale/restarted cursor rather than silently dropping history.
+
+        ``0`` is the documented initial cursor and intentionally means “start
+        with whatever this process currently retains”. Any nonzero cursor makes
+        a continuity claim, which cannot be honoured after the buffer rolled or
+        after a process restart reset the counter.
+        """
+        if last_event_id == 0:
+            return
+        latest = self.last_event_id
+        if last_event_id > latest:
+            raise EventCursorExpired(
+                requested=last_event_id,
+                earliest_available=(self._events[0].event_id if self._events else None),
+                latest_available=latest,
+            )
+        if self._events:
+            earliest = self._events[0].event_id
+            if last_event_id < earliest - 1:
+                raise EventCursorExpired(
+                    requested=last_event_id,
+                    earliest_available=earliest,
+                    latest_available=latest,
+                )
 
     async def subscribe(self, last_event_id: int = 0) -> AsyncIterator[BroadcastEvent]:
         """Yield events after ``last_event_id`` — buffered first, then live, gap-free."""

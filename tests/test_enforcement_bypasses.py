@@ -14,6 +14,7 @@ Each of these was reproduced against the code before it was fixed:
 * F16: an exception other than ``ConditionError`` escaped the engine, so the
   call failed with no decision and no block in the forensic record.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,11 +48,15 @@ class _Downstream:
         self._results = results
         self.calls: list[tuple[str, dict[str, object]]] = []
 
-    async def call_tool(
-        self, name: str, arguments: dict[str, object]
-    ) -> mcp_types.CallToolResult:
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
         self.calls.append((name, arguments))
         return self._results.get(name) or _text("ok")
+
+
+class _FailingDownstream(_Downstream):
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
+        self.calls.append((name, arguments))
+        raise RuntimeError("downstream diagnostic containing a secret")
 
 
 def _text(*texts: str) -> mcp_types.CallToolResult:
@@ -73,9 +78,28 @@ def _proxy(
         scorer=TrustScorer(emitter, load_default_trust_config()),
         agent_id="bypass-test",
         trace_id=emitter.new_trace_id(),
-        authorization_config=engine.config,
     )
     return proxy, downstream, store
+
+
+async def test_downstream_failure_is_recorded_and_taints_the_session() -> None:
+    """A failed call cannot skip ToolExecuted and leave the next call clean."""
+    engine = AuthorizationEngine(load_default_policy())
+    proxy, _, store = _proxy(engine)
+    failing = _FailingDownstream({})
+    proxy._downstream = failing  # noqa: SLF001 - install the failure boundary under test
+    await proxy.start(user_input="look something up, then send it")
+
+    result = await proxy.handle_call("web_fetch", {"url": "https://corp.example"})
+    assert result.isError is True
+    assert "secret" not in result_text(result)
+
+    refused = await proxy.handle_call("send_email", {"to": "cfo@corp.example", "body": "summary"})
+    assert refused.isError is True
+    assert "block-untrusted-origin" in result_text(refused)
+
+    rep = await replay(store, proxy.trace_id)
+    assert any(span.event_type == "ToolExecuted" for span in rep.ordered)
 
 
 # --- F6: every recipient is checked --------------------------------------------
@@ -105,6 +129,14 @@ def test_recipient_domain_reflects_every_recipient(
 def test_an_agent_cannot_supply_the_derived_field_without_a_recipient() -> None:
     normalized = default_normalize({"recipient_domain": "corp.example", "body": "x"})
     assert "recipient_domain" not in normalized  # so an allowlist rule fails closed
+
+
+def test_url_host_is_derived_from_the_url_not_claimed_by_the_agent() -> None:
+    normalized = default_normalize({"url": "https://evil.test/a", "url_host": "corp.example"})
+    assert normalized["url_host"] == "evil.test"
+
+    malformed = default_normalize({"url": "file:///etc/passwd"})
+    assert malformed["url_host"] == "<unparseable-url>"
 
 
 async def test_a_hidden_second_recipient_is_not_delivered() -> None:
@@ -190,9 +222,7 @@ async def test_a_result_with_non_text_content_is_never_declassified() -> None:
             mcp_types.TextContent(type="text", text="42"),
             mcp_types.EmbeddedResource(
                 type="resource",
-                resource=mcp_types.TextResourceContents(
-                    uri="file:///note.txt", text=_INJECTION
-                ),
+                resource=mcp_types.TextResourceContents(uri="file:///note.txt", text=_INJECTION),
             ),
         ],
         isError=False,
@@ -215,9 +245,7 @@ async def test_a_result_with_non_text_content_is_never_declassified() -> None:
 async def test_structured_content_is_never_declassified() -> None:
     structured = _text("42")
     structured.structuredContent = {"price": 42, "note": _INJECTION}
-    proxy, _, _ = _proxy(
-        AuthorizationEngine(load_policy(DECLASSIFY)), {"read_price": structured}
-    )
+    proxy, _, _ = _proxy(AuthorizationEngine(load_policy(DECLASSIFY)), {"read_price": structured})
     await proxy.start(user_input="pay the quoted price")
     await proxy.handle_call("read_price", {})
     assert (await proxy.handle_call("pay", {"amount": "42"})).isError is True
@@ -230,9 +258,7 @@ async def test_the_agent_receives_exactly_the_declassified_value() -> None:
     await proxy.start(user_input="pay the quoted price")
 
     priced = await proxy.handle_call("read_price", {})
-    assert [b.text for b in priced.content if isinstance(b, mcp_types.TextContent)] == [
-        "42.50"
-    ]
+    assert [b.text for b in priced.content if isinstance(b, mcp_types.TextContent)] == ["42.50"]
     assert (await proxy.handle_call("pay", {"amount": "42.50"})).isError is False
 
 
@@ -246,12 +272,16 @@ def test_an_unexpected_evaluation_error_is_a_recorded_deny(amount: object) -> No
             "policy_version: 1\n"
             "config:\n  max_amount: 1000\n"
             "tools:\n  pay:\n    rules:\n"
-            "      - id: cap\n        deny_if: \"amount >= max_amount\"\n"
+            '      - id: cap\n        deny_if: "amount >= max_amount"\n'
         )
     )
     decision = engine.authorize(
-        ToolCall(name="pay", arguments={"amount": amount},
-                 provenance=frozenset({USER}), config=engine.config)
+        ToolCall(
+            name="pay",
+            arguments={"amount": amount},
+            provenance=frozenset({USER}),
+            config=engine.config,
+        )
     )
     assert decision.decision == "DENY"
     assert decision.matched_rule_id == "cap"

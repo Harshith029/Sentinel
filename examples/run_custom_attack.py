@@ -32,6 +32,28 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
+
+
+def _control_url(base: str, path: str) -> str:
+    """Return a same-origin control-plane URL from a deliberately narrow base."""
+    try:
+        parsed = urlsplit(base)
+        # Accessing port also validates malformed port text such as ``:not-a-port``.
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("--base must be an absolute HTTP(S) control-plane URL") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("--base must be an origin-only HTTP(S) control-plane URL")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
 def _post_json(
@@ -40,17 +62,19 @@ def _post_json(
     headers = {"content-type": "application/json"}
     if token:
         headers["authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(
-        base + path, data=json.dumps(body).encode("utf-8"),
+    req = urllib.request.Request(  # noqa: S310 -- _control_url admits only HTTP(S).
+        _control_url(base, path), data=json.dumps(body).encode("utf-8"),
         headers=headers, method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 -- URL above is validated.
         return json.load(resp)
 
 
 def _get_json(base: str, path: str) -> dict[str, object]:
-    req = urllib.request.Request(base + path, method="GET")
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    req = urllib.request.Request(  # noqa: S310 -- _control_url admits only HTTP(S).
+        _control_url(base, path), method="GET"
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 -- URL above is validated.
         return json.load(resp)
 
 
@@ -78,8 +102,6 @@ def main() -> int:
                         help="recipient of the attempted exfiltration")
     parser.add_argument("--no-record", action="store_true",
                         help="omit the get_customer_record step from the transcript")
-    parser.add_argument("--allowed-domains", default="corp.example",
-                        help="comma-separated allow-list passed into the policy")
     args = parser.parse_args()
 
     token = os.environ.get("SENTINEL_API_TOKEN") or None
@@ -89,7 +111,6 @@ def main() -> int:
         "poisoned_content": args.poisoned_content,
         "attacker": args.attacker,
         "include_record": not args.no_record,
-        "allowed_domains": [d.strip() for d in args.allowed_domains.split(",") if d.strip()],
     }
 
     try:

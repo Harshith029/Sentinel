@@ -2,7 +2,7 @@
 
 A policy is YAML::
 
-    policy_version: 3
+    policy_version: 4
     tools:
       send_email:
         rules:
@@ -22,6 +22,7 @@ problem raises :class:`PolicyLoadError` at load time — never at evaluation tim
 The compiled form (:class:`CompiledPolicy`) carries the parsed AST so the engine
 never re-parses or sees raw strings.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -31,6 +32,9 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
 
 from sentinel.authorization.ast import Predicate
 from sentinel.authorization.parser import PolicyParseError, parse_condition
@@ -39,6 +43,32 @@ from sentinel.provenance.sanitizer import schema_names
 
 class PolicyLoadError(ValueError):
     """Raised for any malformed policy — bad structure, shape, or predicate."""
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that refuses a duplicate key at every mapping level."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: MappingNode, deep: bool = False
+) -> dict[object, object]:
+    """Build one YAML mapping without silently replacing an earlier value."""
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
 
 
 class _RuleDoc(BaseModel):
@@ -54,8 +84,7 @@ class _RuleDoc(BaseModel):
         has_always = self.deny_always is not None
         if has_if == has_always:
             raise ValueError(
-                f"rule {self.id!r} must declare exactly one of "
-                "'deny_if' or 'deny_always'"
+                f"rule {self.id!r} must declare exactly one of 'deny_if' or 'deny_always'"
             )
         if has_always and self.deny_always is not True:
             raise ValueError(
@@ -153,20 +182,14 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
         compiled: list[CompiledRule] = []
         for rule in tool_doc.rules:
             if rule.deny_always:
-                compiled.append(
-                    CompiledRule(id=rule.id, deny_always=True, condition=None)
-                )
+                compiled.append(CompiledRule(id=rule.id, deny_always=True, condition=None))
             else:
                 assert rule.deny_if is not None  # guaranteed by _RuleDoc validator
                 try:
                     condition = parse_condition(rule.deny_if)
                 except PolicyParseError as exc:
-                    raise PolicyLoadError(
-                        f"tool {tool_name!r} rule {rule.id!r}: {exc}"
-                    ) from exc
-                compiled.append(
-                    CompiledRule(id=rule.id, deny_always=False, condition=condition)
-                )
+                    raise PolicyLoadError(f"tool {tool_name!r} rule {rule.id!r}: {exc}") from exc
+                compiled.append(CompiledRule(id=rule.id, deny_always=False, condition=condition))
         tools[tool_name] = tuple(compiled)
     return CompiledPolicy(
         policy_version=doc.policy_version,
@@ -179,7 +202,9 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
 def load_policy(text: str) -> CompiledPolicy:
     """Parse + validate + compile a policy from YAML text (raises on malformed)."""
     try:
-        data: Any = yaml.safe_load(text)
+        # _UniqueKeyLoader inherits SafeLoader; the custom mapping constructor
+        # only adds duplicate-key rejection.
+        data: Any = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506
     except yaml.YAMLError as exc:
         raise PolicyLoadError(f"invalid YAML: {exc}") from exc
     if not isinstance(data, dict):

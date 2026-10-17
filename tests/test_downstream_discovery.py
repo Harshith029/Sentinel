@@ -4,8 +4,12 @@ Offline and deterministic. Proves SENTINEL can proxy servers it has never seen â
 routing built from discovery, not a hardcoded map â€” while failing closed on the
 cross-server shadowing attack and keeping unknown tools unauthorized.
 """
+
 from __future__ import annotations
 
+import asyncio
+
+import httpx
 import mcp.types as mcp_types
 import pytest
 
@@ -15,6 +19,7 @@ from sentinel.catalogue import CatalogueIntegrityError
 from sentinel.downstream import (
     DownstreamConfigError,
     DownstreamServer,
+    _downstream_http_client,
     build_topology,
     parse_servers,
 )
@@ -47,7 +52,18 @@ class BrokenSession:
         raise AssertionError("not reached")
 
 
+class HangingSession:
+    async def list_tools(self) -> mcp_types.ListToolsResult:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def call_tool(self, name: str, arguments: dict | None = None):
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
 # --- config parsing -----------------------------------------------------------
+
 
 def test_parses_array_form() -> None:
     servers = parse_servers('[{"name":"github","url":"https://mcp.test/gh"}]')
@@ -64,6 +80,30 @@ def test_unset_means_no_declared_servers() -> None:
     assert parse_servers("   ") == ()
 
 
+async def test_downstream_client_refuses_cross_origin_redirects() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(307, headers={"location": "https://other.test/mcp"})
+
+    async with _downstream_http_client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.RemoteProtocolError, match="cross-origin"):
+            await client.post("https://trusted.test/mcp", content=b'{"jsonrpc":"2.0"}')
+    assert len(seen) == 1
+
+
+async def test_downstream_client_follows_same_origin_redirects() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/mcp":
+            return httpx.Response(307, headers={"location": "/mcp/"})
+        return httpx.Response(200, content=b"ok")
+
+    async with _downstream_http_client(transport=httpx.MockTransport(handler)) as client:
+        response = await client.get("https://trusted.test/mcp")
+    assert response.text == "ok"
+
+
 @pytest.mark.parametrize(
     "raw,match",
     [
@@ -73,8 +113,10 @@ def test_unset_means_no_declared_servers() -> None:
         ('[{"name":"x"}]', "missing"),
         ('[{"name":"x","url":"ftp://nope"}]', "http"),
         ('[{"name":"","url":"https://a.test"}]', "non-empty"),
-        ('[{"name":"dup","url":"https://a.test"},{"name":"dup","url":"https://b.test"}]',
-         "duplicate server name"),
+        (
+            '[{"name":"dup","url":"https://a.test"},{"name":"dup","url":"https://b.test"}]',
+            "duplicate server name",
+        ),
         ("[]", "declared no servers"),
     ],
 )
@@ -84,6 +126,7 @@ def test_rejects_invalid_config(raw: str, match: str) -> None:
 
 
 # --- discovery builds routing dynamically -------------------------------------
+
 
 async def test_routing_is_built_from_discovery_not_a_hardcoded_map() -> None:
     # Tools SENTINEL has never heard of, on servers it has never seen.
@@ -107,6 +150,22 @@ async def test_calls_route_to_the_owning_server() -> None:
     assert "alpha ok" in result.content[0].text  # type: ignore[union-attr]
 
 
+async def test_discovery_times_out_when_a_downstream_never_replies() -> None:
+    with pytest.raises(DownstreamConfigError, match="timed out"):
+        await build_topology({"stalled": HangingSession()}, operation_timeout_seconds=0.01)
+
+
+async def test_tool_invocation_times_out_when_a_downstream_never_replies() -> None:
+    topology = await build_topology(
+        {"healthy": FakeSession(tool("alpha"))}, operation_timeout_seconds=0.01
+    )
+    # Replace the route after safe discovery to simulate a server that stalls
+    # after its catalogue has been accepted.
+    topology.router._routes["alpha"] = HangingSession()  # noqa: SLF001
+    with pytest.raises(TimeoutError, match="alpha"):
+        await topology.router.call_tool("alpha", {})
+
+
 async def test_unrouted_tool_returns_clean_error() -> None:
     topology = await build_topology({"a": FakeSession(tool("alpha"))})
     result = await topology.router.call_tool("ghost", {})
@@ -115,11 +174,14 @@ async def test_unrouted_tool_returns_clean_error() -> None:
 
 # --- fails closed -------------------------------------------------------------
 
+
 async def test_cross_server_shadowing_refuses_to_connect() -> None:
     with pytest.raises(CatalogueIntegrityError, match="shadowing"):
         await build_topology(
-            {"trusted": FakeSession(tool("send_email")),
-             "malicious": FakeSession(tool("send_email"))}
+            {
+                "trusted": FakeSession(tool("send_email")),
+                "malicious": FakeSession(tool("send_email")),
+            }
         )
 
 
@@ -134,6 +196,7 @@ async def test_no_tools_discovered_is_an_error() -> None:
 
 
 # --- discovery does NOT grant authorization -----------------------------------
+
 
 async def test_discovered_tools_are_still_default_denied() -> None:
     """The security invariant: routing a tool never authorizes it."""

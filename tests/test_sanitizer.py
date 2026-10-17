@@ -4,6 +4,8 @@ from __future__ import annotations
 import itertools
 from decimal import Decimal
 
+import pytest
+
 from sentinel.provenance.graph import ProvenanceGraph
 from sentinel.provenance.model import ProvenanceNode
 from sentinel.provenance.sanitizer import (
@@ -86,3 +88,21 @@ def test_iso_date_schema() -> None:
     assert schema.extract("not-a-date") is None
     assert schema.extract("2026-13-40") is None
     assert schema.extract(20260529) is None  # not a string
+
+
+@pytest.mark.parametrize("text", ["20261018", "2026-W42-1"], ids=["basic-format", "iso-week"])
+def test_iso_date_means_yyyy_mm_dd_only(text: str) -> None:
+    """date.fromisoformat accepts these since 3.11; the schema promised one form."""
+    assert IsoDateSchema().extract(text) is None
+    assert IsoDateSchema().extract("2026-10-18") is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["1_000", "1e9999", "٣٣", "1" * 19],
+    ids=["underscore", "exponent", "arabic-indic-digits", "too-many-digits"],
+)
+def test_decimal_amount_is_plain_ascii_notation(text: str) -> None:
+    """Decimal() takes all of these; a value about to be trusted should not."""
+    assert DecimalAmountSchema().extract(text) is None
+    assert DecimalAmountSchema().extract(" 42.50 ") is not None

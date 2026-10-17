@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- Declassification schemas are strict. `iso_date` takes `YYYY-MM-DD` only
+  (`date.fromisoformat` also took `20261018` and ISO week dates), and
+  `decimal_amount` takes plain ASCII notation up to 18 digits each side of
+  the point (`1_000`, `1e9999` and non-ASCII digits were accepted).
 - `TrustScorer(...)` records quarantine by default (`enforce=False`), as the
   service and the scorer's own documentation already did. It enforced by
   default, so the standalone demo enforced while the dashboard did not; the

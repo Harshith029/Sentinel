@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- `TrustScorer(...)` records quarantine by default (`enforce=False`), as the
+  service and the scorer's own documentation already did. It enforced by
+  default, so the standalone demo enforced while the dashboard did not; the
+  trust-collapse demo now asks for enforcement explicitly.
 - `sentinel.yaml` rejects unknown keys (a misspelt key was ignored), and
   booleans must be booleans: the quoted string `"false"` used to mean on.
   An environment variable that is set but empty no longer masks the file's
@@ -68,6 +72,11 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- Trust state is keyed by a `(tenant, agent)` pair. The joined
+  `tenant<US>agent` string let names containing the separator collide.
+- Cancelling a caller no longer releases the SQLite store's lock while its
+  thread is still using the connection, and spans are written with a plain
+  `INSERT` rather than `INSERT OR REPLACE`.
 - `structuredContent` counts toward `SENTINEL_MAX_RESULT_BYTES`; it reached
   the agent outside the cap.
 - A proxy session can be started once. A second `start()` reset the lineage
@@ -148,6 +157,14 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Live MCP sessions no longer count against `SENTINEL_MAX_ACTIVE_RUNS`; with
+  eight agents connected a tenant could not start a scenario. The gateway caps
+  sessions itself.
+- A run cancelled at shutdown is marked failed; it stayed `running`.
+- Retention purges ownership rows for runs that never wrote a span.
+- Trust state is capped at 10,000 agents, evicting the least recently used and
+  never one that crossed the threshold. The emitter frees a trace's sequence
+  counter when its run or session ends. Both grew for the life of the process.
 - `sentinel scaffold` kept a long tool name with spaces on one line; PyYAML
   folded it at 80 characters and the generated policy did not load.
 - `sentinel init`'s "this file could be committed" check looked at

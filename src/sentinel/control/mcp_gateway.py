@@ -957,7 +957,7 @@ class SentinelGateway:
             # showing disconnected agents as permanently running. It captures
             # the trace id, never the session, or it would keep alive the very
             # object whose death it waits for.
-            weakref.finalize(session, self._manager.finish_live_run, proxy.trace_id)
+            weakref.finalize(session, self._manager.release_live_run, proxy.trace_id)
             return proxy
 
     def _no_proxy_message(self, session: object) -> str:

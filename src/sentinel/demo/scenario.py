@@ -236,14 +236,27 @@ async def run_privilege_violation(*, demo_mode: bool = True) -> DemoResult:
     )
 
 
-async def run_trust_collapse(*, attempts: int = 5, demo_mode: bool = True) -> DemoResult:
-    """Attack 3 — trust collapse: repeated blocked calls → quarantine → refusals."""
+async def run_trust_collapse(
+    *, attempts: int = 5, demo_mode: bool = True, enforce: bool = True
+) -> DemoResult:
+    """Attack 3 — trust collapse: repeated blocked calls → quarantine → refusals.
+
+    Runs with quarantine ENFORCED, which a deployment opts into with
+    SENTINEL_ENFORCE_QUARANTINE=1; by default the crossing is only recorded.
+    It used to get enforcement from the scorer's default, so this standalone
+    run enforced while the same scenario on the dashboard did not.
+    """
+    store = InMemoryForensicStore()
+    emitter = SpanEmitter(store)
     return await run_demo_session(
         ScriptedAgentDriver(
             [ToolInvocation(tool="delete_record", arguments={"id": i}) for i in range(attempts)]
         ),
         user_input="Bulk-delete the records.",
         demo_mode=demo_mode,
+        store=store,
+        emitter=emitter,
+        scorer=TrustScorer(emitter, load_default_trust_config(), enforce=enforce),
     )
 
 

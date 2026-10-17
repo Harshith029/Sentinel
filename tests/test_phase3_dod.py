@@ -61,7 +61,7 @@ async def test_dod_baseline_then_burst_trajectory_and_quarantine() -> None:
     cfg = load_default_trust_config()
     store = InMemoryForensicStore()
     emitter = SpanEmitter(store)
-    scorer = TrustScorer(emitter, cfg)
+    scorer = TrustScorer(emitter, cfg, enforce=True)
     tid = emitter.new_trace_id()
     agent = "agent-1"
 
@@ -143,7 +143,7 @@ async def test_dod_concurrent_updates_have_no_lost_updates() -> None:
     )
     store = InMemoryForensicStore()
     emitter = SpanEmitter(_SlowStore(store))
-    scorer = TrustScorer(emitter, cfg)
+    scorer = TrustScorer(emitter, cfg, enforce=True)
     tid = emitter.new_trace_id()
     agent = "racer"
     n = 25
@@ -174,7 +174,7 @@ async def test_dod_independent_agents_score_separately() -> None:
     cfg = load_default_trust_config()
     store = InMemoryForensicStore()
     emitter = SpanEmitter(_SlowStore(store))
-    scorer = TrustScorer(emitter, cfg)
+    scorer = TrustScorer(emitter, cfg, enforce=True)
     tid = emitter.new_trace_id()
 
     await asyncio.gather(

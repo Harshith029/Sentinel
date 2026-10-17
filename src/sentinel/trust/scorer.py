@@ -45,7 +45,7 @@ This is anomaly telemetry + containment, NOT primary prevention — Authorizatio
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -103,6 +103,10 @@ def transition_penalty(stats: TransitionStats, max_penalty: float) -> float:
     return max_penalty * max(0.0, 1.0 - stats.relative)
 
 
+# Per-agent trust states kept in memory (see TrustScorer._evict_stale).
+_MAX_TRACKED_AGENTS: Final[int] = 10_000
+
+
 @dataclass
 class _AgentState:
     score: float
@@ -113,7 +117,13 @@ class _AgentState:
     reported_crossing: bool = False
 
 
-def _key(agent_id: str, tenant: str | None) -> str:
+# (tenant, agent id). A tuple, not a separator-joined string: with
+# "tenant<US>agent", a tenant or agent id containing the separator could name
+# another pair's state.
+_Key = tuple[str | None, str]
+
+
+def _key(agent_id: str, tenant: str | None) -> _Key:
     """Where an agent's trust state lives: per (tenant, agent).
 
     Keyed by agent alone, two tenants that used the same agent id shared one
@@ -122,7 +132,7 @@ def _key(agent_id: str, tenant: str | None) -> str:
     choose them for demo runs, and they appear in logs and exports. Without a
     tenant (direct use of the scorer), the agent id alone is the key.
     """
-    return agent_id if tenant is None else f"{tenant}\x1f{agent_id}"
+    return (tenant, agent_id)
 
 
 def _clamp(value: float) -> float:
@@ -133,14 +143,21 @@ class TrustScorer:
     """Per-agent trust scoring with serialized updates and quarantine."""
 
     def __init__(
-        self, emitter: SpanEmitter, config: TrustConfig, *, enforce: bool = True
+        self,
+        emitter: SpanEmitter,
+        config: TrustConfig,
+        *,
+        enforce: bool = False,
+        max_agents: int = _MAX_TRACKED_AGENTS,
     ) -> None:
         self._emitter = emitter
         self._config = config
         # Whether crossing the threshold isolates the agent, or is only recorded.
         self._enforce = enforce
-        self._agents: dict[str, _AgentState] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        # Least recently used first, so the cap below evicts the stalest state.
+        self._agents: OrderedDict[_Key, _AgentState] = OrderedDict()
+        self._locks: dict[_Key, asyncio.Lock] = {}
+        self._max_agents = max_agents
 
     @property
     def enforces_quarantine(self) -> bool:
@@ -176,11 +193,11 @@ class TrustScorer:
 
     # --- internal helpers ----------------------------------------------------
 
-    def _lock(self, key: str) -> asyncio.Lock:
+    def _lock(self, key: _Key) -> asyncio.Lock:
         # setdefault is a single, await-free dict op → atomic within the loop.
         return self._locks.setdefault(key, asyncio.Lock())
 
-    def _state(self, key: str) -> _AgentState:
+    def _state(self, key: _Key) -> _AgentState:
         state = self._agents.get(key)
         if state is None:
             state = _AgentState(
@@ -188,7 +205,33 @@ class TrustScorer:
                 transitions=deque(maxlen=self._config.window_size),
             )
             self._agents[key] = state
+            self._evict_stale()
+        else:
+            self._agents.move_to_end(key)
         return state
+
+    def _evict_stale(self) -> None:
+        """Keep at most ``max_agents`` states, dropping the least recently used.
+
+        State used to live for the life of the process, and demo runs and
+        anonymous sessions each bring a new agent id. Never evicted: an agent
+        that crossed the threshold (dropping it would hand back a clean score,
+        and with enforcement on, lift its quarantine) or one with an update in
+        flight.
+        """
+        excess = len(self._agents) - self._max_agents
+        if excess <= 0:
+            return
+        for key in list(self._agents):
+            if excess <= 0:
+                break
+            state = self._agents[key]
+            lock = self._locks.get(key)
+            if state.reported_crossing or state.quarantined or (lock is not None and lock.locked()):
+                continue
+            del self._agents[key]
+            self._locks.pop(key, None)
+            excess -= 1
 
     async def _maybe_quarantine(
         self, state: _AgentState, agent_id: str, trace_id: str, parent_span_id: str | None

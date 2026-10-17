@@ -87,6 +87,15 @@ class SpanEmitter:
         await self._store.put(span)
         return span
 
+    def forget(self, trace_id: str) -> None:
+        """Drop ``trace_id``'s sequence counter once it can emit nothing more.
+
+        The table used to keep one entry per trace for the life of the process.
+        Calling this while the trace is still live would restart its seq at 0,
+        so callers do it only when the run or session is over.
+        """
+        self._next_seq.pop(trace_id, None)
+
     def peek_next_seq(self, trace_id: str) -> int:
         """Return the seq the next :meth:`emit` would assign for ``trace_id``.
 

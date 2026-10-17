@@ -23,9 +23,10 @@ import json
 import logging
 import sqlite3
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Final, Protocol, TypeVar, runtime_checkable
 
 from sentinel.forensics.span import Span
 
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
     from azure.cosmos.aio import ContainerProxy
 
     from sentinel.config import Settings
+
+_T = TypeVar("_T")
 
 _DEFAULT_MAX_TRACES: Final[int] = 1024
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.forensics.store")
@@ -297,10 +300,33 @@ class SqliteForensicStore:
             ")"
         )
 
+    async def _locked(self, fn: Callable[..., _T], *args: object) -> _T:
+        """Run one blocking SQLite operation in a thread, holding the store lock.
+
+        The lock is held until the THREAD finishes, even when the caller is
+        cancelled. A plain ``async with lock: await to_thread(...)`` released it
+        on cancellation while the thread went on using the connection, so the
+        next operation ran beside it, and a write the caller believed abandoned
+        still landed.
+        """
+        async with self._lock:
+            work = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+            cancelled = False
+            while True:
+                try:
+                    result = await asyncio.shield(work)
+                    break
+                except asyncio.CancelledError:
+                    if work.done():
+                        raise
+                    cancelled = True  # keep holding the lock; the thread is still running
+            if cancelled:
+                raise asyncio.CancelledError
+            return result
+
     async def put(self, span: Span) -> None:
         body = json.dumps(span.model_dump(mode="json"))
-        async with self._lock:
-            await asyncio.to_thread(self._put_blocking, span, body)
+        await self._locked(self._put_blocking, span, body)
 
     def _put_blocking(self, span: Span, body: str) -> None:
         row = self._conn.execute(
@@ -310,15 +336,15 @@ class SqliteForensicStore:
             existing = Span.model_validate(json.loads(row[0]))
             if _ensure_no_conflict(existing, span):
                 return  # identical content — idempotent no-op
+        # Plain INSERT: the check above already refused a conflicting span, and
+        # OR REPLACE would let anything that slipped past it overwrite evidence.
         self._conn.execute(
-            "INSERT OR REPLACE INTO spans (trace_id, span_id, seq, body) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO spans (trace_id, span_id, seq, body) VALUES (?, ?, ?, ?)",
             (span.trace_id, span.span_id, span.seq, body),
         )
 
     async def get_spans(self, trace_id: str) -> list[Span]:
-        async with self._lock:
-            rows = await asyncio.to_thread(self._read_blocking, trace_id)
+        rows = await self._locked(self._read_blocking, trace_id)
         return [Span.model_validate(json.loads(b)) for b in rows]
 
     def _read_blocking(self, trace_id: str) -> list[str]:
@@ -335,8 +361,7 @@ class SqliteForensicStore:
         cannot offer it without state — but the control plane uses it to rebuild
         the run index after a restart.
         """
-        async with self._lock:
-            return await asyncio.to_thread(self._list_traces_blocking)
+        return await self._locked(self._list_traces_blocking)
 
     def _list_traces_blocking(self) -> list[str]:
         # Ordered by each trace's newest span. This used to order by MAX(seq),
@@ -352,22 +377,20 @@ class SqliteForensicStore:
         self, trace_id: str, *, tenant: str, agent_id: str, scenario: str
     ) -> None:
         """Record who a trace belongs to. First write wins: ownership is immutable."""
-        async with self._lock:
-            await asyncio.to_thread(
-                self._conn.execute,
-                "INSERT OR IGNORE INTO runs (trace_id, tenant, agent_id, scenario) "
-                "VALUES (?, ?, ?, ?)",
-                (trace_id, tenant, agent_id, scenario),
-            )
+        await self._locked(
+            self._conn.execute,
+            "INSERT OR IGNORE INTO runs (trace_id, tenant, agent_id, scenario) "
+            "VALUES (?, ?, ?, ?)",
+            (trace_id, tenant, agent_id, scenario),
+        )
 
     async def run_owners(self) -> dict[str, tuple[str, str, str]]:
         """``{trace_id: (tenant, agent_id, scenario)}`` for every recorded run."""
-        async with self._lock:
-            rows = await asyncio.to_thread(
-                lambda: self._conn.execute(
-                    "SELECT trace_id, tenant, agent_id, scenario FROM runs"
-                ).fetchall()
-            )
+        rows = await self._locked(
+            lambda: self._conn.execute(
+                "SELECT trace_id, tenant, agent_id, scenario FROM runs"
+            ).fetchall()
+        )
         return {row[0]: (row[1], row[2], row[3]) for row in rows}
 
     async def purge_older_than(
@@ -379,8 +402,7 @@ class SqliteForensicStore:
         story than the one recorded. ``keep`` protects traces still in use.
         Returns the trace ids removed.
         """
-        async with self._lock:
-            return await asyncio.to_thread(self._purge_blocking, cutoff, keep)
+        return await self._locked(self._purge_blocking, cutoff, keep)
 
     def _purge_blocking(self, cutoff: datetime, keep: frozenset[str]) -> list[str]:
         stamp = cutoff.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -390,10 +412,21 @@ class SqliteForensicStore:
             (stamp,),
         ).fetchall()
         doomed = [row[0] for row in rows if row[0] not in keep]
-        if not doomed:
+        # Ownership rows for runs that never wrote a span (one that failed at
+        # once, say) had no span to age out with, so they were kept forever.
+        orphans = [
+            row[0]
+            for row in self._conn.execute(
+                "SELECT trace_id FROM runs WHERE trace_id NOT IN (SELECT trace_id FROM spans)"
+            ).fetchall()
+            if row[0] not in keep
+        ]
+        if not doomed and not orphans:
             return []
         self._conn.execute("BEGIN")
         try:
+            for trace_id in orphans:
+                self._conn.execute("DELETE FROM runs WHERE trace_id = ?", (trace_id,))
             for trace_id in doomed:
                 self._conn.execute("DELETE FROM spans WHERE trace_id = ?", (trace_id,))
                 self._conn.execute("DELETE FROM runs WHERE trace_id = ?", (trace_id,))

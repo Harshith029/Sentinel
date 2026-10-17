@@ -400,3 +400,43 @@ def test_a_malformed_limit_is_an_error_not_a_silent_default() -> None:
     finally:
         os.environ.pop("SENTINEL_MAX_BODY_BYTES", None)
         reset_settings_cache()
+
+
+async def test_connected_mcp_agents_do_not_use_up_the_scenario_quota() -> None:
+    """Live sessions are runs too, and counted here they locked scenarios out."""
+    async with _client(SENTINEL_MAX_ACTIVE_RUNS="2") as (client, manager, _app):
+        for i in range(2):  # two agents connected over /mcp
+            manager._runs[f"live{i}"] = RunRecord(  # noqa: SLF001
+                run_id=f"live{i}",
+                trace_id=f"live{i}",
+                agent_id="a",
+                scenario="live-mcp",
+                tenant="acme",
+                status="running",
+            )
+        started = await client.post("/runs", json={"scenario": "hero-obvious", "tenant": "acme"})
+        assert started.status_code == 200, started.text
+        await manager.join(started.json()["trace_id"])
+        for i in range(2):
+            manager._runs[f"live{i}"].status = "completed"  # noqa: SLF001
+
+
+async def test_runs_cut_short_by_shutdown_are_not_left_running() -> None:
+    """CancelledError is a BaseException; `except Exception` left them "running"."""
+    manager = RunManager(store=InMemoryForensicStore())
+    records = [manager.start_scenario("hero-obvious") for _ in range(3)]
+    await manager.aclose()
+    assert all(r.status != "running" for r in records), [r.status for r in records]
+    assert all(r.error for r in records if r.status == "failed")
+
+
+async def test_a_finished_run_releases_its_sequence_counter() -> None:
+    """The emitter kept one counter per trace for the life of the process."""
+    manager = RunManager(store=InMemoryForensicStore())
+    try:
+        record = manager.start_scenario("hero-obvious")
+        await manager.join(record.trace_id)
+        await asyncio.sleep(0)  # let the done-callback run
+        assert record.trace_id not in manager._emitter._next_seq  # noqa: SLF001
+    finally:
+        await manager.aclose()

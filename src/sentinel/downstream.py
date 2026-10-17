@@ -40,9 +40,11 @@ import httpx
 import mcp.types as mcp_types
 
 from sentinel.catalogue import CatalogueIntegrityError, detect_shadowing
+from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.router import (
     DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
     ToolRouter,
+    list_all_tools,
 )
 
 
@@ -108,12 +110,36 @@ class DownstreamTopology:
     def tool_names(self) -> frozenset[str]:
         return frozenset(t.name for t in self.tools)
 
+    def discovered(self) -> DiscoveredCatalogue:
+        """The catalogue routes were built from, for preflight to approve.
+
+        Preflight used to list the servers again, so the routes and the
+        approved definitions came from two different fetches: a tool could be
+        approved from one server's listing and routed to another's.
+        """
+        return DiscoveredCatalogue(self.tools)
+
     def server_of(self, tool_name: str) -> str | None:
         """Which declared server owns ``tool_name`` (for forensics/debugging)."""
         for server, tools in self.catalogues.items():
             if any(t.name == tool_name for t in tools):
                 return server
         return None
+
+
+@dataclass(frozen=True)
+class DiscoveredCatalogue:
+    """A fixed catalogue served through the ``list_tools`` surface preflight reads."""
+
+    tools: tuple[mcp_types.Tool, ...]
+
+    async def list_tools(self) -> mcp_types.ListToolsResult:
+        return mcp_types.ListToolsResult(tools=list(self.tools))
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, object] | None = None
+    ) -> mcp_types.CallToolResult:
+        return mcp_error("a discovered catalogue cannot call tools")
 
 
 def parse_servers(raw: str | None) -> tuple[DownstreamServer, ...]:
@@ -181,8 +207,7 @@ async def build_topology(
         # large topology to hold startup hostage for N times the deadline.
         async with asyncio.timeout(operation_timeout_seconds):
             for name, session in sessions.items():
-                listed = await session.list_tools()
-                catalogues[name] = tuple(listed.tools)
+                catalogues[name] = tuple(await list_all_tools(session))
     except TimeoutError as exc:
         raise DownstreamConfigError("downstream tool discovery timed out") from exc
     except Exception as exc:  # noqa: BLE001 - any transport failure is fatal here

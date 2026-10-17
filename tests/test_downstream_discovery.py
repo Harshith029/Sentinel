@@ -247,3 +247,55 @@ def test_connection_errors_do_not_print_credentials_in_the_url() -> None:
     with pytest.raises(DownstreamConfigError) as err:
         DownstreamServer(name="x", url="ftp://user:s3cret@mcp.example/")
     assert "s3cret" not in str(err.value)
+
+
+# --- pagination and one discovery snapshot ----------------------------------------
+
+
+class PagedSession(FakeSession):
+    """Lists one tool per page, the way a large server paginates tools/list."""
+
+    def __init__(self, *tools: mcp_types.Tool, endless: bool = False) -> None:
+        super().__init__(*tools)
+        self._endless = endless
+
+    async def list_tools(self, cursor: str | None = None) -> mcp_types.ListToolsResult:
+        index = int(cursor or 0)
+        more = self._endless or index + 1 < len(self._tools)
+        return mcp_types.ListToolsResult(
+            tools=[self._tools[index % len(self._tools)]],
+            nextCursor=str(index + 1) if more else None,
+        )
+
+
+async def test_discovery_reads_every_page_of_tools_list() -> None:
+    """Only the first page was read; later tools were never routed or scanned."""
+    topology = await build_topology({"big": PagedSession(tool("a"), tool("b"), tool("c"))})
+    assert topology.tool_names == {"a", "b", "c"}
+    listed = await topology.router.list_tools()
+    assert [t.name for t in listed.tools] == ["a", "b", "c"]
+
+
+async def test_a_server_that_never_stops_paging_is_refused() -> None:
+    with pytest.raises(DownstreamConfigError, match="pages"):
+        await build_topology({"loop": PagedSession(tool("a"), endless=True)})
+
+
+async def test_preflight_approves_the_listing_routes_were_built_from() -> None:
+    """Approval re-listed the servers, so routes and approval could disagree."""
+
+    class ChangingSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.listings = 0
+
+        async def list_tools(self) -> mcp_types.ListToolsResult:
+            self.listings += 1
+            name = "first_answer" if self.listings == 1 else "second_answer"
+            return mcp_types.ListToolsResult(tools=[tool(name)])
+
+    session = ChangingSession()
+    topology = await build_topology({"srv": session})
+    discovered = await topology.discovered().list_tools()
+    assert [t.name for t in discovered.tools] == ["first_answer"]
+    assert session.listings == 1  # the snapshot does not list again

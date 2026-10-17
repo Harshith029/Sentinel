@@ -22,6 +22,8 @@ from sentinel.mcp_proxy.content import mcp_error
 # A downstream HTTP connection may remain open while idle, but individual MCP
 # operations must not be allowed to wait forever for a peer that stops replying.
 DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS: Final[float] = 30.0
+# A server that keeps returning a next cursor is not allowed to page forever.
+_MAX_TOOL_PAGES: Final[int] = 100
 
 
 @runtime_checkable
@@ -33,6 +35,26 @@ class DownstreamConnection(Protocol):
     async def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None
     ) -> mcp_types.CallToolResult: ...
+
+
+async def list_all_tools(session: DownstreamConnection) -> list[mcp_types.Tool]:
+    """Every tool a server lists, following its pagination cursor.
+
+    Only the first page used to be read, so tools beyond it were never
+    discovered, never routed and never scanned.
+    """
+    tools: list[mcp_types.Tool] = []
+    cursor: str | None = None
+    for _ in range(_MAX_TOOL_PAGES):
+        if cursor is None:
+            page = await session.list_tools()
+        else:
+            page = await session.list_tools(cursor=cursor)  # type: ignore[call-arg]
+        tools.extend(page.tools)
+        cursor = page.nextCursor
+        if not cursor:
+            return tools
+    raise RuntimeError(f"tools/list did not finish within {_MAX_TOOL_PAGES} pages")
 
 
 class ToolRouter:
@@ -76,7 +98,7 @@ class ToolRouter:
             # bound into minutes of blocked agent discovery.
             async with asyncio.timeout(self._operation_timeout_seconds):
                 for session in self._sessions:
-                    for tool in (await session.list_tools()).tools:
+                    for tool in await list_all_tools(session):
                         if tool.name in merged:
                             collisions[tool.name] = collisions.get(tool.name, 1) + 1
                             continue

@@ -364,7 +364,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 print(f"  {name:<16} {len(tools)} tool(s): {names}")
             try:
                 cache = await gateway_preflight(
-                    topology.router, declared=True, settings=settings
+                    topology.discovered(), declared=True, settings=settings
                 )
             except PreflightError as exc:
                 _fail(f"catalogue       : REFUSED - serve would not start\n  {exc}")

@@ -90,7 +90,7 @@ from sentinel.downstream import (
 )
 from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.proxy import SentinelProxy
-from sentinel.mcp_proxy.router import ToolRouter
+from sentinel.mcp_proxy.router import DownstreamConnection, ToolRouter
 from sentinel.shield import InputShield
 
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.mcp_gateway")
@@ -230,7 +230,7 @@ def _request_authorized(scope: Scope) -> bool:
 
 
 async def gateway_preflight(
-    router: ToolRouter, *, declared: bool, settings: Settings
+    source: DownstreamConnection, *, declared: bool, settings: Settings
 ) -> ToolSchemaCache:
     """The catalogue vetting the gateway performs before it serves anything.
 
@@ -244,7 +244,7 @@ async def gateway_preflight(
     closed inside the router by the time this runs.
     """
     return await preflight(
-        router,
+        source,
         # With declared servers there is no fixed expected tool set — whatever
         # discovery found IS the catalogue. Only the bundled example topology
         # has required tools to assert.
@@ -555,7 +555,10 @@ class SentinelGateway:
         # default a poisoned catalogue refuses to boot. (Cross-server tool-name
         # shadowing already fails closed inside ToolRouter.list_tools.)
         settings = get_settings()
-        cache = await gateway_preflight(self._router, declared=bool(declared), settings=settings)
+        # Approve exactly what the routes were built from: on the declared path,
+        # discovery's own listing, not a second fetch (see discovered()).
+        source = self._topology.discovered() if self._topology is not None else self._router
+        cache = await gateway_preflight(source, declared=bool(declared), settings=settings)
         self._cache = cache.tools
         self._approved = cache.names
         self._preflight_findings = cache.findings

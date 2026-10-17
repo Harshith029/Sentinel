@@ -72,6 +72,9 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- Tool approval uses the same `tools/list` snapshot as routing. Preflight
+  listed the servers a second time, so a tool could be approved from one
+  server's definition and routed to another's.
 - Trust state is keyed by a `(tenant, agent)` pair. The joined
   `tenant<US>agent` string let names containing the separator collide.
 - Cancelling a caller no longer releases the SQLite store's lock while its
@@ -157,6 +160,8 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Discovery follows `tools/list` pagination (up to 100 pages). Only the first
+  page was read, so a large server's later tools were never routed or scanned.
 - Documentation now matches the code. The README described a per-call graph
   walk for provenance (it is a running union, tested against the walk) and
   implied the hero block depended on the poisoned page; it does not, because

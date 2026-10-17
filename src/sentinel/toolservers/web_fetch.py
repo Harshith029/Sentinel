@@ -29,6 +29,7 @@ IP at validation and a private IP at connect (TOCTOU). Pinning the validated IP 
 the connection is a follow-up hardening; for now the resolver check plus scheme and
 redirect re-validation cover the common SSRF vectors.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -44,7 +45,13 @@ if TYPE_CHECKING:
 
 _USER_AGENT: Final[str] = "SENTINEL-web-fetch/1.0 (+https://github.com/Harshith029/SENTINEL)"
 _TEXTUAL_HINTS: Final[tuple[str, ...]] = (
-    "text/", "json", "xml", "html", "javascript", "csv", "yaml",
+    "text/",
+    "json",
+    "xml",
+    "html",
+    "javascript",
+    "csv",
+    "yaml",
 )
 
 Resolver = Callable[[str], Sequence[str]]
@@ -173,7 +180,11 @@ async def fetch_url(
                     )
             except httpx.HTTPError as exc:
                 return FetchResult(
-                    current, None, None, "", False,
+                    current,
+                    None,
+                    None,
+                    "",
+                    False,
                     f"fetch error: {type(exc).__name__}: {exc}",
                 )
         return FetchResult(url, None, None, "", False, f"too many redirects (> {max_redirects})")

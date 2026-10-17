@@ -14,6 +14,7 @@ Each of these was reproduced against the code before it was fixed:
 * F16: an exception other than ``ConditionError`` escaped the engine, so the
   call failed with no decision and no block in the forensic record.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,9 +48,7 @@ class _Downstream:
         self._results = results
         self.calls: list[tuple[str, dict[str, object]]] = []
 
-    async def call_tool(
-        self, name: str, arguments: dict[str, object]
-    ) -> mcp_types.CallToolResult:
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
         self.calls.append((name, arguments))
         return self._results.get(name) or _text("ok")
 
@@ -190,9 +189,7 @@ async def test_a_result_with_non_text_content_is_never_declassified() -> None:
             mcp_types.TextContent(type="text", text="42"),
             mcp_types.EmbeddedResource(
                 type="resource",
-                resource=mcp_types.TextResourceContents(
-                    uri="file:///note.txt", text=_INJECTION
-                ),
+                resource=mcp_types.TextResourceContents(uri="file:///note.txt", text=_INJECTION),
             ),
         ],
         isError=False,
@@ -215,9 +212,7 @@ async def test_a_result_with_non_text_content_is_never_declassified() -> None:
 async def test_structured_content_is_never_declassified() -> None:
     structured = _text("42")
     structured.structuredContent = {"price": 42, "note": _INJECTION}
-    proxy, _, _ = _proxy(
-        AuthorizationEngine(load_policy(DECLASSIFY)), {"read_price": structured}
-    )
+    proxy, _, _ = _proxy(AuthorizationEngine(load_policy(DECLASSIFY)), {"read_price": structured})
     await proxy.start(user_input="pay the quoted price")
     await proxy.handle_call("read_price", {})
     assert (await proxy.handle_call("pay", {"amount": "42"})).isError is True
@@ -230,9 +225,7 @@ async def test_the_agent_receives_exactly_the_declassified_value() -> None:
     await proxy.start(user_input="pay the quoted price")
 
     priced = await proxy.handle_call("read_price", {})
-    assert [b.text for b in priced.content if isinstance(b, mcp_types.TextContent)] == [
-        "42.50"
-    ]
+    assert [b.text for b in priced.content if isinstance(b, mcp_types.TextContent)] == ["42.50"]
     assert (await proxy.handle_call("pay", {"amount": "42.50"})).isError is False
 
 
@@ -246,12 +239,16 @@ def test_an_unexpected_evaluation_error_is_a_recorded_deny(amount: object) -> No
             "policy_version: 1\n"
             "config:\n  max_amount: 1000\n"
             "tools:\n  pay:\n    rules:\n"
-            "      - id: cap\n        deny_if: \"amount >= max_amount\"\n"
+            '      - id: cap\n        deny_if: "amount >= max_amount"\n'
         )
     )
     decision = engine.authorize(
-        ToolCall(name="pay", arguments={"amount": amount},
-                 provenance=frozenset({USER}), config=engine.config)
+        ToolCall(
+            name="pay",
+            arguments={"amount": amount},
+            provenance=frozenset({USER}),
+            config=engine.config,
+        )
     )
     assert decision.decision == "DENY"
     assert decision.matched_rule_id == "cap"

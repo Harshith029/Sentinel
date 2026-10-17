@@ -11,6 +11,7 @@ exporter, but nothing in the service ever called them, while ``/capabilities``
 reported Application Insights as active whenever its connection string was set.
 They were removed rather than left to suggest an integration that does not run.
 """
+
 from __future__ import annotations
 
 from typing import Final

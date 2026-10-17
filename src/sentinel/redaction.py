@@ -26,6 +26,7 @@ Decision-relevant metadata (tool name, decision, matched rule, provenance labels
 taint flag) is never redacted: that is the security signal, and blinding the
 operator would trade one failure for another.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -95,9 +96,7 @@ def redact_payload(payload: EventPayload) -> EventPayload:
     if isinstance(payload, InputReceived):
         return payload.model_copy(update={"content": redact_text(payload.content)})
     if isinstance(payload, ToolCallProposed):
-        return payload.model_copy(
-            update={"arguments": redact_arguments(payload.arguments)}
-        )
+        return payload.model_copy(update={"arguments": redact_arguments(payload.arguments)})
     if isinstance(payload, ToolExecuted):
         return payload.model_copy(
             update={

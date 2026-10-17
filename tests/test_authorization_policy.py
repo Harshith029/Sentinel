@@ -1,4 +1,5 @@
 """Phase 2B: versioned YAML policy loads strictly; malformed is rejected at LOAD."""
+
 from __future__ import annotations
 
 import textwrap
@@ -65,8 +66,7 @@ _MALFORMED = {
     "extra_top_key": "policy_version: 1\ntools: {}\nbogus: 1\n",
     "tools_not_mapping": "policy_version: 1\ntools: [1, 2]\n",
     "rule_missing_id": (
-        "policy_version: 1\ntools:\n  x:\n    rules:\n"
-        '      - deny_if: "amount >= max_amount"\n'
+        'policy_version: 1\ntools:\n  x:\n    rules:\n      - deny_if: "amount >= max_amount"\n'
     ),
     "rule_extra_key": (
         "policy_version: 1\ntools:\n  x:\n    rules:\n"
@@ -77,12 +77,9 @@ _MALFORMED = {
         '      - id: r\n        deny_if: "amount >= max_amount"\n'
         "        deny_always: true\n"
     ),
-    "rule_neither_effect": (
-        "policy_version: 1\ntools:\n  x:\n    rules:\n      - id: r\n"
-    ),
+    "rule_neither_effect": ("policy_version: 1\ntools:\n  x:\n    rules:\n      - id: r\n"),
     "deny_always_false": (
-        "policy_version: 1\ntools:\n  x:\n    rules:\n"
-        "      - id: r\n        deny_always: false\n"
+        "policy_version: 1\ntools:\n  x:\n    rules:\n      - id: r\n        deny_always: false\n"
     ),
     "unsupported_operator": (
         "policy_version: 1\ntools:\n  x:\n    rules:\n"

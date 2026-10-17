@@ -4,6 +4,7 @@ Offline & deterministic: no network. The "key present" case only *constructs* th
 live client (no completion call), and the end-to-end case drives the loop with the
 built-in SusceptibleStubModel — the same discipline test_phase10 uses.
 """
+
 from __future__ import annotations
 
 import pytest

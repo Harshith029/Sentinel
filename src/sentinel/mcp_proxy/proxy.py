@@ -33,6 +33,7 @@ write-ordering.
 The proxy is agent-agnostic by construction: it knows nothing about Foundry,
 Claude, or any specific client. Any MCP speaker is secured identically.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -121,8 +122,7 @@ def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     for field in _DERIVED_FIELDS:
         namespace.pop(field, None)
     fields = [
-        namespace[name] for name in _ADDRESS_FIELDS
-        if namespace.get(name) not in (None, "", [], ())
+        namespace[name] for name in _ADDRESS_FIELDS if namespace.get(name) not in (None, "", [], ())
     ]
     if not fields:
         return namespace
@@ -204,8 +204,7 @@ class SentinelProxy:
     ) -> None:
         self._downstream = downstream
         self._max_result_bytes = (
-            max_result_bytes if max_result_bytes is not None
-            else get_settings().max_result_bytes
+            max_result_bytes if max_result_bytes is not None else get_settings().max_result_bytes
         )
         self._emitter = emitter
         self._engine = engine
@@ -290,9 +289,7 @@ class SentinelProxy:
             return list(downstream_tools.tools)
 
         @server.call_tool()  # type: ignore[untyped-decorator]
-        async def _call_tool(
-            name: str, arguments: dict[str, object]
-        ) -> mcp_types.CallToolResult:
+        async def _call_tool(name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
             return await self._intercept(name, arguments)
 
         return server
@@ -321,16 +318,22 @@ class SentinelProxy:
             #    and the refusal stays VISIBLE (Phase 3).
             if self._scorer.is_quarantined(self._agent_id, tenant=self._tenant):
                 await self._scorer.record_quarantined_block(
-                    self._agent_id, name, trace_id=self._trace_id,
-                    parent_span_id=self._root_span_id, tenant=self._tenant
+                    self._agent_id,
+                    name,
+                    trace_id=self._trace_id,
+                    parent_span_id=self._root_span_id,
+                    tenant=self._tenant,
                 )
                 log_blocked(
-                    name, reason="agent quarantined", rule="quarantine",
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason="agent quarantined",
+                    rule="quarantine",
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(
-                    f"SENTINEL: agent {self._agent_id!r} is quarantined; "
-                    f"tool {name!r} refused"
+                    f"SENTINEL: agent {self._agent_id!r} is quarantined; tool {name!r} refused"
                 )
 
             # 1. Record the proposal. It derives from everything the agent has
@@ -361,8 +364,12 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=refusal, rule="catalogue",
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason=refusal,
+                    rule="catalogue",
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
@@ -394,8 +401,12 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=reason, rule=None,
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason=reason,
+                    rule=None,
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
             provenance = lineage
@@ -417,8 +428,12 @@ class SentinelProxy:
             # 3 + 5. Blocked: hard-signal trust penalty, ToolBlocked, clean error.
             if not decision.allowed:
                 await self._scorer.record_blocked_call(
-                    self._agent_id, name, reason=decision.reason,
-                    trace_id=self._trace_id, parent_span_id=proposed.span_id, tenant=self._tenant
+                    self._agent_id,
+                    name,
+                    reason=decision.reason,
+                    trace_id=self._trace_id,
+                    parent_span_id=proposed.span_id,
+                    tenant=self._tenant,
                 )
                 await self._emitter.emit(
                     ToolBlocked(
@@ -431,22 +446,29 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=decision.reason,
+                    name,
+                    reason=decision.reason,
                     rule=decision.matched_rule_id,
-                    trace_id=self._trace_id, agent_id=self._agent_id,
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
                     provenance=decision.effective_provenance,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {decision.reason}")
 
             # 3. Allowed: transition telemetry feeds the anomaly model.
             await self._scorer.record_tool_transition(
-                self._agent_id, name, trace_id=self._trace_id,
-                parent_span_id=proposed.span_id, tenant=self._tenant
+                self._agent_id,
+                name,
+                trace_id=self._trace_id,
+                parent_span_id=proposed.span_id,
+                tenant=self._tenant,
             )
 
             # 4. Forward across the second MCP hop and tag the RESULT's provenance.
             log_allowed(
-                name, trace_id=self._trace_id, agent_id=self._agent_id,
+                name,
+                trace_id=self._trace_id,
+                agent_id=self._agent_id,
                 provenance=decision.effective_provenance,
             )
             result = await self._downstream.call_tool(name, dict(arguments))
@@ -479,9 +501,7 @@ class SentinelProxy:
             cleared_from: str | None = None
             schema_name = self._engine.declassifier_for(name)
             if schema_name is not None and _only_text(result):
-                source = ProvenanceNode(
-                    span_id=proposed.span_id, label=label, derived_from=()
-                )
+                source = ProvenanceNode(span_id=proposed.span_id, label=label, derived_from=())
                 sanitized = self._sanitizer.sanitize(
                     source, get_schema(schema_name), content=result_text(result)
                 )
@@ -492,9 +512,7 @@ class SentinelProxy:
                     # nothing else. Returning the original result let anything
                     # the schema never looked at ride along as trusted.
                     result = mcp_types.CallToolResult(
-                        content=[
-                            mcp_types.TextContent(type="text", text=str(sanitized.value))
-                        ],
+                        content=[mcp_types.TextContent(type="text", text=str(sanitized.value))],
                         isError=False,
                     )
 
@@ -544,13 +562,15 @@ class SentinelProxy:
                 )
                 if verdict.attack_detected:
                     log_injection_flagged(
-                        f"tool_result:{name}", trace_id=self._trace_id,
+                        f"tool_result:{name}",
+                        trace_id=self._trace_id,
                         shield=verdict.shield,
                     )
                     await self._scorer.record_injection(
                         self._agent_id,
                         target=f"tool_result:{name}",
                         trace_id=self._trace_id,
-                        parent_span_id=executed.span_id, tenant=self._tenant
+                        parent_span_id=executed.span_id,
+                        tenant=self._tenant,
                     )
             return result

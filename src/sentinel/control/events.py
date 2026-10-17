@@ -14,6 +14,7 @@ between "drain the buffer" and "wait for the next one": the buffer snapshot and
 the wait happen under the same lock that :meth:`publish` holds, and a per-client
 cursor advances monotonically.
 """
+
 from __future__ import annotations
 
 import asyncio

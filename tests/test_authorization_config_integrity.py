@@ -13,6 +13,7 @@ from a config namespace. Two defects made that namespace untrustworthy:
   was authorized against ``allowed_domains: ["corp.example"]`` — an operator had
   no way to set it at all.
 """
+
 from __future__ import annotations
 
 import textwrap

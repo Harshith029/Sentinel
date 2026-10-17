@@ -6,6 +6,7 @@ deterministic driver for a live one changes only what proposes the calls — the
 provenance / authorization / trust / forensic pipeline is identical. There is
 exactly one pipeline here; nothing about it branches on the driver.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -363,9 +364,7 @@ def build_custom_scenario(spec: CustomScenarioSpec) -> ScenarioBuild:
         # If the user opted to include the synthetic record, [0] is the record
         # and [1] is the poisoned page; otherwise [0] is the poisoned page.
         body_bits = [result_text(r) for r in results]
-        body = (
-            f"Forwarded as requested:\n{chr(10).join(body_bits)}"
-        )
+        body = f"Forwarded as requested:\n{chr(10).join(body_bits)}"
         return ToolInvocation(
             tool="send_email",
             arguments={"to": spec.attacker, "subject": spec.subject, "body": body},
@@ -373,11 +372,7 @@ def build_custom_scenario(spec: CustomScenarioSpec) -> ScenarioBuild:
 
     steps: list[Step] = []
     if spec.include_record:
-        steps.append(
-            ToolInvocation(
-                tool="get_customer_record", arguments={"id": spec.record_id}
-            )
-        )
+        steps.append(ToolInvocation(tool="get_customer_record", arguments={"id": spec.record_id}))
     steps.append(ToolInvocation(tool="web_fetch", arguments={"url": spec.poisoned_url}))
     steps.append(exfiltrate)
 

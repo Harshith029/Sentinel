@@ -12,6 +12,7 @@ Every test here asserts on the SYNTHETIC secrets the demo record carries
 read surface: ``/runs``, ``/runs/{id}``, replay, ``/events``, the SSE stream and
 ``/audit``.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -60,6 +61,7 @@ async def manager() -> AsyncIterator[RunManager]:
 
 # --- the leak, surface by surface ---------------------------------------------
 
+
 async def test_replay_does_not_leak_blocked_secrets(manager: RunManager) -> None:
     run_id = await _run_blocked_exfiltration(manager)
     async with _client(manager) as client:
@@ -77,9 +79,7 @@ async def test_events_do_not_leak_blocked_secrets(manager: RunManager) -> None:
 async def test_sse_stream_does_not_leak_blocked_secrets(manager: RunManager) -> None:
     await _run_blocked_exfiltration(manager)
     async with _client(manager) as client:
-        body = (
-            await client.get("/events/stream", params={"since": 0, "follow": False})
-        ).text
+        body = (await client.get("/events/stream", params={"since": 0, "follow": False})).text
     _assert_no_secrets(body, "GET /events/stream")
 
 
@@ -93,9 +93,7 @@ async def test_run_listing_and_detail_do_not_leak(manager: RunManager) -> None:
 async def test_audit_export_does_not_leak(manager: RunManager) -> None:
     run_id = await _run_blocked_exfiltration(manager)
     async with _client(manager) as client:
-        _assert_no_secrets(
-            (await client.get(f"/runs/{run_id}/audit")).text, "GET /audit"
-        )
+        _assert_no_secrets((await client.get(f"/runs/{run_id}/audit")).text, "GET /audit")
         _assert_no_secrets(
             (await client.get(f"/runs/{run_id}/audit", params={"format": "jsonl"})).text,
             "GET /audit?format=jsonl",
@@ -112,6 +110,7 @@ async def test_attacker_recipient_is_not_exposed(manager: RunManager) -> None:
 
 # --- the block itself must remain observable ----------------------------------
 
+
 async def test_redaction_preserves_the_security_signal(manager: RunManager) -> None:
     """Redaction must not blind the operator: the decision, rule and taint stay."""
     run_id = await _run_blocked_exfiltration(manager)
@@ -122,14 +121,14 @@ async def test_redaction_preserves_the_security_signal(manager: RunManager) -> N
     assert "ToolBlocked" in kinds and "AuthorizationDecided" in kinds
 
     blocked = [
-        s["payload"] for s in replay["ordered"]
-        if s["payload"]["event_type"] == "ToolBlocked"
+        s["payload"] for s in replay["ordered"] if s["payload"]["event_type"] == "ToolBlocked"
     ]
     assert any(b["tool_name"] == "send_email" for b in blocked)
     assert any(b["matched_rule_id"] == "block-untrusted-origin" for b in blocked)
 
     decided = [
-        s["payload"] for s in replay["ordered"]
+        s["payload"]
+        for s in replay["ordered"]
         if s["payload"]["event_type"] == "AuthorizationDecided"
     ]
     denied = [d for d in decided if d["decision"] == "DENY"]

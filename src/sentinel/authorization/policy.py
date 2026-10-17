@@ -22,6 +22,7 @@ problem raises :class:`PolicyLoadError` at load time — never at evaluation tim
 The compiled form (:class:`CompiledPolicy`) carries the parsed AST so the engine
 never re-parses or sees raw strings.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -54,8 +55,7 @@ class _RuleDoc(BaseModel):
         has_always = self.deny_always is not None
         if has_if == has_always:
             raise ValueError(
-                f"rule {self.id!r} must declare exactly one of "
-                "'deny_if' or 'deny_always'"
+                f"rule {self.id!r} must declare exactly one of 'deny_if' or 'deny_always'"
             )
         if has_always and self.deny_always is not True:
             raise ValueError(
@@ -153,20 +153,14 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
         compiled: list[CompiledRule] = []
         for rule in tool_doc.rules:
             if rule.deny_always:
-                compiled.append(
-                    CompiledRule(id=rule.id, deny_always=True, condition=None)
-                )
+                compiled.append(CompiledRule(id=rule.id, deny_always=True, condition=None))
             else:
                 assert rule.deny_if is not None  # guaranteed by _RuleDoc validator
                 try:
                     condition = parse_condition(rule.deny_if)
                 except PolicyParseError as exc:
-                    raise PolicyLoadError(
-                        f"tool {tool_name!r} rule {rule.id!r}: {exc}"
-                    ) from exc
-                compiled.append(
-                    CompiledRule(id=rule.id, deny_always=False, condition=condition)
-                )
+                    raise PolicyLoadError(f"tool {tool_name!r} rule {rule.id!r}: {exc}") from exc
+                compiled.append(CompiledRule(id=rule.id, deny_always=False, condition=condition))
         tools[tool_name] = tuple(compiled)
     return CompiledPolicy(
         policy_version=doc.policy_version,

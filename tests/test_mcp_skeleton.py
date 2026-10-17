@@ -5,6 +5,7 @@ two-hop topology:  agent client → SENTINEL proxy server → downstream tool se
 Asserting against real ``Tool`` / ``CallToolResult`` shapes is the whole point —
 Phase 2 provenance is then designed against the wire protocol, not a stand-in.
 """
+
 from __future__ import annotations
 
 from mcp.shared.memory import create_connected_server_and_client_session as connect

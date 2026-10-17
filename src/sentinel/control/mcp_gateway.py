@@ -43,6 +43,7 @@ The remote paths share ONE connection factory
 redirect policy, HTTP-client ownership and MCP session-termination policy cannot
 drift between the deployment wiring and the product path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -188,10 +189,7 @@ def _request_authorized(scope: Scope) -> bool:
     """
     if not auth_configured():
         return get_settings().allow_anonymous
-    headers = {
-        k.decode("latin-1"): v.decode("latin-1")
-        for k, v in (scope.get("headers") or [])
-    }
+    headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in (scope.get("headers") or [])}
     # A TENANT credential — per-tenant or the single-tenant token. The operator
     # credential is deliberately not an agent credential: an agent connecting
     # with it would be an agent that can administer. This used to compare
@@ -331,7 +329,9 @@ class SentinelGateway:
         # stateless=False: keep one ServerSession per MCP session so a session's
         # provenance frontier persists across its successive tool calls.
         self._session_manager = StreamableHTTPSessionManager(
-            app=self._front, json_response=False, stateless=False,
+            app=self._front,
+            json_response=False,
+            stateless=False,
             # The transport keeps every session it ever opened until the client
             # sends DELETE; one that just goes away held its task and streams
             # for the life of the process (20 abandoned sessions: all 20 still
@@ -411,12 +411,8 @@ class SentinelGateway:
                 "unknown_tools": "default-denied until policy is written",
             },
             "catalogue_findings": [str(f) for f in self._preflight_findings],
-            "catalogue_approved_findings": [
-                str(f) for f in self._acknowledged_findings
-            ],
-            "catalogue_monitor": (
-                self._monitor.status() if self._monitor is not None else {}
-            ),
+            "catalogue_approved_findings": [str(f) for f in self._acknowledged_findings],
+            "catalogue_monitor": (self._monitor.status() if self._monitor is not None else {}),
         }
 
     async def __aenter__(self) -> SentinelGateway:
@@ -452,9 +448,7 @@ class SentinelGateway:
         # default a poisoned catalogue refuses to boot. (Cross-server tool-name
         # shadowing already fails closed inside ToolRouter.list_tools.)
         settings = get_settings()
-        cache = await gateway_preflight(
-            self._router, declared=bool(declared), settings=settings
-        )
+        cache = await gateway_preflight(self._router, declared=bool(declared), settings=settings)
         self._cache = cache.tools
         self._approved = cache.names
         self._preflight_findings = cache.findings
@@ -518,9 +512,7 @@ class SentinelGateway:
             )
         return None
 
-    async def _connect_declared_downstream(
-        self, servers: Sequence[DownstreamServer]
-    ) -> None:
+    async def _connect_declared_downstream(self, servers: Sequence[DownstreamServer]) -> None:
         """The PRODUCT path: connect the operator's own MCP servers and discover.
 
         Routing comes from ``tools/list`` on each declared server, not from any
@@ -534,17 +526,13 @@ class SentinelGateway:
 
     async def _connect_inmemory_downstream(self) -> None:
         """The DEMO default: three in-process mock tool servers over in-memory MCP."""
-        servers = build_downstream(
-            self._state, real_web=get_settings().real_web_fetch
-        )
+        servers = build_downstream(self._state, real_web=get_settings().real_web_fetch)
         clients: dict[str, ClientSession] = {}
         for key, server in servers.items():
             client = await self._stack.enter_async_context(connect(server))
             await client.initialize()
             clients[key] = client
-        self._router = ToolRouter(
-            {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER}
-        )
+        self._router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
         self._downstream_mode = "memory"
 
     async def _connect_remote_downstream(self, urls: dict[str, str]) -> None:
@@ -569,9 +557,7 @@ class SentinelGateway:
         clients: dict[str, Any] = {}
         for key in required_keys:
             clients[key] = await open_downstream_session(urls[key], self._stack)
-        self._router = ToolRouter(
-            {tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER}
-        )
+        self._router = ToolRouter({tool: clients[TOOL_TO_SERVER[tool]] for tool in TOOL_TO_SERVER})
         self._downstream_mode = "remote-http"
 
     async def __aexit__(self, *exc: object) -> None:
@@ -679,9 +665,7 @@ class SentinelGateway:
             return list(self._cache)
 
         @front.call_tool()  # type: ignore[untyped-decorator]
-        async def _call_tool(
-            name: str, arguments: dict[str, object]
-        ) -> mcp_types.CallToolResult:
+        async def _call_tool(name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
             proxy = await self._proxy_for_current_session()
             if proxy is None:
                 # Fail closed at capacity (see _proxy_for_current_session). We
@@ -772,9 +756,7 @@ class SentinelGateway:
                 catalogue_gate=self._catalogue_refusal,
             )
             await proxy.start(user_input=_LIVE_USER_INPUT)
-            self._sessions[session] = _TrackedSession(
-                agent_id=agent_id, proxy=proxy, last_used=now
-            )
+            self._sessions[session] = _TrackedSession(agent_id=agent_id, proxy=proxy, last_used=now)
             # The run is in-flight only while the transport holds the session.
             # finalize() fires when the session is collected — the same moment
             # the WeakKeyDictionary entry disappears — so the run index stops

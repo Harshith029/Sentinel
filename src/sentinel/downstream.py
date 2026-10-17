@@ -26,6 +26,7 @@ Security properties enforced here (all fail CLOSED):
 Parsing and topology construction are separated from IO so both are unit testable
 without a network.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,13 +57,10 @@ class DownstreamServer:
         if not self.name or not self.name.strip():
             raise DownstreamConfigError("server 'name' must be a non-empty string")
         if not self.url or not self.url.strip():
-            raise DownstreamConfigError(
-                f"server {self.name!r}: 'url' must be a non-empty string"
-            )
+            raise DownstreamConfigError(f"server {self.name!r}: 'url' must be a non-empty string")
         if not self.url.startswith(("http://", "https://")):
             raise DownstreamConfigError(
-                f"server {self.name!r}: url must start with http:// or https://, "
-                f"got {self.url!r}"
+                f"server {self.name!r}: url must start with http:// or https://, got {self.url!r}"
             )
 
 
@@ -116,9 +114,7 @@ def parse_servers(raw: str | None) -> tuple[DownstreamServer, ...]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise DownstreamConfigError(
-            f"SENTINEL_MCP_SERVERS is not valid JSON: {exc}"
-        ) from exc
+        raise DownstreamConfigError(f"SENTINEL_MCP_SERVERS is not valid JSON: {exc}") from exc
 
     servers: list[DownstreamServer] = []
     if isinstance(data, dict):
@@ -131,16 +127,11 @@ def parse_servers(raw: str | None) -> tuple[DownstreamServer, ...]:
                 )
             missing = {"name", "url"} - entry.keys()
             if missing:
-                raise DownstreamConfigError(
-                    f"server entry missing {sorted(missing)}: {entry!r}"
-                )
-            servers.append(
-                DownstreamServer(name=str(entry["name"]), url=str(entry["url"]))
-            )
+                raise DownstreamConfigError(f"server entry missing {sorted(missing)}: {entry!r}")
+            servers.append(DownstreamServer(name=str(entry["name"]), url=str(entry["url"])))
     else:
         raise DownstreamConfigError(
-            "SENTINEL_MCP_SERVERS must be a JSON array or object, "
-            f"got {type(data).__name__}"
+            f"SENTINEL_MCP_SERVERS must be a JSON array or object, got {type(data).__name__}"
         )
 
     seen: set[str] = set()
@@ -173,8 +164,7 @@ async def build_topology(sessions: Mapping[str, SessionLike]) -> DownstreamTopol
     if collisions:
         raise CatalogueIntegrityError(
             "downstream servers expose colliding tool names "
-            "(possible cross-server shadowing):\n  "
-            + "\n  ".join(str(c) for c in collisions)
+            "(possible cross-server shadowing):\n  " + "\n  ".join(str(c) for c in collisions)
         )
 
     routes: dict[str, Any] = {}
@@ -182,9 +172,7 @@ async def build_topology(sessions: Mapping[str, SessionLike]) -> DownstreamTopol
         for tool in tools:
             routes[tool.name] = sessions[server]
     if not routes:
-        raise DownstreamConfigError(
-            "no tools discovered across any declared downstream server"
-        )
+        raise DownstreamConfigError("no tools discovered across any declared downstream server")
     return DownstreamTopology(router=ToolRouter(routes), catalogues=catalogues)
 
 
@@ -212,8 +200,9 @@ def _downstream_http_client() -> httpx.AsyncClient:
     run suggested it was; that did not hold under retest.
     """
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(None, connect=_CONNECT_TIMEOUT_SECONDS,
-                              pool=_CONNECT_TIMEOUT_SECONDS),
+        timeout=httpx.Timeout(
+            None, connect=_CONNECT_TIMEOUT_SECONDS, pool=_CONNECT_TIMEOUT_SECONDS
+        ),
         follow_redirects=True,
     )
 
@@ -258,9 +247,7 @@ async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLik
     try:
         client = await local.enter_async_context(_downstream_http_client())
         read, write, _id = await local.enter_async_context(
-            streamable_http_client(
-                url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE
-            )
+            streamable_http_client(url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE)
         )
         session = await local.enter_async_context(ClientSession(read, write))
         await session.initialize()
@@ -286,8 +273,7 @@ async def connect_downstream(
             session = await open_downstream_session(server.url, stack)
         except Exception as exc:  # noqa: BLE001 - surface any connect failure clearly
             raise DownstreamConfigError(
-                f"downstream server {server.name!r} at {server.url}: "
-                f"connection failed: {exc}"
+                f"downstream server {server.name!r} at {server.url}: connection failed: {exc}"
             ) from exc
         sessions[server.name] = session
     return await build_topology(sessions)

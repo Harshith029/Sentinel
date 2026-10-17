@@ -29,6 +29,7 @@ caller's data anywhere. An earlier version of this note claimed the store held
 holds the full payload, and the read endpoints were unauthenticated when it was
 written.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,10 +44,29 @@ SECURITY_LOGGER: Final[str] = "sentinel.security"
 # Fields the JSON formatter always emits; anything else comes from `extra`.
 _STANDARD: Final[frozenset[str]] = frozenset(
     {
-        "args", "asctime", "created", "exc_info", "exc_text", "filename",
-        "funcName", "levelname", "levelno", "lineno", "module", "msecs",
-        "message", "msg", "name", "pathname", "process", "processName",
-        "relativeCreated", "stack_info", "taskName", "thread", "threadName",
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "message",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
     }
 )
 
@@ -119,15 +139,17 @@ def security_logger() -> logging.Logger:
     return logging.getLogger(SECURITY_LOGGER)
 
 
-def log_allowed(
-    tool: str, *, trace_id: str, agent_id: str, provenance: tuple[str, ...]
-) -> None:
+def log_allowed(tool: str, *, trace_id: str, agent_id: str, provenance: tuple[str, ...]) -> None:
     """One line per permitted action — the routine half of the audit trail."""
     security_logger().info(
-        "ALLOW  %s", tool,
+        "ALLOW  %s",
+        tool,
         extra={
-            "event": "tool_allowed", "tool": tool, "decision": "ALLOW",
-            "trace_id": trace_id, "agent_id": agent_id,
+            "event": "tool_allowed",
+            "tool": tool,
+            "decision": "ALLOW",
+            "trace_id": trace_id,
+            "agent_id": agent_id,
             "provenance": list(provenance),
         },
     )
@@ -144,28 +166,37 @@ def log_blocked(
 ) -> None:
     """A refused action. WARNING because this is what an operator filters for."""
     security_logger().warning(
-        "BLOCK  %s  rule=%s  %s", tool, rule or "-", reason,
+        "BLOCK  %s  rule=%s  %s",
+        tool,
+        rule or "-",
+        reason,
         extra={
-            "event": "tool_blocked", "tool": tool, "decision": "DENY",
-            "rule": rule, "reason": reason, "trace_id": trace_id,
-            "agent_id": agent_id, "provenance": list(provenance),
+            "event": "tool_blocked",
+            "tool": tool,
+            "decision": "DENY",
+            "rule": rule,
+            "reason": reason,
+            "trace_id": trace_id,
+            "agent_id": agent_id,
+            "provenance": list(provenance),
         },
     )
 
 
-def log_quarantined(
-    agent_id: str, *, trace_id: str, score: float, enforced: bool = True
-) -> None:
+def log_quarantined(agent_id: str, *, trace_id: str, score: float, enforced: bool = True) -> None:
     """The trust score crossed the quarantine threshold, enforced or not."""
-    consequence = (
-        "further tool calls refused" if enforced else "NOT enforced; calls continue"
-    )
+    consequence = "further tool calls refused" if enforced else "NOT enforced; calls continue"
     security_logger().warning(
         "QUARANTINE  agent=%s  score=%.1f  %s",
-        agent_id, score, consequence,
+        agent_id,
+        score,
+        consequence,
         extra={
-            "event": "agent_quarantined", "agent_id": agent_id,
-            "trace_id": trace_id, "score": score, "enforced": enforced,
+            "event": "agent_quarantined",
+            "agent_id": agent_id,
+            "trace_id": trace_id,
+            "score": score,
+            "enforced": enforced,
         },
     )
 
@@ -173,9 +204,13 @@ def log_quarantined(
 def log_injection_flagged(target: str, *, trace_id: str, shield: str) -> None:
     """Layer-1 flagged content. Informational: the shield flags, it does not block."""
     security_logger().info(
-        "FLAG   injection markers in %s (%s)", target, shield,
+        "FLAG   injection markers in %s (%s)",
+        target,
+        shield,
         extra={
-            "event": "injection_flagged", "target": target,
-            "shield": shield, "trace_id": trace_id,
+            "event": "injection_flagged",
+            "target": target,
+            "shield": shield,
+            "trace_id": trace_id,
         },
     )

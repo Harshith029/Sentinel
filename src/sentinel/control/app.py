@@ -25,6 +25,7 @@ another ``AgentDriver`` handed to the same orchestrator. It is intentionally NOT
 wired in DEMO MODE — it needs SENTINEL's MCP server exposed over a real HTTP
 transport plus a live Azure project; the stage demo stays on DEMO MODE.
 """
+
 from __future__ import annotations
 
 import json
@@ -99,8 +100,7 @@ def _serialize_replay(rep: TraceReplay) -> dict[str, Any]:
         "ordered": [span.model_dump(mode="json") for span in rep.ordered],
         "roots": [span.span_id for span in rep.roots],
         "children": {
-            parent_id: [child.span_id for child in kids]
-            for parent_id, kids in rep.children.items()
+            parent_id: [child.span_id for child in kids] for parent_id, kids in rep.children.items()
         },
     }
 
@@ -329,6 +329,7 @@ def create_app(
         """Make a demo route indistinguishable from a missing one when off."""
         if not demo:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
     # Outermost last: the rate limiter refuses a flood before the body limiter
     # reads a byte, and both sit in front of every route AND the /mcp mount.
     app.add_middleware(BodySizeLimit)
@@ -342,6 +343,7 @@ def create_app(
             content={"detail": str(exc)},
             headers={"Retry-After": "5"},
         )
+
     app.state.gateway = gateway
 
     streams = _StreamSlots()
@@ -368,8 +370,7 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
-                    f"credential authenticates as tenant {tenant!r}, "
-                    f"cannot act as {claimed!r}"
+                    f"credential authenticates as tenant {tenant!r}, cannot act as {claimed!r}"
                 ),
             )
         return tenant
@@ -417,16 +418,15 @@ def create_app(
         tenant = _scope(request)
         if tenant is None:
             return
-        if not any(
-            r.agent_id == agent_id and r.tenant == tenant for r in mgr.list_runs()
-        ):
+        if not any(r.agent_id == agent_id and r.tenant == tenant for r in mgr.list_runs()):
             raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
 
     @app.post("/runs", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def start_run(body: StartRunRequest, request: Request) -> dict[str, Any]:
         try:
             record = mgr.start_scenario(
-                body.scenario, agent_id=body.agent_id,
+                body.scenario,
+                agent_id=body.agent_id,
                 tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
@@ -453,7 +453,8 @@ def create_app(
         )
         try:
             record = mgr.start_custom(
-                spec, agent_id=body.agent_id,
+                spec,
+                agent_id=body.agent_id,
                 tenant=_effective_tenant(request, body.tenant),
             )
         except ValueError as exc:
@@ -492,7 +493,8 @@ def create_app(
             # tenant's attack runs landed in, and used up, the default tenant's
             # run quota.
             record = mgr.start_scenario(
-                scenario, agent_id=agent_id,
+                scenario,
+                agent_id=agent_id,
                 tenant=_effective_tenant(request, DEFAULT_TENANT),
             )
         except ValueError as exc:
@@ -518,9 +520,7 @@ def create_app(
         # cost paid once per process. Idempotent: a second call is a no-op.
         await mgr.restore_persisted_runs()
         tenant = _scope(request)
-        runs = [
-            r for r in mgr.list_runs() if tenant is None or r.tenant == tenant
-        ]
+        runs = [r for r in mgr.list_runs() if tenant is None or r.tenant == tenant]
         return {"runs": [r.to_payload() for r in runs]}
 
     @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
@@ -579,9 +579,7 @@ def create_app(
         return gateway.describe()
 
     @app.get("/runs/{run_id}/audit", dependencies=[Depends(require_auth)])
-    async def get_audit(
-        run_id: str, request: Request, format: str = "json"
-    ) -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
+    async def get_audit(run_id: str, request: Request, format: str = "json") -> Any:  # noqa: ANN401 - dual response shape (JSON object | JSONL stream)
         """SOC/SIEM export; blocked attempts carry a classifier label.
 
         ``format=json`` (default): the {trace_id, alerts} object. ``format=jsonl``:
@@ -596,9 +594,7 @@ def create_app(
                 text,
                 media_type="application/x-ndjson",
                 headers={
-                    "Content-Disposition": (
-                        f'attachment; filename="sentinel-{run_id}.jsonl"'
-                    ),
+                    "Content-Disposition": (f'attachment; filename="sentinel-{run_id}.jsonl"'),
                 },
             )
         return {"trace_id": record.trace_id, "alerts": alerts}
@@ -757,8 +753,10 @@ def create_app(
         # "authentication is disabled" and given no cookie at all.
         presented = request.state.credential
         response.set_cookie(
-            SESSION_COOKIE, presented,
-            httponly=True, samesite="strict",
+            SESSION_COOKIE,
+            presented,
+            httponly=True,
+            samesite="strict",
             secure=request.url.scheme == "https",
             max_age=_SESSION_MAX_AGE_SECONDS,
         )

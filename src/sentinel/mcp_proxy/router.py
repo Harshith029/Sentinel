@@ -7,6 +7,7 @@ satisfies that shape, and :class:`ToolRouter` aggregates several of them behind
 the same interface — routing each ``call_tool`` to the server that owns the
 tool and merging their catalogues for ``list_tools``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping

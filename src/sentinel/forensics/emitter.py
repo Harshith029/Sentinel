@@ -17,6 +17,7 @@ The whole correctness argument lives in :meth:`SpanEmitter.emit`:
 That separation is the bug the spec is guarding against: ordering by write
 completion instead of by an authority-assigned sequence.
 """
+
 from __future__ import annotations
 
 import asyncio

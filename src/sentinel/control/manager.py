@@ -11,6 +11,7 @@ Runs execute in BACKGROUND tasks so the live monitor (SSE) can stream their span
 as they happen. This is the control plane only — it never routes tool calls;
 those are intercepted at the MCP boundary inside :func:`run_demo_session`.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -226,7 +227,8 @@ class RunManager:
         self._emitter = SpanEmitter(self._store)
         self._registry = build_policy_registry(self._settings)  # multi-tenant policies
         self._scorer = TrustScorer(
-            self._emitter, load_default_trust_config(),
+            self._emitter,
+            load_default_trust_config(),
             enforce=self._settings.enforce_quarantine,
         )
         # Build the shield FROM SETTINGS so AZURE MODE actually carries the
@@ -400,8 +402,10 @@ class RunManager:
             return
         task = asyncio.create_task(
             store.put_run(
-                record.trace_id, tenant=record.tenant,
-                agent_id=record.agent_id, scenario=record.scenario,
+                record.trace_id,
+                tenant=record.tenant,
+                agent_id=record.agent_id,
+                scenario=record.scenario,
             )
         )
         self._pending_writes.add(task)
@@ -434,9 +438,7 @@ class RunManager:
         for trace_id in purged:
             self._runs.pop(trace_id, None)
         if purged:
-            _LOG.info(
-                "retention: deleted %d trace(s) older than %d day(s)", len(purged), days
-            )
+            _LOG.info("retention: deleted %d trace(s) older than %d day(s)", len(purged), days)
         return purged
 
     def _select_driver(self, build: ScenarioBuild) -> Any:  # noqa: ANN401 - AgentDriver
@@ -460,11 +462,7 @@ class RunManager:
         try:
             # Resolve the tenant's policy at run time → registry hot-reloads take
             # effect for subsequent runs without restart.
-            engine = (
-                self._registry.engine_for(record.tenant)
-                if record.tenant is not None
-                else None
-            )
+            engine = self._registry.engine_for(record.tenant) if record.tenant is not None else None
             if engine is None:
                 raise ValueError(f"no policy registered for tenant {record.tenant!r}")
             await run_demo_session(
@@ -508,9 +506,7 @@ class RunManager:
         )
         return {
             "outbox": result.outbox,
-            "executions": [
-                {"tool": name, "arg": str(arg)} for name, arg in result.executions
-            ],
+            "executions": [{"tool": name, "arg": str(arg)} for name, arg in result.executions],
         }
 
     async def join(self, trace_id: str) -> None:
@@ -585,8 +581,12 @@ class RunManager:
             if owner is not None:
                 tenant, agent_id, scenario = owner
             self._runs[trace_id] = RunRecord(
-                run_id=trace_id, trace_id=trace_id, agent_id=agent_id,
-                scenario=scenario, tenant=tenant, status="completed",
+                run_id=trace_id,
+                trace_id=trace_id,
+                agent_id=agent_id,
+                scenario=scenario,
+                tenant=tenant,
+                status="completed",
             )
             restored += 1
         return restored

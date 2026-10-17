@@ -32,6 +32,7 @@ Design notes:
   is malicious. Naming the winner is a policy decision for the operator, not an
   inference for us to make.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -135,9 +136,7 @@ def detect_drift(
         live_fp = live.get(name)
         if live_fp is None:
             findings.append(
-                CatalogueFinding(
-                    "schema_drift", name, "tool disappeared after approval"
-                )
+                CatalogueFinding("schema_drift", name, "tool disappeared after approval")
             )
         elif live_fp != pinned_fp:
             findings.append(
@@ -148,9 +147,7 @@ def detect_drift(
                 )
             )
     for name in live.keys() - pinned.keys():
-        findings.append(
-            CatalogueFinding("schema_drift", name, "tool appeared after approval")
-        )
+        findings.append(CatalogueFinding("schema_drift", name, "tool appeared after approval"))
     return findings
 
 

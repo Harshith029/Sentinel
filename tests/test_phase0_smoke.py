@@ -7,6 +7,7 @@ These are intentionally small — Phase 0 only proves the foundation is real:
 * The SDK facts recorded in `SDK_VERIFICATION.md` still hold against the
   installed packages (the "fail loudly on drift" rule from Phase 0 item 4).
 """
+
 from __future__ import annotations
 
 import re
@@ -125,9 +126,7 @@ def test_versions_lock_has_real_pins() -> None:
         if "==" in required:
             assert required in lines, f"missing exact pin: {required}"
         else:
-            matches = [
-                line for line in lines if line.split("==", 1)[0].lower() == required.lower()
-            ]
+            matches = [line for line in lines if line.split("==", 1)[0].lower() == required.lower()]
             assert matches, f"missing pin for {required!r}"
             assert "==" in matches[0], f"non-exact pin in versions.lock: {matches[0]}"
     # Pydantic must be a 2.x exact pin (spec §3: "pydantic==<resolve, 2.x>").

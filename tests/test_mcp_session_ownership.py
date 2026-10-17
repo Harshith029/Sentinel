@@ -13,6 +13,7 @@ the fix, reproduced against the real transport:
 These drive the real SDK session manager in-process over ASGI (no sockets), so
 they are not exposed to the Windows teardown wedge.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,14 +71,23 @@ async def _gateway(
 
 
 async def _open_session(client: httpx.AsyncClient, headers: dict[str, str]) -> str:
-    opened = await client.post("/", headers=headers, json=_rpc("initialize", {
-        "protocolVersion": "2025-06-18", "capabilities": {},
-        "clientInfo": {"name": "agent", "version": "1"},
-    }))
+    opened = await client.post(
+        "/",
+        headers=headers,
+        json=_rpc(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "agent", "version": "1"},
+            },
+        ),
+    )
     assert opened.status_code == 200
     session = opened.headers["mcp-session-id"]
     ready = await client.post(
-        "/", headers={**headers, "mcp-session-id": session},
+        "/",
+        headers={**headers, "mcp-session-id": session},
         json=_rpc("notifications/initialized", {}, None),
     )
     assert ready.status_code == 202
@@ -104,13 +114,15 @@ async def test_another_principal_cannot_drive_a_session(
     async with _gateway(monkeypatch) as (client, gateway, store):
         session = await _open_session(client, _ACME)
         own = await client.post(
-            "/", headers={**_ACME, "mcp-session-id": session},
+            "/",
+            headers={**_ACME, "mcp-session-id": session},
             json=_fetch("https://corp.example/acme", 2),
         )
         assert own.status_code == 200
 
         foreign = await client.post(
-            "/", headers={**_GLOBEX, "mcp-session-id": session},
+            "/",
+            headers={**_GLOBEX, "mcp-session-id": session},
             json=_fetch("https://corp.example/globex", 3),
         )
         assert foreign.status_code == 404
@@ -129,7 +141,8 @@ async def test_another_principal_cannot_terminate_a_session(
         assert killed.status_code == 404
 
         still_alive = await client.post(
-            "/", headers={**_ACME, "mcp-session-id": session},
+            "/",
+            headers={**_ACME, "mcp-session-id": session},
             json=_fetch("https://corp.example/acme", 2),
         )
         assert still_alive.status_code == 200
@@ -142,7 +155,8 @@ async def test_the_owner_can_end_its_own_session(monkeypatch: pytest.MonkeyPatch
         assert ended.status_code == 200
         assert session not in gateway._session_owners  # noqa: SLF001
         gone = await client.post(
-            "/", headers={**_ACME, "mcp-session-id": session},
+            "/",
+            headers={**_ACME, "mcp-session-id": session},
             json=_fetch("https://corp.example/acme", 2),
         )
         assert gone.status_code == 404
@@ -153,7 +167,8 @@ async def test_an_unknown_session_id_is_refused_as_before(
 ) -> None:
     async with _gateway(monkeypatch) as (client, _gateway_, _store):
         made_up = await client.post(
-            "/", headers={**_ACME, "mcp-session-id": "0" * 32},
+            "/",
+            headers={**_ACME, "mcp-session-id": "0" * 32},
             json=_fetch("https://corp.example/x", 1),
         )
         assert made_up.status_code == 404
@@ -194,7 +209,8 @@ async def test_an_abandoned_session_is_reclaimed_after_the_idle_ttl(
         assert not any(s in live for s in sessions), "abandoned sessions were kept"
 
         gone = await client.post(
-            "/", headers={**_ACME, "mcp-session-id": sessions[0]},
+            "/",
+            headers={**_ACME, "mcp-session-id": sessions[0]},
             json=_fetch("https://corp.example/late", 9),
         )
         assert gone.status_code == 404
@@ -209,7 +225,8 @@ async def test_an_active_session_is_not_cut_by_the_idle_ttl(
         for i in range(8):
             await asyncio.sleep(0.1)
             kept = await client.post(
-                "/", headers={**_ACME, "mcp-session-id": session},
+                "/",
+                headers={**_ACME, "mcp-session-id": session},
                 json=_fetch("https://corp.example/busy", 10 + i),
             )
             assert kept.status_code == 200, f"cut after {0.1 * (i + 1):.1f}s of activity"

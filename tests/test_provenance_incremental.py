@@ -10,6 +10,7 @@ The equivalence test rebuilds, with :class:`ProvenanceGraph`, exactly the graph
 the proxy used to build, and checks the proxy's provenance against the walk for
 every call of random sessions, including declassified results.
 """
+
 from __future__ import annotations
 
 import random
@@ -50,9 +51,7 @@ class _Downstream:
     def __init__(self, rng: random.Random) -> None:
         self._rng = rng
 
-    async def call_tool(
-        self, name: str, arguments: dict[str, object]
-    ) -> mcp_types.CallToolResult:
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
         # read_price sometimes returns a valid decimal (declassified), sometimes not.
         if name == "read_price":
             text = "42.50" if self._rng.random() < 0.5 else "about forty"
@@ -101,9 +100,7 @@ async def test_the_running_union_equals_the_graph_walk() -> None:
                 frontier.append(span.span_id)
             elif span.event_type == "ToolCallProposed":
                 graph.add(
-                    ProvenanceNode(
-                        span_id=span.span_id, label=AGENT, derived_from=tuple(frontier)
-                    )
+                    ProvenanceNode(span_id=span.span_id, label=AGENT, derived_from=tuple(frontier))
                 )
                 walk = graph.effective_provenance(span.span_id, include_self=False)
                 assert not walk.anomalous
@@ -136,6 +133,6 @@ async def test_per_call_cost_does_not_grow_with_the_session() -> None:
         started = time.perf_counter()
         await proxy.handle_call("read_page", {})
         timings.append(time.perf_counter() - started)
-    early = sorted(timings[50:150])[50]   # medians resist GC and scheduler noise
+    early = sorted(timings[50:150])[50]  # medians resist GC and scheduler noise
     late = sorted(timings[-100:])[50]
     assert late < 3 * early, f"call cost grew {late / early:.1f}x over the session"

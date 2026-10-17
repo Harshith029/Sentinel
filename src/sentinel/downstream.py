@@ -29,6 +29,7 @@ without a network.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
@@ -39,7 +40,10 @@ import httpx
 import mcp.types as mcp_types
 
 from sentinel.catalogue import CatalogueIntegrityError, detect_shadowing
-from sentinel.mcp_proxy.router import ToolRouter
+from sentinel.mcp_proxy.router import (
+    DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
+    ToolRouter,
+)
 
 
 class DownstreamConfigError(ValueError):
@@ -144,21 +148,30 @@ def parse_servers(raw: str | None) -> tuple[DownstreamServer, ...]:
     return tuple(servers)
 
 
-async def build_topology(sessions: Mapping[str, SessionLike]) -> DownstreamTopology:
+async def build_topology(
+    sessions: Mapping[str, SessionLike],
+    *,
+    operation_timeout_seconds: float = DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
+) -> DownstreamTopology:
     """Discover each session's tools and build the routing table.
 
     Fails closed on a cross-server tool-name collision (shadowing) rather than
     picking a winner — the operator must disambiguate.
     """
+    if operation_timeout_seconds <= 0:
+        raise DownstreamConfigError("downstream operation timeout must be positive")
     catalogues: dict[str, tuple[mcp_types.Tool, ...]] = {}
-    for name, session in sessions.items():
-        try:
-            listed = await session.list_tools()
-        except Exception as exc:  # noqa: BLE001 - any transport failure is fatal here
-            raise DownstreamConfigError(
-                f"downstream server {name!r}: tool discovery failed: {exc}"
-            ) from exc
-        catalogues[name] = tuple(listed.tools)
+    try:
+        # Bound the complete discovery pass. A per-server timeout would allow a
+        # large topology to hold startup hostage for N times the deadline.
+        async with asyncio.timeout(operation_timeout_seconds):
+            for name, session in sessions.items():
+                listed = await session.list_tools()
+                catalogues[name] = tuple(listed.tools)
+    except TimeoutError as exc:
+        raise DownstreamConfigError("downstream tool discovery timed out") from exc
+    except Exception as exc:  # noqa: BLE001 - any transport failure is fatal here
+        raise DownstreamConfigError(f"downstream tool discovery failed: {exc}") from exc
 
     collisions = detect_shadowing(catalogues)
     if collisions:
@@ -173,16 +186,20 @@ async def build_topology(sessions: Mapping[str, SessionLike]) -> DownstreamTopol
             routes[tool.name] = sessions[server]
     if not routes:
         raise DownstreamConfigError("no tools discovered across any declared downstream server")
-    return DownstreamTopology(router=ToolRouter(routes), catalogues=catalogues)
+    return DownstreamTopology(
+        router=ToolRouter(routes, operation_timeout_seconds=operation_timeout_seconds),
+        catalogues=catalogues,
+    )
 
 
-# Bounds CONNECTION ESTABLISHMENT only. Reads are deliberately unbounded: an MCP
-# streamable-HTTP session holds a long-lived GET/SSE stream, and a read timeout
-# would tear down a healthy idle session.
+# Bounds CONNECTION ESTABLISHMENT only. The long-lived streaming transport itself
+# may stay idle; the per-operation deadline below bounds RPCs on that transport.
 _CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
 
 
-def _downstream_http_client() -> httpx.AsyncClient:
+def _downstream_http_client(
+    *, transport: httpx.AsyncBaseTransport | None = None
+) -> httpx.AsyncClient:
     """The HTTP client SENTINEL uses for downstream MCP connections.
 
     Supplying our own rather than letting the SDK build a default is for two
@@ -191,9 +208,9 @@ def _downstream_http_client() -> httpx.AsyncClient:
     * **A hang becomes an error.** The SDK default does not bound connect, so a
       misconfigured or black-holed downstream URL wedges startup instead of
       failing with something the operator can act on.
-    * **Redirects still work.** The SDK default follows them and an MCP mount
-      commonly answers ``/mcp`` with a 307 to ``/mcp/``, so an explicit client
-      that dropped this would break ordinary servers.
+    * **Same-origin redirects still work.** An MCP mount commonly answers
+      ``/mcp`` with a 307 to ``/mcp/``. Cross-origin redirects are refused before
+      the client can replay an MCP JSON-RPC request body to a new destination.
 
     It is NOT a workaround for the teardown wedge in
     ``docs/mcp-streamable-http-teardown.md``. An early reading of one standalone
@@ -204,7 +221,35 @@ def _downstream_http_client() -> httpx.AsyncClient:
             None, connect=_CONNECT_TIMEOUT_SECONDS, pool=_CONNECT_TIMEOUT_SECONDS
         ),
         follow_redirects=True,
+        event_hooks={"response": [_reject_cross_origin_redirect]},
+        transport=transport,
     )
+
+
+async def _reject_cross_origin_redirect(response: httpx.Response) -> None:
+    """Fail closed before HTTPX follows a downstream redirect off-origin.
+
+    MCP tool calls are POSTs whose JSON-RPC body may contain agent-selected
+    data. HTTPX preserves that body for 307/308 redirects, so an untrusted
+    downstream server must not be able to redirect it to an arbitrary host.
+    Response hooks run before HTTPX constructs the follow-up request.
+    """
+    if not response.is_redirect:
+        return
+    location = response.headers.get("location")
+    if not location:
+        return
+    try:
+        target = response.request.url.join(location)
+    except (httpx.InvalidURL, TypeError, ValueError) as exc:
+        raise httpx.RemoteProtocolError("downstream returned an invalid redirect") from exc
+    source = response.request.url
+    if (target.scheme, target.host, target.port) != (
+        source.scheme,
+        source.host,
+        source.port,
+    ):
+        raise httpx.RemoteProtocolError("downstream cross-origin redirect refused")
 
 
 # Whether a closing downstream connection sends the MCP session-termination
@@ -222,7 +267,12 @@ def _downstream_http_client() -> httpx.AsyncClient:
 _TERMINATE_ON_CLOSE: Final[bool] = True
 
 
-async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLike:
+async def open_downstream_session(
+    url: str,
+    stack: AsyncExitStack,
+    *,
+    operation_timeout_seconds: float = DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
+) -> SessionLike:
     """Open ONE downstream MCP session — the single way SENTINEL connects out.
 
     Both downstream paths route through here (operator-declared
@@ -243,14 +293,25 @@ async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLik
     # fails `initialize()`, must not leave its HTTP client and transport tasks
     # behind on the caller's long-lived stack — the caller may propagate the
     # error before it ever gets to close that stack.
+    if operation_timeout_seconds <= 0:
+        raise DownstreamConfigError("downstream operation timeout must be positive")
     local = AsyncExitStack()
     try:
-        client = await local.enter_async_context(_downstream_http_client())
-        read, write, _id = await local.enter_async_context(
-            streamable_http_client(url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE)
-        )
-        session = await local.enter_async_context(ClientSession(read, write))
-        await session.initialize()
+        # The HTTP client's connect timeout does not cover a peer that accepts
+        # TCP and then withholds the MCP handshake. Bound opening and initialize
+        # as one operation so startup reliably returns control to the operator.
+        async with asyncio.timeout(operation_timeout_seconds):
+            client = await local.enter_async_context(_downstream_http_client())
+            read, write, _id = await local.enter_async_context(
+                streamable_http_client(
+                    url, http_client=client, terminate_on_close=_TERMINATE_ON_CLOSE
+                )
+            )
+            session = await local.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+    except TimeoutError as exc:
+        await local.aclose()  # nothing half-open escapes
+        raise DownstreamConfigError("downstream session initialization timed out") from exc
     except BaseException:
         await local.aclose()  # nothing half-open escapes
         raise
@@ -260,7 +321,10 @@ async def open_downstream_session(url: str, stack: AsyncExitStack) -> SessionLik
 
 
 async def connect_downstream(
-    servers: Sequence[DownstreamServer], stack: AsyncExitStack
+    servers: Sequence[DownstreamServer],
+    stack: AsyncExitStack,
+    *,
+    operation_timeout_seconds: float = DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
 ) -> DownstreamTopology:
     """Connect to each declared server over MCP-over-HTTP and discover its tools.
 
@@ -270,10 +334,12 @@ async def connect_downstream(
     sessions: dict[str, SessionLike] = {}
     for server in servers:
         try:
-            session = await open_downstream_session(server.url, stack)
+            session = await open_downstream_session(
+                server.url, stack, operation_timeout_seconds=operation_timeout_seconds
+            )
         except Exception as exc:  # noqa: BLE001 - surface any connect failure clearly
             raise DownstreamConfigError(
                 f"downstream server {server.name!r} at {server.url}: connection failed: {exc}"
             ) from exc
         sessions[server.name] = session
-    return await build_topology(sessions)
+    return await build_topology(sessions, operation_timeout_seconds=operation_timeout_seconds)

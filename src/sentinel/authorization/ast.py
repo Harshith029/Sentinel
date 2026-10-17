@@ -63,7 +63,11 @@ def _equal(left: object, right: object) -> bool:
 
 
 def _contains(container: object, item: object) -> bool:
-    if isinstance(container, (frozenset, set, list, tuple, str)):
+    # Strings are deliberately NOT collections in the policy language:
+    # ``"evil.test" in "evil.test.example"`` is substring matching, not an
+    # allow-list membership check. A scalar config value is a configuration
+    # error and must be denied by the engine's fail-closed path.
+    if isinstance(container, (frozenset, set, list, tuple)):
         return item in container
     raise ConditionError(
         f"right-hand operand of 'in' is not a collection: {type(container).__name__}"
@@ -184,6 +188,26 @@ class Not:
 
     def evaluate(self, namespace: Mapping[str, object]) -> bool:
         return not self.inner.evaluate(namespace)
+
+
+def comparand_names(predicate: Comparison | And | Or | Not) -> frozenset[str]:
+    """Variables used as the RIGHT-hand side of any comparison in ``predicate``.
+
+    By the policy language's convention the left side describes the call and
+    the right side is what the operator allows: in ``recipient_domain not in
+    allowed_domains`` and ``amount >= max_amount``, the comparands are
+    ``allowed_domains`` and ``max_amount``. The engine never lets a call's own
+    arguments supply these names (see :class:`AuthorizationEngine`).
+    """
+    if isinstance(predicate, Comparison):
+        return (
+            frozenset({predicate.right.name})
+            if isinstance(predicate.right, Variable)
+            else frozenset()
+        )
+    if isinstance(predicate, Not):
+        return comparand_names(predicate.inner)
+    return comparand_names(predicate.left) | comparand_names(predicate.right)
 
 
 # A condition is either a leaf comparison or a Boolean combination of conditions.

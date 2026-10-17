@@ -34,6 +34,9 @@ from sentinel.trust.scorer import TrustScorer
 PHASE4_POLICY = textwrap.dedent(
     """
     policy_version: 4
+    config:
+      allowed_domains: ["corp.example"]
+      max_amount: 1000
     tools:
       web_fetch:
         rules: []
@@ -53,8 +56,6 @@ PHASE4_POLICY = textwrap.dedent(
             deny_always: true
     """
 )
-
-CONFIG: dict[str, object] = {"allowed_domains": ["corp.example"], "max_amount": 1000}
 
 
 @dataclass
@@ -127,7 +128,6 @@ async def proxy_session(
             scorer=scorer,
             agent_id=agent_id,
             trace_id=emitter.new_trace_id(),
-            authorization_config=CONFIG,
         )
         await proxy.start(user_input=user_input)
         async with connect(proxy.server) as agent_client:

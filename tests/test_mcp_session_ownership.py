@@ -190,6 +190,44 @@ async def test_owner_records_are_pruned_only_for_dead_sessions(
         assert all(s in owners for s in live), "a live session lost its owner"
 
 
+async def test_wire_session_capacity_is_reserved_at_initialize_per_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Idle initialized sessions count, but one tenant cannot crowd out another."""
+    async with _gateway(monkeypatch, max_sessions=1) as (client, gateway, _store):
+        acme = await _open_session(client, _ACME)
+        assert acme in gateway._transport_sessions  # noqa: SLF001
+
+        # No tools/call was made, yet the SDK transport already exists and must
+        # be counted. A second acme initialize is refused before it allocates.
+        full = await client.post(
+            "/",
+            headers=_ACME,
+            json=_rpc(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "agent", "version": "1"},
+                },
+            ),
+        )
+        assert full.status_code == 503
+        assert len(gateway._session_manager._server_instances) == 1  # noqa: SLF001
+
+        # The cap is per tenant: globex gets its own one-slot budget.
+        globex = await _open_session(client, _GLOBEX)
+        assert globex in gateway._transport_sessions  # noqa: SLF001
+        assert len(gateway._session_manager._server_instances) == 2  # noqa: SLF001
+
+        ended = await client.delete("/", headers={**_ACME, "mcp-session-id": acme})
+        assert ended.status_code == 200
+        assert acme not in gateway._transport_sessions  # noqa: SLF001
+
+        replacement = await _open_session(client, _ACME)
+        assert replacement in gateway._transport_sessions  # noqa: SLF001
+
+
 # --- abandoned sessions are reclaimed -------------------------------------------
 
 

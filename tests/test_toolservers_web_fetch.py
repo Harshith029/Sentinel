@@ -38,6 +38,7 @@ PUBLIC = _resolver({"public.test": ["93.184.216.34"], "evil.test": ["10.0.0.5"]}
         "http://[::1]/",  # ipv6 loopback
         "http://10.0.0.5/",  # private literal
         "http://192.168.1.1/",  # private literal
+        "http://100.100.100.200/latest/meta",  # RFC 6598 / cloud metadata
     ],
 )
 async def test_blocks_internal_ip_literals(url: str) -> None:
@@ -66,7 +67,11 @@ async def test_rejects_unresolvable_host() -> None:
 
 
 async def test_fetches_public_text() -> None:
-    def handler(_req: httpx.Request) -> httpx.Response:
+    def handler(req: httpx.Request) -> httpx.Response:
+        # The checked DNS answer is the actual socket/request target; HTTP
+        # virtual hosting still sees the public hostname it was asked for.
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
         return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<h1>hi</h1>")
 
     async with _client(handler) as c:
@@ -75,12 +80,27 @@ async def test_fetches_public_text() -> None:
     assert result.text == "<h1>hi</h1>" and not result.truncated
 
 
+async def test_https_hostname_uses_validated_ip_with_original_sni() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
+        assert req.extensions["sni_hostname"] == "public.test"
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"ok")
+
+    async with _client(handler) as c:
+        result = await fetch_url("https://public.test/secure", resolve=PUBLIC, client=c)
+    assert result.ok and result.text == "ok"
+
+
 # --- redirects are re-validated at every hop -----------------------------------
 
 
 async def test_redirect_to_private_is_blocked_on_second_hop() -> None:
     def handler(req: httpx.Request) -> httpx.Response:
-        assert req.url.host == "public.test"  # the private hop must NEVER be requested
+        # Only the first, public hop is ever requested: to its validated (pinned)
+        # address, still naming the original host. The private hop never is.
+        assert req.url.host == "93.184.216.34"
+        assert req.headers["host"] == "public.test"
         return httpx.Response(302, headers={"location": "http://10.0.0.1/internal"})
 
     async with _client(handler) as c:

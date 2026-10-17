@@ -33,8 +33,8 @@ class SpanEmitter:
     """Assigns monotonic per-trace ``seq`` and writes spans to a store.
 
     One emitter can serve many concurrent traces; ``seq`` is tracked per
-    ``trace_id``. ``span_id`` is minted from the OTel SDK id generator (never a
-    hand-rolled UUID, per §2). :meth:`emit` returns the written Span so the
+    ``trace_id``. ``span_id`` is minted from a cryptographic W3C-format id
+    generator (never a hand-rolled UUID, per §2). :meth:`emit` returns the written Span so the
     caller can use its ``span_id`` as the ``parent_span_id`` of a child event —
     this is how branching causality is recorded.
     """
@@ -47,7 +47,7 @@ class SpanEmitter:
 
     @staticmethod
     def new_trace_id() -> str:
-        """Mint a fresh OTel trace id (one agent task = one trace)."""
+        """Mint a fresh W3C trace id (one agent task = one trace)."""
         return new_trace_id_hex()
 
     async def emit(

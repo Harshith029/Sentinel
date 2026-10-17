@@ -53,6 +53,12 @@ class _Downstream:
         return self._results.get(name) or _text("ok")
 
 
+class _FailingDownstream(_Downstream):
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
+        self.calls.append((name, arguments))
+        raise RuntimeError("downstream diagnostic containing a secret")
+
+
 def _text(*texts: str) -> mcp_types.CallToolResult:
     return mcp_types.CallToolResult(
         content=[mcp_types.TextContent(type="text", text=t) for t in texts], isError=False
@@ -72,9 +78,28 @@ def _proxy(
         scorer=TrustScorer(emitter, load_default_trust_config()),
         agent_id="bypass-test",
         trace_id=emitter.new_trace_id(),
-        authorization_config=engine.config,
     )
     return proxy, downstream, store
+
+
+async def test_downstream_failure_is_recorded_and_taints_the_session() -> None:
+    """A failed call cannot skip ToolExecuted and leave the next call clean."""
+    engine = AuthorizationEngine(load_default_policy())
+    proxy, _, store = _proxy(engine)
+    failing = _FailingDownstream({})
+    proxy._downstream = failing  # noqa: SLF001 - install the failure boundary under test
+    await proxy.start(user_input="look something up, then send it")
+
+    result = await proxy.handle_call("web_fetch", {"url": "https://corp.example"})
+    assert result.isError is True
+    assert "secret" not in result_text(result)
+
+    refused = await proxy.handle_call("send_email", {"to": "cfo@corp.example", "body": "summary"})
+    assert refused.isError is True
+    assert "block-untrusted-origin" in result_text(refused)
+
+    rep = await replay(store, proxy.trace_id)
+    assert any(span.event_type == "ToolExecuted" for span in rep.ordered)
 
 
 # --- F6: every recipient is checked --------------------------------------------
@@ -104,6 +129,14 @@ def test_recipient_domain_reflects_every_recipient(
 def test_an_agent_cannot_supply_the_derived_field_without_a_recipient() -> None:
     normalized = default_normalize({"recipient_domain": "corp.example", "body": "x"})
     assert "recipient_domain" not in normalized  # so an allowlist rule fails closed
+
+
+def test_url_host_is_derived_from_the_url_not_claimed_by_the_agent() -> None:
+    normalized = default_normalize({"url": "https://evil.test/a", "url_host": "corp.example"})
+    assert normalized["url_host"] == "evil.test"
+
+    malformed = default_normalize({"url": "file:///etc/passwd"})
+    assert malformed["url_host"] == "<unparseable-url>"
 
 
 async def test_a_hidden_second_recipient_is_not_delivered() -> None:

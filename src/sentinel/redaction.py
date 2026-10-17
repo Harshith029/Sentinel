@@ -14,8 +14,9 @@ a new endpoint, a database dump, or a backup.
 What survives redaction is deliberately chosen so the record stays forensically
 useful:
 
-* **Argument names** — the shape of the call (``to`` / ``subject`` / ``body``) is
-  what an investigator reasons about; the values are what must not escape.
+* **Opaque argument-field tokens** — the shape of the call (which field repeats
+  across spans) remains visible, without persisting attacker-controlled field
+  names verbatim.
 * **Type and length** — distinguishes an empty string from a 4 KB document.
 * **A short fingerprint** — a truncated SHA-256, so the *same* secret can be
   correlated across calls and traces without disclosing it. Fingerprints are
@@ -77,13 +78,32 @@ def redact_value(value: JsonValue) -> JsonValue:
     if isinstance(value, list):
         return [redact_value(item) for item in value]
     if isinstance(value, dict):
-        return {str(k): redact_value(v) for k, v in value.items()}
+        return redact_arguments(value)
     return "<redacted>"  # pragma: no cover - JsonValue admits nothing else
 
 
+def redact_argument_name(name: str) -> str:
+    """Represent a caller-controlled argument key without storing it verbatim."""
+    return f"<redacted:key:{fingerprint(name)}>"
+
+
 def redact_arguments(arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    """Keep the argument NAMES, redact every value."""
-    return {name: redact_value(value) for name, value in arguments.items()}
+    """Redact every caller-controlled argument key and value.
+
+    A short keyed fingerprint lets an investigator correlate the same field
+    within this process. A suffix preserves a one-to-one mapping even if two
+    distinct keys happen to share that short fingerprint.
+    """
+    redacted: dict[str, JsonValue] = {}
+    for name, value in arguments.items():
+        base = redact_argument_name(name)
+        safe_name = base
+        collision = 2
+        while safe_name in redacted:
+            safe_name = f"{base}:{collision}"
+            collision += 1
+        redacted[safe_name] = redact_value(value)
+    return redacted
 
 
 def redact_payload(payload: EventPayload) -> EventPayload:

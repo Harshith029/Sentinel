@@ -13,6 +13,9 @@ fetcher is guarded up front and fails CLOSED:
   private, loopback, link-local (this also covers the ``169.254.169.254`` cloud
   metadata endpoint), reserved, multicast, or unspecified — unless
   ``allow_private`` is explicitly set (tests / trusted internal use);
+* for public hostnames, the validated address is pinned into the actual HTTP
+  connection while the original host remains the HTTP ``Host`` header and TLS
+  SNI name, closing DNS-rebinding between validation and connect;
 * redirects are followed manually and **each hop is re-validated** (an open
   redirect to ``http://10.0.0.1`` is blocked on the second hop, not the first);
 * the body is size-capped by streaming (a huge response cannot exhaust memory),
@@ -23,11 +26,6 @@ fetcher is guarded up front and fails CLOSED:
 The HTTP client and the DNS resolver are injectable so the guards and the happy
 path are unit-testable without real network access.
 
-Known limitation (documented, not hidden): validation resolves the host and then
-the client connects, so a DNS-rebinding attacker could in principle return a public
-IP at validation and a private IP at connect (TOCTOU). Pinning the validated IP into
-the connection is a follow-up hardening; for now the resolver check plus scheme and
-redirect re-validation cover the common SSRF vectors.
 """
 
 from __future__ import annotations
@@ -83,6 +81,15 @@ class FetchResult:
         return self.text
 
 
+@dataclass(frozen=True)
+class _PinnedTarget:
+    """One validated target, with its public DNS answer pinned for connection."""
+
+    request_url: httpx.URL
+    headers: dict[str, str]
+    extensions: dict[str, object]
+
+
 def _default_resolve(host: str) -> list[str]:
     """Resolve ``host`` to the set of candidate IP strings (A and AAAA)."""
     return [str(info[4][0]) for info in socket.getaddrinfo(host, None)]
@@ -97,11 +104,16 @@ def _ip_is_blocked(ip_text: str) -> bool:
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
+        # RFC 6598 shared address space is not reported as private by every
+        # supported Python ipaddress release. It is routable inside provider
+        # networks, including cloud metadata services, so web_fetch must never
+        # treat it as a public destination.
+        or ip in ipaddress.ip_network("100.64.0.0/10")
     )
 
 
-def validate_target(url: str, *, allow_private: bool, resolve: Resolver) -> str | None:
-    """Return an error string if ``url`` must be refused, else ``None`` (allowed)."""
+def _prepare_target(url: str, *, allow_private: bool, resolve: Resolver) -> _PinnedTarget | str:
+    """Validate a target and pin a public hostname to its checked address."""
     try:
         parsed = httpx.URL(url)
     except (httpx.InvalidURL, TypeError, ValueError):
@@ -111,8 +123,13 @@ def validate_target(url: str, *, allow_private: bool, resolve: Resolver) -> str 
     host = parsed.host
     if not host:
         return "URL has no host"
+    if parsed.username or parsed.password:
+        return "URL userinfo is not allowed"
     if allow_private:
-        return None
+        # This is an explicit trusted-internal-use escape hatch. Keep the
+        # requested URL intact rather than attempting to impose the public SSRF
+        # policy on it.
+        return _PinnedTarget(parsed, {"User-Agent": _USER_AGENT}, {})
     # Host may be an IP literal (no DNS) or a name (resolve it).
     try:
         candidates: Sequence[str] = [str(ipaddress.ip_address(host))]
@@ -126,7 +143,32 @@ def validate_target(url: str, *, allow_private: bool, resolve: Resolver) -> str 
     blocked = sorted({ip for ip in candidates if _ip_is_blocked(ip)})
     if blocked:
         return f"blocked private/internal address {blocked} for host {host!r}"
-    return None
+
+    # IP literals are already their own pinned endpoint. For DNS names, use one
+    # checked answer as the request destination. HTTP/1.1 virtual hosting still
+    # needs the original authority; HTTPS additionally needs it for certificate
+    # verification and SNI. httpcore (under httpx) honors ``sni_hostname`` when
+    # opening TLS, while the socket target comes from request_url's IP address.
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        request_url = parsed.copy_with(host=candidates[0])
+        authority = parsed.netloc.decode("ascii")
+        extensions: dict[str, object] = {}
+        if parsed.scheme == "https":
+            extensions["sni_hostname"] = host
+        return _PinnedTarget(
+            request_url,
+            {"User-Agent": _USER_AGENT, "Host": authority},
+            extensions,
+        )
+    return _PinnedTarget(parsed, {"User-Agent": _USER_AGENT}, {})
+
+
+def validate_target(url: str, *, allow_private: bool, resolve: Resolver) -> str | None:
+    """Return an error string if ``url`` must be refused, else ``None`` (allowed)."""
+    prepared = _prepare_target(url, allow_private=allow_private, resolve=resolve)
+    return prepared if isinstance(prepared, str) else None
 
 
 def _summarize_binary(content_type: str, size: int) -> str:
@@ -150,12 +192,15 @@ async def fetch_url(
     try:
         current = url
         for _hop in range(max_redirects + 1):
-            blocked = validate_target(current, allow_private=allow_private, resolve=resolve)
-            if blocked is not None:
-                return FetchResult(current, None, None, "", False, blocked)
+            prepared = _prepare_target(current, allow_private=allow_private, resolve=resolve)
+            if isinstance(prepared, str):
+                return FetchResult(current, None, None, "", False, prepared)
             try:
                 async with client.stream(
-                    "GET", current, headers={"User-Agent": _USER_AGENT}
+                    "GET",
+                    prepared.request_url,
+                    headers=prepared.headers,
+                    extensions=prepared.extensions,
                 ) as resp:
                     if resp.is_redirect and "location" in resp.headers:
                         current = str(httpx.URL(current).join(resp.headers["location"]))
@@ -175,9 +220,7 @@ async def fetch_url(
                         text = bytes(body).decode(resp.encoding or "utf-8", errors="replace")
                     else:
                         text = _summarize_binary(ctype, len(body))
-                    return FetchResult(
-                        str(resp.url), resp.status_code, ctype, text, truncated, None
-                    )
+                    return FetchResult(current, resp.status_code, ctype, text, truncated, None)
             except httpx.HTTPError as exc:
                 return FetchResult(
                     current,

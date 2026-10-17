@@ -2,7 +2,7 @@
 
 A policy is YAML::
 
-    policy_version: 3
+    policy_version: 4
     tools:
       send_email:
         rules:
@@ -32,6 +32,9 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
 
 from sentinel.authorization.ast import Predicate
 from sentinel.authorization.parser import PolicyParseError, parse_condition
@@ -40,6 +43,32 @@ from sentinel.provenance.sanitizer import schema_names
 
 class PolicyLoadError(ValueError):
     """Raised for any malformed policy — bad structure, shape, or predicate."""
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that refuses a duplicate key at every mapping level."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: MappingNode, deep: bool = False
+) -> dict[object, object]:
+    """Build one YAML mapping without silently replacing an earlier value."""
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
 
 
 class _RuleDoc(BaseModel):
@@ -173,7 +202,9 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
 def load_policy(text: str) -> CompiledPolicy:
     """Parse + validate + compile a policy from YAML text (raises on malformed)."""
     try:
-        data: Any = yaml.safe_load(text)
+        # _UniqueKeyLoader inherits SafeLoader; the custom mapping constructor
+        # only adds duplicate-key rejection.
+        data: Any = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506
     except yaml.YAMLError as exc:
         raise PolicyLoadError(f"invalid YAML: {exc}") from exc
     if not isinstance(data, dict):

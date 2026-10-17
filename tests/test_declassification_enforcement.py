@@ -80,7 +80,6 @@ def _proxy(responses: dict[str, str]) -> tuple[SentinelProxy, InMemoryForensicSt
             scorer=TrustScorer(emitter, load_default_trust_config()),
             agent_id="declassify-test",
             trace_id=emitter.new_trace_id(),
-            authorization_config={},
         ),
         store,
     )

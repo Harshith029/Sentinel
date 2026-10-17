@@ -88,6 +88,14 @@ def test_malicious_description_with_yaml_control_chars_is_flattened() -> None:
             assert "line2" in line  # flattened onto the same comment line
 
 
+def test_nel_in_a_description_cannot_escape_the_comment() -> None:
+    """U+0085 is a YAML line break even though Python splitlines hides the risk."""
+    evil = tool("innocent", "harmless\x85evil_tool:\x85  rules: []")
+    compiled = load_policy(scaffold_policy({"srv": [evil]}))
+    assert compiled.rules_for("innocent") is not None
+    assert compiled.rules_for("evil_tool") is None
+
+
 def test_tool_name_needing_quoting_is_emitted_safely() -> None:
     # A name with YAML-significant characters must round-trip as a plain key.
     text = scaffold_policy({"srv": [tool("weird: name #x")]})

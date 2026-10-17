@@ -21,6 +21,7 @@ from sentinel.demo.preflight import PreflightError, preflight
 from sentinel.demo.scenario import (
     DemoResult,
     hero_steps,
+    hero_user_input,
     run_demo_session,
     run_hero_attack,
     run_privilege_violation,
@@ -42,6 +43,10 @@ def _injection(result: DemoResult, target: str) -> object:
 def _authz(result: DemoResult, tool: str) -> object:
     (decision,) = [p for p in result.payloads("AuthorizationDecided") if p.tool_name == tool]  # type: ignore[attr-defined]
     return decision
+
+
+def test_hero_task_gives_a_live_agent_the_page_url() -> None:
+    assert OBVIOUS_URL in hero_user_input(OBVIOUS_URL)
 
 
 # --- DoD: hero (obvious) — Input Shield SHOULD fire, email NEVER sent ---------

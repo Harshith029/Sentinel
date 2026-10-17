@@ -28,6 +28,7 @@ from typing import Any
 import mcp.types as mcp_types
 
 from sentinel.authn import tenant_credentials, tenant_policy_paths
+from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import CompiledPolicy, load_default_policy, load_policy
 from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry, ReloadResult
 from sentinel.classifier import AttackClassifier
@@ -245,6 +246,9 @@ class RunManager:
         # Ownership writes in flight; awaited on shutdown so none is lost.
         self._pending_writes: set[asyncio.Task[Any]] = set()
         self._last_purge: float | None = None
+        # Persistent history is a startup import, not an index refill on every
+        # GET /runs. Re-adding every evicted trace defeated max_retained_runs.
+        self._persisted_runs_restored = False
 
     @property
     def bus(self) -> EventBus:
@@ -359,6 +363,16 @@ class RunManager:
         engine = self._registry.engine_for(tenant)
         if engine is None:
             raise ValueError(f"no policy registered for tenant {tenant!r}")
+
+        def current_engine() -> AuthorizationEngine:
+            # PolicyRegistry only drops a tenant through an internal mutation,
+            # but keep the failure explicit should that invariant ever change:
+            # serving a stale, revoked policy would be worse than refusing.
+            resolved = self._registry.engine_for(tenant)
+            if resolved is None:
+                raise RuntimeError(f"policy disappeared for tenant {tenant!r}")
+            return resolved
+
         trace_id = self._emitter.new_trace_id()
         proxy = SentinelProxy(
             downstream=downstream,
@@ -367,18 +381,11 @@ class RunManager:
             scorer=self._scorer,
             agent_id=agent_id,
             trace_id=trace_id,
-            # The TENANT'S OWN config, from their policy document. This used
-            # to be sentinel.demo.scenario.DEFAULT_CONFIG, so every live MCP
-            # session over the wire — the product path — was authorized against
-            # the demo's `allowed_domains: ["corp.example"]` and `max_amount`.
-            # An operator had no way to set it, so their allowlist rules either
-            # permitted a domain they never approved or fail-closed on every key
-            # the demo dict happened not to contain.
-            authorization_config=engine.config,
             input_shield=self._shield,
             tool_schema_cache=cache,
             catalogue_gate=catalogue_gate,
             tenant=tenant,
+            engine_provider=current_engine,
         )
         self._runs[trace_id] = RunRecord(
             run_id=trace_id,
@@ -470,7 +477,6 @@ class RunManager:
                 user_input=build.user_input,
                 demo_mode=self._demo_mode,
                 agent_id=record.agent_id,
-                authorization_config=build.config,
                 store=self._store,
                 emitter=self._emitter,
                 engine=engine,
@@ -500,7 +506,6 @@ class RunManager:
             user_input=build.user_input,
             demo_mode=self._demo_mode,
             agent_id="baseline-no-sentinel",
-            authorization_config=build.config,
             extra_pages=build.extra_pages,
             skip_sentinel=True,
         )
@@ -549,7 +554,7 @@ class RunManager:
         spans themselves are already in the store; this just rebuilds the
         minimal in-memory record the control plane keeps per run.
         """
-        if not isinstance(self._inner_store, SqliteForensicStore):
+        if self._persisted_runs_restored or not isinstance(self._inner_store, SqliteForensicStore):
             return 0
         if self._last_purge is None:
             self._last_purge = time.monotonic()
@@ -589,6 +594,10 @@ class RunManager:
                 status="completed",
             )
             restored += 1
+        # list_trace_ids is newest-first; preserving that order means eviction
+        # drops the oldest restored runs rather than the newest history.
+        self._prune_finished_runs()
+        self._persisted_runs_restored = True
         return restored
 
     async def replay(self, trace_id: str) -> TraceReplay:

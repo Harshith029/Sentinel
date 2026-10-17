@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
-from sentinel.authorization.ast import ConditionError
+from sentinel.authorization.ast import ConditionError, comparand_names
 from sentinel.authorization.policy import CompiledPolicy, CompiledRule
 from sentinel.forensics.events import AuthorizationDecided, Decision, RuleEvaluation
 from sentinel.labels import RETRIEVED_CONTENT, Label, trust_rank
@@ -33,16 +33,19 @@ _LOG: Final[logging.Logger] = logging.getLogger("sentinel.authorization.engine")
 
 @dataclass(frozen=True)
 class ToolCall:
-    """A normalized proposed call: name, typed args, provenance set, and config.
+    """A normalized proposed call: name, typed args, and provenance set.
 
     ``namespace`` is the flat evaluation context predicates resolve against,
-    layered by trust — see :meth:`namespace`.
+    excluding deployment configuration. The engine supplies configuration from
+    its compiled policy; a caller must never be able to supply decision inputs.
     """
 
     name: str
     arguments: Mapping[str, object] = field(default_factory=dict)
     provenance: frozenset[Label] = field(default_factory=frozenset)
-    config: Mapping[str, object] = field(default_factory=dict)
+    # Retained as an ignored compatibility field for callers built before policy
+    # configuration became engine-owned. It cannot affect authorization.
+    config: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     @property
     def is_tainted(self) -> bool:
@@ -56,19 +59,14 @@ class ToolCall:
 
         1. **arguments** — chosen by the agent, which may be acting on injected
            content. Untrusted.
-        2. **config** — declared by the operator in the policy document.
-        3. **provenance** — computed by SENTINEL itself and never supplied.
+        2. **provenance** — computed by SENTINEL itself and never supplied.
 
-        The ordering is load-bearing, not stylistic. With arguments written
-        LAST, a call carrying an argument named ``allowed_domains`` overwrote the
-        operator's allowlist and flipped a DENY to an ALLOW: attacker-selectable
-        input decided a deny rule. Trusted values must be written after
-        untrusted ones for exactly the same reason provenance is written after
-        both.
+        Deployment configuration is deliberately absent here: it is owned and
+        injected by :class:`AuthorizationEngine`, which prevents an agent or an
+        integration caller from supplying a permissive substitute.
         """
         ns: dict[str, object] = {}
         ns.update(self.arguments)
-        ns.update(self.config)
         ns["effective_provenance"] = self.provenance
         ns["is_tainted"] = self.is_tainted
         return ns
@@ -100,6 +98,14 @@ class AuthorizationEngine:
 
     def __init__(self, policy: CompiledPolicy) -> None:
         self._policy = policy
+        # Per tool: the names its rules compare AGAINST (allowlists, caps).
+        # Only the operator's config may supply them; see authorize().
+        self._comparands: dict[str, frozenset[str]] = {
+            tool: frozenset().union(
+                *(comparand_names(r.condition) for r in rules if r.condition is not None)
+            )
+            for tool, rules in policy.tools.items()
+        }
 
     @property
     def policy_version(self) -> int:
@@ -139,7 +145,22 @@ class AuthorizationEngine:
                 matched_rule_id=None,
             )
 
-        namespace = call.namespace
+        # Policy config is deployment-owned. Never use ``call.config`` here:
+        # callers may be agents, integrations, or stale clients and therefore
+        # cannot be an authority for a security decision.
+        #
+        # Nor may the call's own arguments stand in for a comparand. Config is
+        # layered over arguments, so when the operator DID declare
+        # `allowed_domains` an argument of that name was ignored; when they did
+        # NOT (a policy with no config block), the agent's argument was used,
+        # and an agent could pass the allowlist that judged it (review
+        # AUTHZ-1). Dropping those names makes an undeclared comparand missing,
+        # which is a fail-closed deny.
+        comparands = self._comparands.get(call.name, frozenset())
+        namespace = {k: v for k, v in call.arguments.items() if k not in comparands}
+        namespace.update(self._policy.config)
+        namespace["effective_provenance"] = call.provenance
+        namespace["is_tainted"] = call.is_tainted
         considered: list[RuleEvaluation] = []
         for rule in rules:
             matched, detail = self._evaluate(rule, namespace)

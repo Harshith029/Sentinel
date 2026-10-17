@@ -73,3 +73,9 @@ def test_in_on_non_collection_raises() -> None:
     cmp = Comparison(LabelLiteral("USER"), "in", Variable("x"))
     with pytest.raises(ConditionError):
         cmp.evaluate({"x": 5})
+
+
+def test_in_on_a_string_is_not_allowlist_membership() -> None:
+    cmp = Comparison(Variable("domain"), "in", Variable("allowed"))
+    with pytest.raises(ConditionError, match="not a collection"):
+        cmp.evaluate({"domain": "corp.example", "allowed": "corp.example"})

@@ -72,7 +72,6 @@ def _proxy(rng: random.Random) -> tuple[SentinelProxy, InMemoryForensicStore]:
         scorer=TrustScorer(emitter, load_default_trust_config(), enforce=False),
         agent_id="incremental",
         trace_id=emitter.new_trace_id(),
-        authorization_config={},
     )
     return proxy, store
 

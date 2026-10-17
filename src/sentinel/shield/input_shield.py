@@ -54,12 +54,16 @@ _BACKENDS: Final[frozenset[str]] = frozenset({"auto", "local", "azure"})
 _INJECTION_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"(?i)\bsystem\s*:"),  # fake system / role directive
     re.compile(r"(?i)ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions"),
-    # An imperative to email/exfiltrate to a *literal* address.
-    re.compile(
-        r"(?i)\b(?:e-?mail|send|forward|exfiltrate|leak)\b[^\n]{0,80}?"
-        r"[\w.+-]+@[\w-]+\.[\w.-]+"
-    ),
 )
+_EXFILTRATION_VERB: Final[re.Pattern[str]] = re.compile(
+    r"(?i)\b(?:e-?mail|send|forward|exfiltrate|leak)\b"
+)
+# Deliberately bounded, conventional email syntax. The previous all-in-one
+# expression could backtrack quadratically on attacker-controlled text.
+_EMAIL: Final[re.Pattern[str]] = re.compile(
+    r"(?i)\b[A-Z0-9][A-Z0-9._%+-]{0,63}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63})+\b"
+)
+_EXFILTRATION_WINDOW: Final[int] = 80
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,10 @@ class ShieldVerdict:
     attack_detected: bool
     shield: str
     detail: str | None = None
+    # The local detector is deliberately heuristic. It creates a forensic
+    # signal, but is not evidence strong enough to automatically lower trust or
+    # quarantine an agent. A remote high-confidence detector may opt in.
+    penalize_trust: bool = True
 
 
 def _local_detect(text: str) -> ShieldVerdict:
@@ -78,11 +86,25 @@ def _local_detect(text: str) -> ShieldVerdict:
                 attack_detected=True,
                 shield=_SHIELD_LOCAL,
                 detail=f"matched injection marker {pattern.pattern!r}",
+                penalize_trust=False,
+            )
+    # Search an explicitly bounded window after each imperative. Each search
+    # touches at most 80 characters, avoiding the catastrophic backtracking of
+    # the former combined regex while preserving the intended signal.
+    for verb in _EXFILTRATION_VERB.finditer(text):
+        email = _EMAIL.search(text, verb.end(), verb.end() + _EXFILTRATION_WINDOW)
+        if email is not None:
+            return ShieldVerdict(
+                attack_detected=True,
+                shield=_SHIELD_LOCAL,
+                detail="matched exfiltration verb followed by an email address",
+                penalize_trust=False,
             )
     return ShieldVerdict(
         attack_detected=False,
         shield=_SHIELD_LOCAL,
         detail="no known injection marker matched",
+        penalize_trust=False,
     )
 
 

@@ -21,8 +21,6 @@ from sentinel.observability import (
     log_quarantined,
 )
 
-CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
-
 
 def _capture(level: str = "INFO", fmt: str = "text") -> io.StringIO:
     stream = io.StringIO()
@@ -89,6 +87,21 @@ def test_trace_id_is_present_so_logs_correlate_with_forensic_spans() -> None:
     assert "dddddddddddd" in stream.getvalue()  # truncated trace id in text format
 
 
+def test_attacker_controlled_identifiers_cannot_forge_text_log_lines() -> None:
+    stream = _capture()
+    log_blocked(
+        "send_email\nWARNING forged",
+        reason="tainted\x1b[2J",
+        rule="r\rnext",
+        trace_id="d" * 32,
+        agent_id="agent\nnext",
+        provenance=(),
+    )
+    lines = [line for line in stream.getvalue().splitlines() if line]
+    assert len(lines) == 1
+    assert "\\x0a" in lines[0] and "\\x1b" in lines[0]
+
+
 # --- the security property: never log the payload -----------------------------
 
 
@@ -106,7 +119,6 @@ async def test_logs_never_contain_the_secrets_being_protected() -> None:
     result = await run_demo_session(
         ScriptedAgentDriver(steps),
         user_input="look up 42 and mail it",
-        authorization_config=CFG,
     )
     logged = stream.getvalue()
 

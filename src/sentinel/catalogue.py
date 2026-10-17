@@ -50,6 +50,21 @@ class CatalogueIntegrityError(RuntimeError):
     """Raised when a catalogue fails a check the caller treats as fatal."""
 
 
+class CatalogueCollisionError(CatalogueIntegrityError):
+    """A live downstream listed tool names that collide across servers."""
+
+    def __init__(self, collisions: Mapping[str, int]) -> None:
+        self.collisions = dict(collisions)
+        super().__init__(
+            "downstream tool-name collision (possible cross-server shadowing): "
+            + ", ".join(
+                f"{name!r} exposed by {count} servers"
+                for name, count in sorted(self.collisions.items())
+            )
+            + " — refusing to guess which server is authoritative"
+        )
+
+
 @dataclass(frozen=True)
 class CatalogueFinding:
     """One problem found in a tool catalogue."""
@@ -70,18 +85,17 @@ class CatalogueFinding:
 def fingerprint_tool(tool: mcp_types.Tool) -> str:
     """A stable hash of everything about a tool the model can read.
 
-    Covers name, description AND input schema: a rug pull that only rewrites the
-    schema (leaving the description intact) must be caught too. The schema is
-    serialized with sorted keys so semantically identical schemas hash equally.
+    Covers the complete MCP tool definition, including title, annotations,
+    output schema, icons, metadata, and execution hints. A rug pull that rewrites
+    any agent-visible part of a definition must be caught, not only a description
+    or input schema. The payload is serialized canonically so equivalent
+    definitions hash equally.
     """
     payload = json.dumps(
-        {
-            "name": tool.name,
-            "description": tool.description or "",
-            "inputSchema": tool.inputSchema or {},
-        },
+        _tool_surface_payload(tool),
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -182,16 +196,27 @@ def detect_shadowing(
 # --- tool poisoning -----------------------------------------------------------
 
 
-def describe_tool_surface(tool: mcp_types.Tool) -> str:
-    """The text a model actually reads for a tool (description + schema text).
+def _tool_surface_payload(tool: mcp_types.Tool) -> dict[str, object]:
+    """Return the complete serializable MCP definition presented to a client.
 
-    Injection can hide in the input schema's own descriptions, not just the
-    top-level one, so both are scanned.
+    ``Tool`` is a Pydantic model and its JSON-mode dump includes future
+    protocol-defined fields and accepted extension fields as well as the current
+    title/annotations/output-schema fields. Keeping one payload source prevents
+    the scanner and rug-pull fingerprint from drifting apart.
     """
-    parts = [tool.description or ""]
-    if tool.inputSchema:
-        parts.append(json.dumps(tool.inputSchema, sort_keys=True))
-    return "\n".join(p for p in parts if p)
+    return tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def describe_tool_surface(tool: mcp_types.Tool) -> str:
+    """The complete text a model could read from a tool definition.
+
+    Injection can hide in a title, annotation, output schema, icon URL, metadata,
+    or schema description. Preserve Unicode characters rather than escaping them
+    to make the shield inspect exactly the textual surface the agent sees.
+    """
+    return json.dumps(
+        _tool_surface_payload(tool), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
 
 
 async def scan_descriptions(
@@ -262,6 +287,22 @@ class CatalogueMonitor:
         self.checks += 1
         try:
             listed = await downstream.list_tools()  # type: ignore[attr-defined]
+        except CatalogueCollisionError as exc:
+            # ``ToolRouter`` correctly refuses a dynamic duplicate name. Treat
+            # that as catalogue drift, not a transient transport error, so it
+            # remains visible and its previously approved route is blocked.
+            self.last_error = None
+            found = [
+                CatalogueFinding(
+                    "shadowed_tool",
+                    name,
+                    "tool-name collision appeared after approval (possible cross-server shadowing)",
+                )
+                for name in sorted(exc.collisions)
+            ]
+            self.findings = tuple(dict.fromkeys((*self.findings, *found)))
+            self.drifted_tools.update(exc.collisions)
+            return self.findings
         except Exception as exc:  # noqa: BLE001 - transport failure is not drift
             self.last_error = f"{type(exc).__name__}: {exc}"
             return self.findings

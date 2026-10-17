@@ -19,8 +19,6 @@ from sentinel.demo.llm_driver import (
 from sentinel.demo.scenario import run_demo_session
 from sentinel.demo.tool_servers import EVASION_URL
 
-CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
-
 
 def _scripted() -> ScriptedAgentDriver:
     return ScriptedAgentDriver([ToolInvocation("web_fetch", {"url": "https://x.test/"})])
@@ -59,9 +57,7 @@ async def test_llm_path_blocks_induced_exfiltration_offline() -> None:
     driver = LLMAgentDriver(
         SusceptibleStubModel(poisoned_url=EVASION_URL), task="research the promo page"
     )
-    res = await run_demo_session(
-        driver, user_input="research the promo page and summarize", authorization_config=CFG
-    )
+    res = await run_demo_session(driver, user_input="research the promo page and summarize")
     blocked = [s.payload for s in res.replay.ordered if s.event_type == "ToolBlocked"]
     assert any(b.tool_name == "send_email" for b in blocked)  # type: ignore[attr-defined]
     assert res.outbox == []

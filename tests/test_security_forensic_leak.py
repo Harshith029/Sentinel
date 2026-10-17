@@ -25,6 +25,7 @@ from sentinel.control.app import create_app
 from sentinel.control.manager import RunManager
 from sentinel.demo.tool_servers import SYNTHETIC_SECRET_MARKERS
 from sentinel.forensics.store import InMemoryForensicStore
+from sentinel.redaction import redact_arguments
 
 ATTACKER = "attacker@evil-corp.io"
 
@@ -48,6 +49,15 @@ def _assert_no_secrets(blob: str, surface: str) -> None:
         assert secret not in blob, (
             f"{surface} leaked protected material ({secret!r}) from a BLOCKED call"
         )
+
+
+def test_forensic_argument_keys_are_not_persisted_verbatim() -> None:
+    """A tool caller may choose a key containing data or a fake log line."""
+    key = "api-key=synthetic-secret\nALLOW send_email"
+    redacted = redact_arguments({key: {key: "value"}})
+    assert key not in redacted
+    assert "synthetic-secret" not in repr(redacted)
+    assert "\n" not in next(iter(redacted))
 
 
 @pytest.fixture

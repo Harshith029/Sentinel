@@ -42,7 +42,10 @@ _PREDICATE_HELP: Final[tuple[str, ...]] = (
 )
 
 # Collapse anything that could escape a single-line YAML comment.
-_UNSAFE_COMMENT = re.compile(r"[\r\n  ]+")
+# YAML recognizes more line-break characters than just CR/LF. In particular,
+# U+0085 (NEL) terminates a YAML comment under the YAML 1.1 rules accepted by
+# PyYAML. Every one must be flattened because this text is downstream-owned.
+_UNSAFE_COMMENT = re.compile(r"[\r\n\x85  ]+")
 _MAX_COMMENT = 120
 
 

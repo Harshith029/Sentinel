@@ -6,6 +6,7 @@ import textwrap
 
 import pytest
 
+from sentinel.authorization.engine import AuthorizationEngine, ToolCall
 from sentinel.authorization.policy import (
     PolicyLoadError,
     load_default_policy,
@@ -15,7 +16,7 @@ from sentinel.authorization.policy import (
 
 def test_default_policy_loads_and_compiles() -> None:
     policy = load_default_policy()
-    assert policy.policy_version == 3
+    assert policy.policy_version == 4
     assert set(policy.tools) == {
         "web_fetch",
         "send_email",
@@ -23,8 +24,10 @@ def test_default_policy_loads_and_compiles() -> None:
         "delete_record",
         "transfer_funds",
     }
-    # web_fetch is a read tool with no deny rules → always allowed.
-    assert policy.rules_for("web_fetch") == ()
+    # web_fetch is an outbound read capability, so its URL host is policy-bound.
+    fetch_rules = policy.rules_for("web_fetch")
+    assert fetch_rules is not None
+    assert [rule.id for rule in fetch_rules] == ["fetch-host-allowlist"]
     # delete_record is a deny_always rule with no predicate.
     (rule,) = policy.rules_for("delete_record")  # type: ignore[misc]
     assert rule.deny_always is True
@@ -34,6 +37,13 @@ def test_default_policy_loads_and_compiles() -> None:
     assert send_rules is not None
     assert [r.id for r in send_rules] == ["block-untrusted-origin", "domain-allowlist"]
     assert all(r.condition is not None for r in send_rules)
+
+
+def test_default_policy_denies_a_web_fetch_to_an_unapproved_host() -> None:
+    engine = AuthorizationEngine(load_default_policy())
+    denied = engine.authorize(ToolCall(name="web_fetch", arguments={"url_host": "evil.example"}))
+    assert denied.decision == "DENY"
+    assert denied.matched_rule_id == "fetch-host-allowlist"
 
 
 def test_unknown_tool_has_no_rules() -> None:
@@ -56,6 +66,22 @@ def test_valid_inline_policy() -> None:
     policy = load_policy(VALID)
     assert policy.policy_version == 7
     assert policy.rules_for("send_email") is not None
+
+
+def test_duplicate_yaml_keys_are_rejected_instead_of_last_wins() -> None:
+    with pytest.raises(PolicyLoadError, match="duplicate key"):
+        load_policy(
+            """
+            policy_version: 1
+            tools:
+              send_email:
+                rules: []
+              send_email:
+                rules:
+                  - id: silently-replaced
+                    deny_always: true
+            """
+        )
 
 
 _MALFORMED = {

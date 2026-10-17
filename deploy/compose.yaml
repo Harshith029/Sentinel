@@ -32,10 +32,11 @@ services:
       SENTINEL_DEMO_MODE: ${SENTINEL_DEMO_MODE:-0}
       SENTINEL_DATA_DIR: /data
       SENTINEL_FORENSIC_RETENTION_DAYS: ${SENTINEL_FORENSIC_RETENTION_DAYS:-90}
-      # Your own MCP servers, as JSON: [{"name":"github","url":"https://..."}]
-      SENTINEL_MCP_SERVERS: ${SENTINEL_MCP_SERVERS:-}
-      # Your policy (generate one with `sentinel scaffold`), mounted below.
-      SENTINEL_POLICY_FILE: ${SENTINEL_POLICY_FILE:-}
+      # Compose omits a bare key when it is not supplied. That matters: an empty
+      # but present value masks sentinel.yaml and silently selects bundled demo
+      # settings instead of the operator's mounted configuration.
+      SENTINEL_MCP_SERVERS:
+      SENTINEL_POLICY_FILE:
     volumes:
       - sentinel-data:/data
       # - ./policy.yaml:/app/policy.yaml:ro   # then SENTINEL_POLICY_FILE=/app/policy.yaml

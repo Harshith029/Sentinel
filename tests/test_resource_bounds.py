@@ -28,7 +28,7 @@ from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import load_policy
 from sentinel.config import reset_settings_cache
 from sentinel.control.app import create_app
-from sentinel.control.events import EventBus
+from sentinel.control.events import EventBus, EventCursorExpired
 from sentinel.control.manager import RunManager, RunRecord
 from sentinel.forensics.emitter import SpanEmitter
 from sentinel.forensics.replay import replay
@@ -271,7 +271,7 @@ async def test_live_stream_subscribers_are_capped_and_slots_come_back() -> None:
 
 
 def test_the_event_buffer_cut_matches_a_linear_scan() -> None:
-    """The binary search must return exactly what the old linear scan did."""
+    """Valid cursors use the same efficient cut as the old linear scan."""
 
     async def fill() -> EventBus:
         bus = EventBus(buffer_limit=50)
@@ -291,9 +291,17 @@ def test_the_event_buffer_cut_matches_a_linear_scan() -> None:
     bus = asyncio.run(fill())
     buffered = bus.events_since(0)
     assert [e.event_id for e in buffered] == sorted(e.event_id for e in buffered)
-    for cursor in (0, 1, 50, 80, 119, 120, 10_000):
+    earliest = buffered[0].event_id
+    for cursor in (0, earliest - 1, 80, 119, 120):
         expected = [e for e in buffered if e.event_id > cursor]
         assert bus.events_since(cursor) == expected
+
+    # A cursor before the retained window or from a different process must not
+    # receive a partial back-fill while being told it resumed successfully.
+    with pytest.raises(EventCursorExpired):
+        bus.events_since(1)
+    with pytest.raises(EventCursorExpired):
+        bus.events_since(10_000)
 
 
 # --- downstream results --------------------------------------------------------

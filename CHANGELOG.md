@@ -157,6 +157,14 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- A failing injection scan (an Azure Prompt Shields outage, say) is recorded
+  as `scan failed` instead of raising. For a tool result the tool had already
+  run, so the call failed after its side effect.
+- The Azure OpenAI classifier builds its credential and client once and
+  fetches tokens off the event loop; it built a new credential and fetched a
+  token synchronously on every call. An Azure error falls back to the rule
+  label instead of failing `/runs/{id}/audit`, and a reply must be exactly
+  one class (`"not exfiltration"` was read as exfiltration).
 - Live MCP sessions no longer count against `SENTINEL_MAX_ACTIVE_RUNS`; with
   eight agents connected a tenant could not start a scenario. The gateway caps
   sessions itself.

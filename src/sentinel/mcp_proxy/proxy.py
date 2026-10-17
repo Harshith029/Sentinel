@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from email.utils import getaddresses
 from typing import Final
 from urllib.parse import urlsplit
@@ -70,6 +70,7 @@ from sentinel.observability import log_allowed, log_blocked, log_injection_flagg
 from sentinel.provenance.model import ProvenanceNode
 from sentinel.provenance.sanitizer import StructuredExtractor, get_schema
 from sentinel.shield import InputShield
+from sentinel.shield.input_shield import ShieldVerdict
 from sentinel.trust.scorer import TrustScorer
 
 PROXY_SERVER_NAME: Final[str] = "sentinel"
@@ -312,7 +313,7 @@ class SentinelProxy:
 
         # Layer-1 scan of the user prompt itself (§5), recorded for forensics.
         if self._input_shield is not None:
-            verdict = await self._input_shield.inspect_user_prompt(user_input)
+            verdict = await self._scan(self._input_shield.inspect_user_prompt, user_input)
             await self._emitter.emit(
                 InjectionScanned(
                     target="user_prompt",
@@ -324,6 +325,28 @@ class SentinelProxy:
                 parent_span_id=span.span_id,
             )
         return span
+
+    async def _scan(
+        self, inspect: Callable[[str], Awaitable[ShieldVerdict]], content: str
+    ) -> ShieldVerdict:
+        """Run one Layer-1 scan; a failing backend is recorded, not raised.
+
+        The scan informs, it does not block. For a tool result the tool has
+        already run by now, so an Azure Prompt Shields error used to fail the
+        call after its side effect, and withhold a result that is tainted
+        either way.
+        """
+        try:
+            return await inspect(content)
+        except Exception as exc:  # noqa: BLE001 - an outage must not fail the call
+            _LOG.warning("injection scan failed: %s", type(exc).__name__)
+            backend = self._input_shield.backend if self._input_shield is not None else "none"
+            return ShieldVerdict(
+                attack_detected=False,
+                shield=backend,
+                detail=f"scan failed: {type(exc).__name__}",
+                penalize_trust=False,
+            )
 
     def _build_server(self) -> Server:
         server: Server = Server(PROXY_SERVER_NAME)
@@ -616,7 +639,9 @@ class SentinelProxy:
             # does NOT block — Authorization is the backstop that actually stops
             # the exfiltration even when this shield is evaded.
             if self._input_shield is not None:
-                verdict = await self._input_shield.inspect_document(result_text(result))
+                verdict = await self._scan(
+                    self._input_shield.inspect_document, result_text(result)
+                )
                 await self._emitter.emit(
                     InjectionScanned(
                         target=f"tool_result:{name}",

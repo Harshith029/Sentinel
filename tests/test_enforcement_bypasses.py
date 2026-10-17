@@ -376,3 +376,37 @@ def test_a_line_break_in_an_address_is_unparseable() -> None:
     assert crlf["recipient_domain"] == "<unparseable-address>"
     plain = default_normalize({"to": "cfo@corp.example"})
     assert plain["recipient_domain"] == "corp.example"
+
+
+async def test_a_failing_injection_scan_does_not_fail_a_call_that_already_ran() -> None:
+    """An Azure Prompt Shields error propagated after the tool's side effect."""
+
+    class _BrokenShield:
+        backend = "azure"
+
+        async def inspect_user_prompt(self, content: str) -> object:
+            raise httpx.ConnectError("content safety unreachable")
+
+        async def inspect_document(self, content: str) -> object:
+            raise httpx.ConnectError("content safety unreachable")
+
+    store = InMemoryForensicStore()
+    emitter = SpanEmitter(store)
+    downstream = _Downstream({"read_page": _text("page body")})
+    proxy = SentinelProxy(
+        downstream=downstream,  # type: ignore[arg-type]
+        emitter=emitter,
+        engine=AuthorizationEngine(load_policy(USER_ONLY)),
+        scorer=TrustScorer(emitter, load_default_trust_config()),
+        agent_id="shield-outage",
+        trace_id=emitter.new_trace_id(),
+        input_shield=_BrokenShield(),  # type: ignore[arg-type]
+    )
+    await proxy.start(user_input="read the page")
+    result = await proxy.handle_call("read_page", {})
+    assert not result.isError and result_text(result) == "page body"
+    assert downstream.calls == [("read_page", {})]
+    rep = await replay(store, proxy.trace_id)
+    scans = [s.payload for s in rep.ordered if s.event_type == "InjectionScanned"]
+    assert len(scans) == 2
+    assert all("scan failed" in (s.detail or "") for s in scans)  # type: ignore[attr-defined]

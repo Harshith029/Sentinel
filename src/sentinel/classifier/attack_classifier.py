@@ -8,14 +8,21 @@ story past commodity Prompt-Shields without entangling the core pipeline).
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from sentinel.config import Settings
+
+if TYPE_CHECKING:
+    from openai import AsyncAzureOpenAI
 
 AttackClass = Literal[
     "exfiltration", "privilege_escalation", "instruction_override", "unclassified"
 ]
+_LOG: Final[logging.Logger] = logging.getLogger("sentinel.classifier")
+
 ATTACK_CLASSES: Final[tuple[AttackClass, ...]] = (
     "exfiltration",
     "privilege_escalation",
@@ -118,6 +125,8 @@ class AttackClassifier:
         self._api_version = azure_openai_api_version
         configured = bool(azure_openai_endpoint and azure_openai_deployment)
         self._backend = "azure_openai" if (configured and not demo_mode) else "rules"
+        # Built on first use and reused; see _azure_client.
+        self._client: AsyncAzureOpenAI | None = None
 
     @property
     def backend(self) -> str:
@@ -136,7 +145,46 @@ class AttackClassifier:
     async def classify(self, attempt: BlockedAttempt) -> AttackLabel:
         if self._backend == "rules":
             return _rule_label(attempt)
-        return await self._classify_azure(attempt)
+        try:
+            return await self._classify_azure(attempt)
+        except Exception as exc:  # noqa: BLE001 - a label is not worth a failed audit
+            # An Azure outage or auth error used to fail the whole audit
+            # endpoint. The block itself happened either way; label it by rule.
+            _LOG.warning("Azure OpenAI classification failed: %s", type(exc).__name__)
+            fallback = _rule_label(attempt)
+            return AttackLabel(
+                fallback.attack_class,
+                f"{fallback.rationale} (Azure OpenAI unavailable)",
+                _CLASSIFIER_RULES,
+            )
+
+    def _azure_client(self) -> AsyncAzureOpenAI:
+        """One client and one credential for the classifier's lifetime.
+
+        A new DefaultAzureCredential per call meant a fresh token fetch every
+        time, made synchronously on the event loop. Built once, the credential
+        caches its token, and the fetch runs in a worker thread. (The async
+        credential would need aiohttp, which SENTINEL does not depend on.)
+        """
+        if self._client is None:
+            if not self._endpoint:
+                raise RuntimeError("Azure OpenAI endpoint not configured")
+            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            from openai import AsyncAzureOpenAI
+
+            sync_provider = get_bearer_token_provider(
+                DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+            )
+
+            async def token_provider() -> str:
+                return await asyncio.to_thread(sync_provider)
+
+            self._client = AsyncAzureOpenAI(
+                azure_endpoint=self._endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version=self._api_version or "2024-10-21",
+            )
+        return self._client
 
     async def _classify_azure(self, attempt: BlockedAttempt) -> AttackLabel:
         """AZURE MODE: one chat completion → one label (openai 2.x surface).
@@ -150,17 +198,7 @@ class AttackClassifier:
                 "Azure OpenAI endpoint/deployment not configured; "
                 "use DEMO MODE or provide credentials."
             )
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-        from openai import AsyncAzureOpenAI
-
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-        )
-        client = AsyncAzureOpenAI(
-            azure_endpoint=self._endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=self._api_version or "2024-10-21",
-        )
+        client = self._azure_client()
         user = (
             f"tool={attempt.tool_name}; matched_rule={attempt.matched_rule_id}; "
             f"blocked_by={attempt.blocked_by}; tainted={attempt.is_tainted}; "
@@ -175,9 +213,11 @@ class AttackClassifier:
             temperature=0,
             max_tokens=8,
         )
-        raw = (completion.choices[0].message.content or "").strip().lower()
+        raw = (completion.choices[0].message.content or "").strip().strip(".\"'`").lower()
+        # The whole reply must be one class. A substring match took "not
+        # exfiltration" as exfiltration.
         for cls in ATTACK_CLASSES:
-            if cls in raw:
+            if raw == cls:
                 return AttackLabel(cls, "labelled by Azure OpenAI", _CLASSIFIER_AZURE)
         # Model returned something off-script → fall back, but record the backend.
         fallback = _rule_label(attempt)

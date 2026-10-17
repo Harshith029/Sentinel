@@ -84,13 +84,29 @@ catalogue_strict: true
 # here without editing it.
 """
 
+def _flag(value: object) -> str:
+    """A config-file boolean as the env var expects it.
+
+    Converted by truthiness, the quoted string "false" (common in YAML written
+    by hand) used to mean on.
+    """
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return "1"
+    if text in {"0", "false", "no", "off"}:
+        return "0"
+    raise ConfigError(f"expected a boolean (true/false), got {value!r}")
+
+
 # config key -> (env var, serializer)
 _ENV_MAP: dict[str, tuple[str, Any]] = {
     "servers": ("SENTINEL_MCP_SERVERS", json.dumps),
     "policy": ("SENTINEL_POLICY_FILE", str),
-    "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", lambda v: "1" if v else "0"),
+    "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", _flag),
     "catalogue_approvals": ("SENTINEL_CATALOGUE_APPROVALS", json.dumps),
-    "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", lambda v: "1" if v else "0"),
+    "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", _flag),
     "downstream_timeout_seconds": ("SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", str),
     "api_token": ("SENTINEL_API_TOKEN", str),
 }
@@ -98,6 +114,13 @@ _ENV_MAP: dict[str, tuple[str, Any]] = {
 
 class ConfigError(RuntimeError):
     """Raised when the config file is missing or malformed."""
+
+
+# Every key the config file may contain: the env-backed ones above plus those
+# read by the commands themselves (see _resolve).
+_CONFIG_KEYS: frozenset[str] = frozenset(
+    {*_ENV_MAP, "host", "port", "dashboard", "log_level", "log_format"}
+)
 
 
 def load_config(path: str | os.PathLike[str] | None) -> dict[str, Any]:
@@ -116,6 +139,13 @@ def load_config(path: str | os.PathLike[str] | None) -> dict[str, Any]:
         return {}
     if not isinstance(data, dict):
         raise ConfigError(f"{target}: top level must be a mapping")
+    # A misspelt key used to be ignored without a word, leaving the operator
+    # believing a setting was in force.
+    unknown = sorted(str(key) for key in data if key not in _CONFIG_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"{target}: unknown key(s) {unknown}; known keys: {sorted(_CONFIG_KEYS)}"
+        )
     return data
 
 
@@ -132,7 +162,10 @@ def apply_config(config: dict[str, Any]) -> None:
         # turn a fresh config into a hard downstream error.
         if value is None or value == [] or value == "":
             continue
-        if env_var not in os.environ:
+        # Set-but-empty counts as unset, as Settings itself reads it: an empty
+        # SENTINEL_POLICY_FILE used to mask the file's policy and select the
+        # bundled example one.
+        if not os.environ.get(env_var):
             os.environ[env_var] = serialize(value)
 
 
@@ -187,7 +220,9 @@ def _is_committable(target: Path) -> bool:
         # path that looks like a flag from being read as one. `git` is resolved
         # from PATH on purpose — that is the git the operator actually uses.
         proc = subprocess.run(  # noqa: S603
-            ["git", "check-ignore", "-q", "--", str(target)],  # noqa: S607
+            # The NAME, since cwd is already the parent: the full relative
+            # path, read from there, named parent/parent/file.
+            ["git", "check-ignore", "-q", "--", target.name],  # noqa: S607
             cwd=target.parent if target.parent.exists() else None,
             capture_output=True,
             timeout=5,

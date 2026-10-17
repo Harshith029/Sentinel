@@ -116,7 +116,12 @@ def _resolve_backend(
         raise ValueError(
             f"SENTINEL_SHIELD must be one of {sorted(_BACKENDS)}, got {requested!r}"
         )
-    if demo_mode or requested == "local":
+    if requested == "local":
+        return "local"
+    # Demo mode picks the free backend for "auto" only. An explicit
+    # SENTINEL_SHIELD=azure used to be quietly downgraded to the local regexes
+    # whenever demo mode was on, which is the default.
+    if demo_mode and requested == "auto":
         return "local"
     configured = bool(endpoint and api_key)
     if requested == "azure" and not configured:

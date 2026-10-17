@@ -50,3 +50,25 @@ def test_shield_from_settings_carries_azure_content_safety() -> None:
 def test_shield_from_settings_is_demo_when_unconfigured() -> None:
     shield = InputShield.from_settings(Settings(demo_mode=True))
     assert shield._demo_mode is True  # noqa: SLF001
+
+
+def test_an_explicit_azure_shield_is_not_downgraded_by_demo_mode() -> None:
+    """Demo mode (the default) used to turn SENTINEL_SHIELD=azure into the local regexes."""
+    import pytest
+
+    configured = Settings(
+        demo_mode=True,
+        shield_backend="azure",
+        azure_content_safety_endpoint="https://cs.example",
+        azure_content_safety_key="k",
+    )
+    assert InputShield.from_settings(configured).backend == "azure"
+    with pytest.raises(ValueError, match="SENTINEL_SHIELD=azure"):
+        InputShield.from_settings(Settings(demo_mode=True, shield_backend="azure"))
+    # "auto" in demo mode still picks the free local backend.
+    auto = Settings(
+        demo_mode=True,
+        azure_content_safety_endpoint="https://cs.example",
+        azure_content_safety_key="k",
+    )
+    assert InputShield.from_settings(auto).backend == "local"

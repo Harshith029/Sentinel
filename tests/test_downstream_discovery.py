@@ -236,3 +236,14 @@ def test_the_downstream_deadline_is_an_operator_setting(monkeypatch: pytest.Monk
             get_settings()
     finally:
         reset_settings_cache()
+
+
+def test_connection_errors_do_not_print_credentials_in_the_url() -> None:
+    from sentinel.downstream import _display_url
+
+    shown = _display_url("https://user:s3cret@mcp.example/gh?api_key=s3cret#frag")
+    assert "s3cret" not in shown and "frag" not in shown
+    assert shown == "https://mcp.example/gh"
+    with pytest.raises(DownstreamConfigError) as err:
+        DownstreamServer(name="x", url="ftp://user:s3cret@mcp.example/")
+    assert "s3cret" not in str(err.value)

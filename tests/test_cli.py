@@ -31,7 +31,7 @@ from sentinel.config import reset_settings_cache
 _CLI_VARS = (
     "SENTINEL_MCP_SERVERS", "SENTINEL_POLICY_FILE",
     "SENTINEL_CATALOGUE_STRICT", "SENTINEL_REAL_WEB_FETCH", "SENTINEL_API_TOKEN",
-    "SENTINEL_CATALOGUE_APPROVALS",
+    "SENTINEL_CATALOGUE_APPROVALS", "SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS",
 )
 
 
@@ -408,3 +408,54 @@ def test_check_warns_when_the_agents_token_is_also_the_operators(
     reset_settings_cache()
     assert main(["check"]) == 0
     assert "also the operator credential" not in capsys.readouterr().out
+
+
+# --- config file parsing ---------------------------------------------------------
+
+
+def test_a_quoted_false_in_the_config_file_means_off() -> None:
+    """Converted by truthiness, "false" (a non-empty string) used to mean on."""
+    from sentinel.cli import ConfigError, apply_config
+
+    apply_config({"real_web_fetch": "false", "catalogue_strict": "true"})
+    assert os.environ["SENTINEL_REAL_WEB_FETCH"] == "0"
+    assert os.environ["SENTINEL_CATALOGUE_STRICT"] == "1"
+    os.environ.pop("SENTINEL_REAL_WEB_FETCH")
+    with pytest.raises(ConfigError, match="boolean"):
+        apply_config({"real_web_fetch": "maybe"})
+
+
+def test_a_misspelt_config_key_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:
+    from sentinel.cli import ConfigError, load_config
+
+    Path(DEFAULT_CONFIG).write_text("catalog_strict: false\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="catalog_strict"):
+        load_config(None)
+
+
+def test_a_set_but_empty_env_var_does_not_mask_the_file() -> None:
+    """compose and some platforms export variables that are present but empty."""
+    from sentinel.cli import apply_config
+
+    os.environ["SENTINEL_POLICY_FILE"] = ""
+    apply_config({"policy": "./policy.yaml"})
+    assert os.environ["SENTINEL_POLICY_FILE"] == "./policy.yaml"
+
+
+def test_the_commit_warning_checks_the_right_path_for_a_nested_config(
+    tmp_path: Path,
+) -> None:
+    """`sub/sentinel.yaml` was checked as `sub/sub/sentinel.yaml`."""
+    import subprocess
+
+    from sentinel.cli import _is_committable
+
+    if subprocess.run(["git", "init", "-q"], cwd=tmp_path).returncode != 0:  # noqa: S603,S607
+        pytest.skip("git is not available")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / ".gitignore").write_text("/sub/sentinel.yaml\n", encoding="utf-8")
+    nested = Path("sub") / "sentinel.yaml"  # relative, as `sentinel init -c` gets it
+    nested.write_text("{}\n", encoding="utf-8")
+    assert _is_committable(nested) is False  # ignored: no warning
+    Path(".gitignore").write_text("", encoding="utf-8")
+    assert _is_committable(nested) is True

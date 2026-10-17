@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- `sentinel.yaml` rejects unknown keys (a misspelt key was ignored), and
+  booleans must be booleans: the quoted string `"false"` used to mean on.
+  An environment variable that is set but empty no longer masks the file's
+  value.
 - Policy language: `true` and `false` are literals (they parsed as variables,
   so a call's argument named `true` set them), and `null`/`None` are refused.
   A boolean never equals a number. `==` reads a numeric string as a number,
@@ -64,6 +68,16 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- `web_fetch` resolves DNS off the event loop. The blocking `getaddrinfo`
+  stalled every session while a lookup ran. It also has an overall deadline
+  (`deadline`, 30 s): a server sending a byte just inside the per-read
+  timeout kept a fetch going indefinitely. Malformed hosts (a label over 63
+  characters, invalid IDNA) are error results; they raised out of a function
+  documented never to.
+- Downstream connection errors no longer print a server URL's user info,
+  query or fragment, where URLs carry credentials.
+- An explicit `SENTINEL_SHIELD=azure` is honoured in demo mode, the default.
+  It was silently replaced by the local regexes.
 - `/mcp` refuses websocket connections at the handshake. `Mount` routes them
   to the gateway too, and they went to the MCP SDK before the credential
   check.
@@ -127,6 +141,10 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- `sentinel scaffold` kept a long tool name with spaces on one line; PyYAML
+  folded it at 80 characters and the generated policy did not load.
+- `sentinel init`'s "this file could be committed" check looked at
+  `sub/sub/sentinel.yaml` for a config at `sub/sentinel.yaml`.
 - A session retired for idleness is told to open a new session. It was told
   the gateway was at capacity and to retry, which could never succeed.
 - `/capabilities` reported "Azure Monitor · Application Insights" as active

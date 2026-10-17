@@ -46,6 +46,20 @@ from sentinel.mcp_proxy.router import (
 )
 
 
+def _display_url(url: str) -> str:
+    """A server URL fit for an error message or a log line.
+
+    Without user info, query or fragment: those are where a URL carries a
+    credential (``https://user:token@host`` or ``?api_key=``), and connection
+    errors are printed and logged.
+    """
+    try:
+        parsed = httpx.URL(url)
+        return str(parsed.copy_with(userinfo=b"", query=None, fragment=None))
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return "<unparseable url>"
+
+
 class DownstreamConfigError(ValueError):
     """Raised when the declared downstream-server configuration is invalid."""
 
@@ -64,7 +78,8 @@ class DownstreamServer:
             raise DownstreamConfigError(f"server {self.name!r}: 'url' must be a non-empty string")
         if not self.url.startswith(("http://", "https://")):
             raise DownstreamConfigError(
-                f"server {self.name!r}: url must start with http:// or https://, got {self.url!r}"
+                f"server {self.name!r}: url must start with http:// or https://, "
+                f"got {_display_url(self.url)!r}"
             )
 
 
@@ -344,7 +359,8 @@ async def connect_downstream(
             )
         except Exception as exc:  # noqa: BLE001 - surface any connect failure clearly
             raise DownstreamConfigError(
-                f"downstream server {server.name!r} at {server.url}: connection failed: {exc}"
+                f"downstream server {server.name!r} at {_display_url(server.url)}: "
+                f"connection failed: {exc}"
             ) from exc
         sessions[server.name] = session
     return await build_topology(sessions, operation_timeout_seconds=operation_timeout_seconds)

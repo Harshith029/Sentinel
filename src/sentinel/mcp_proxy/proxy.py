@@ -37,6 +37,7 @@ Claude, or any specific client. Any MCP speaker is secured identically.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from email.utils import getaddresses
@@ -96,6 +97,12 @@ def _recipient_domains(value: object) -> list[str] | None:
     domains: list[str] = []
     for item in items:
         if not isinstance(item, str):
+            return None
+        # A control character has no place in an address, and it is where a
+        # downstream mail tool and this parser can disagree: the raw value is
+        # what gets forwarded, so "cfo@corp.example" + CRLF + "Bcc: ..." passed an
+        # allowlist here and could add headers there.
+        if any(ord(char) < 32 or ord(char) == 127 for char in item):
             return None
         for _name, address in getaddresses([item]):
             if "@" not in address:
@@ -182,6 +189,10 @@ def _result_size(result: mcp_types.CallToolResult) -> int:
     embedded resources carry ``text`` or ``blob``, any of which can be large.
     """
     total = 0
+    if result.structuredContent is not None:
+        # Forwarded to the agent like the content blocks, so it counts too; it
+        # used to be outside the cap entirely.
+        total += len(json.dumps(result.structuredContent, default=str).encode("utf-8", "replace"))
     for block in result.content:
         for field in ("text", "data"):
             value = getattr(block, field, None)
@@ -286,12 +297,18 @@ class SentinelProxy:
         provenance node (label ``USER`` by default); the context frontier starts
         as just this node.
         """
-        span = await self._emitter.emit(
-            InputReceived(origin_label=origin_label, content=user_input),
-            trace_id=self._trace_id,
-        )
-        self._root_span_id = span.span_id
-        self._lineage = frozenset({origin_label})
+        async with self._lock:
+            # Once only. A second start() reset the lineage to the origin label
+            # alone, clearing whatever taint the session had picked up, and it
+            # did so without the lock every tool call takes.
+            if self._root_span_id is not None:
+                raise RuntimeError("this proxy session has already been started")
+            span = await self._emitter.emit(
+                InputReceived(origin_label=origin_label, content=user_input),
+                trace_id=self._trace_id,
+            )
+            self._root_span_id = span.span_id
+            self._lineage = frozenset({origin_label})
 
         # Layer-1 scan of the user prompt itself (§5), recorded for forensics.
         if self._input_shield is not None:

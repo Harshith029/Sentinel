@@ -68,6 +68,13 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- `structuredContent` counts toward `SENTINEL_MAX_RESULT_BYTES`; it reached
+  the agent outside the cap.
+- A proxy session can be started once. A second `start()` reset the lineage
+  to the user's label alone, clearing the session's taint.
+- A recipient address containing a control character is unparseable, so an
+  allowlist denies it. The raw value is what is forwarded, and a CRLF in it
+  could add mail headers downstream.
 - `web_fetch` resolves DNS off the event loop. The blocking `getaddrinfo`
   stalled every session while a lookup ran. It also has an overall deadline
   (`deadline`, 30 s): a server sending a byte just inside the per-read

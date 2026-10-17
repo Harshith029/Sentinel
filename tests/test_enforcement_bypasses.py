@@ -330,3 +330,49 @@ async def test_the_agent_is_told_which_rule_refused_it_but_not_the_internals() -
     rep = await replay(store, proxy.trace_id)
     blocked = [s.payload for s in rep.ordered if s.event_type == "ToolBlocked"]
     assert "secret_allowlist_name" in blocked[0].reason  # type: ignore[attr-defined]
+
+
+# --- review PP-08 / PP-09 / PP-10 -------------------------------------------------
+
+
+async def test_structured_content_counts_toward_the_result_size_cap() -> None:
+    """structuredContent reaches the agent but was outside the size cap."""
+    huge = mcp_types.CallToolResult(
+        content=[mcp_types.TextContent(type="text", text="small")],
+        structuredContent={"blob": "x" * 50_000},
+        isError=False,
+    )
+    store = InMemoryForensicStore()
+    emitter = SpanEmitter(store)
+    proxy = SentinelProxy(
+        downstream=_Downstream({"read_page": huge}),  # type: ignore[arg-type]
+        emitter=emitter,
+        engine=AuthorizationEngine(load_policy(USER_ONLY)),
+        scorer=TrustScorer(emitter, load_default_trust_config()),
+        agent_id="size-test",
+        trace_id=emitter.new_trace_id(),
+        max_result_bytes=10_000,
+    )
+    await proxy.start(user_input="fetch")
+    result = await proxy.handle_call("read_page", {})
+    assert result.isError and "limit" in result_text(result)
+    assert result.structuredContent is None
+
+
+async def test_a_session_cannot_be_started_twice_to_clear_its_taint() -> None:
+    """start() reset the lineage to {USER}, without the lock calls take."""
+    proxy, _, _ = _proxy(AuthorizationEngine(load_default_policy()))
+    await proxy.start(user_input="look something up")
+    await proxy.handle_call("web_fetch", {"url": "https://corp.example"})
+    with pytest.raises(RuntimeError, match="already been started"):
+        await proxy.start(user_input="fresh start")
+    refused = await proxy.handle_call("send_email", {"to": "cfo@corp.example", "body": "x"})
+    assert refused.isError and "block-untrusted-origin" in result_text(refused)
+
+
+def test_a_line_break_in_an_address_is_unparseable() -> None:
+    """The raw value is forwarded; a CRLF in it can add mail headers downstream."""
+    crlf = default_normalize({"to": "cfo@corp.example\r\nBcc: cfo2@corp.example"})
+    assert crlf["recipient_domain"] == "<unparseable-address>"
+    plain = default_normalize({"to": "cfo@corp.example"})
+    assert plain["recipient_domain"] == "corp.example"

@@ -212,7 +212,14 @@ async def test_wire_session_capacity_is_reserved_at_initialize_per_tenant(
                 },
             ),
         )
-        assert full.status_code == 503
+        # Refused inside the protocol, so an MCP client raises McpError rather
+        # than crashing its transport on an HTTP error status.
+        assert full.status_code == 200
+        refusal = full.json()
+        assert refusal["id"] == 1
+        assert refusal["error"]["code"] == -32000
+        assert "session limit" in refusal["error"]["message"]
+        assert "mcp-session-id" not in full.headers
         assert len(gateway._session_manager._server_instances) == 1  # noqa: SLF001
 
         # The cap is per tenant: globex gets its own one-slot budget.

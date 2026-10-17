@@ -260,7 +260,12 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"policy          : {source} - valid; tenants: {tenants}")
 
     # --- authentication: would serve answer anyone? ----------------------------
-    from sentinel.authn import auth_configured, tenant_credentials
+    from sentinel.authn import (
+        OPERATOR_SHARED_WARNING,
+        auth_configured,
+        operator_credential_is_shared,
+        tenant_credentials,
+    )
 
     if auth_configured():
         kinds = []
@@ -271,6 +276,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         if settings.admin_token:
             kinds.append("operator token")
         print(f"auth            : {', '.join(kinds)}")
+        if operator_credential_is_shared():
+            print(f"  WARNING: {OPERATOR_SHARED_WARNING}")
     elif settings.allow_anonymous:
         print(
             "auth            : ANONYMOUS (SENTINEL_ALLOW_ANONYMOUS=1) - anyone who "
@@ -442,6 +449,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from sentinel.control.app import create_app
 
     app = create_app(enable_mcp_gateway=True, dashboard=dashboard)
+
+    from sentinel.authn import OPERATOR_SHARED_WARNING, operator_credential_is_shared
+
+    if operator_credential_is_shared():
+        print(f"WARNING: {OPERATOR_SHARED_WARNING}", file=sys.stderr)
     print(f"SENTINEL proxy on http://{host}:{port}/mcp")
     suffix = "" if dashboard else " (dashboard disabled)"
     print(f"  point your agent's MCP endpoint at that URL{suffix}")

@@ -14,6 +14,7 @@ Each of these was unbounded and demonstrated before it was fixed:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -264,10 +265,31 @@ async def test_live_stream_subscribers_are_capped_and_slots_come_back() -> None:
         assert done.status_code == 200
         assert slots.active == 0, "a finished stream leaked its subscriber slot"
 
-        slots.active = 1  # one subscriber already holding the only slot
+        slots.by_tenant["*"] = 1  # one subscriber already holding the only slot
         refused = await client.get("/events/stream", params={"follow": "false"})
         assert refused.status_code == 503
-        slots.active = 0
+        slots.by_tenant.clear()
+
+
+async def test_one_tenant_cannot_take_every_live_stream_slot() -> None:
+    """The subscriber cap is per tenant (it used to be one shared count)."""
+    tokens = json.dumps({"acme": "tok-acme", "globex": "tok-globex"})
+    async with _client(
+        SENTINEL_MAX_SSE_SUBSCRIBERS="1",
+        SENTINEL_ALLOW_ANONYMOUS="0",
+        SENTINEL_API_TOKENS=tokens,
+    ) as (client, _, app):
+        app.state.sse_streams.by_tenant["acme"] = 1  # acme holds its only slot
+        params = {"follow": "false"}
+        acme = await client.get(
+            "/events/stream", params=params, headers={"authorization": "Bearer tok-acme"}
+        )
+        globex = await client.get(
+            "/events/stream", params=params, headers={"authorization": "Bearer tok-globex"}
+        )
+        assert acme.status_code == 503
+        assert globex.status_code == 200
+        assert app.state.sse_streams.by_tenant == {"acme": 1}, "globex's slot leaked"
 
 
 def test_the_event_buffer_cut_matches_a_linear_scan() -> None:

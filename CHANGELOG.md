@@ -51,6 +51,20 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- `/mcp` refuses websocket connections at the handshake. `Mount` routes them
+  to the gateway too, and they went to the MCP SDK before the credential
+  check.
+- A `DELETE` the SDK refused no longer forgets the session's owner, which
+  locked the owner out of a session that was still alive.
+- `tools/list` re-checks the downstream catalogues at most every 5 seconds.
+  The SDK runs that handler whenever a call names a tool it has not cached,
+  so every call with a made-up tool name cost a `tools/list` on every
+  downstream server.
+- `SENTINEL_MAX_SSE_SUBSCRIBERS` applies per tenant; one tenant could hold
+  every live-stream slot.
+- `sentinel check` and `sentinel serve` warn when a single `SENTINEL_API_TOKEN`
+  with no `SENTINEL_ADMIN_TOKEN` makes the agents' credential the operator's.
+  The README claimed only the admin token could administer.
 - `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
   (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions
   accumulate without bound. SENTINEL's per-tenant session cap limited this on
@@ -100,6 +114,8 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- A session retired for idleness is told to open a new session. It was told
+  the gateway was at capacity and to retry, which could never succeed.
 - `/capabilities` reported "Azure Monitor · Application Insights" as active
   whenever `APPLICATIONINSIGHTS_CONNECTION_STRING` was set, but nothing ever
   initialized an exporter. Observability is reported as what it is, structured

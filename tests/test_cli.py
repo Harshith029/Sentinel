@@ -386,3 +386,25 @@ def test_init_warns_when_the_config_could_be_committed(
     (tmp_path / ".gitignore").write_text("sentinel.yaml\n", encoding="utf-8")
     assert main(["--config", str(target), "init", "--force"]) == 0
     assert "not ignored" not in capsys.readouterr().err
+
+
+def test_check_warns_when_the_agents_token_is_also_the_operators(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With one token and no admin token, the agents' credential administers.
+
+    The README said only SENTINEL_ADMIN_TOKEN could change policy; in this
+    configuration the single token can too, and nothing said so.
+    """
+    _serve_in_memory(monkeypatch, _tool("lookup"))
+    _configure()
+    monkeypatch.setenv("SENTINEL_API_TOKEN", "agent-and-operator")
+    monkeypatch.delenv("SENTINEL_ADMIN_TOKEN", raising=False)
+    reset_settings_cache()
+    assert main(["check"]) == 0
+    assert "also the operator credential" in capsys.readouterr().out
+
+    monkeypatch.setenv("SENTINEL_ADMIN_TOKEN", "operator-only")
+    reset_settings_cache()
+    assert main(["check"]) == 0
+    assert "also the operator credential" not in capsys.readouterr().out

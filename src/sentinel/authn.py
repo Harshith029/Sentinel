@@ -115,6 +115,23 @@ def auth_configured() -> bool:
     )
 
 
+OPERATOR_SHARED_WARNING: Final[str] = (
+    "the single SENTINEL_API_TOKEN is also the operator credential: anything "
+    "holding it, including your agents, can replace the policy and clear "
+    "quarantines. Set SENTINEL_ADMIN_TOKEN to keep administration separate."
+)
+
+
+def operator_credential_is_shared() -> bool:
+    """Whether the agents' credential is also the operator's (see is_admin)."""
+    settings = get_settings()
+    return (
+        settings.api_token is not None
+        and settings.admin_token is None
+        and not _multi_tenant_configured()
+    )
+
+
 def is_admin(presented: str) -> bool:
     """Whether a credential is the OPERATOR's — the one that may administer.
 

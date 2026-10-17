@@ -63,7 +63,7 @@ Read this before deploying anything.
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
-| Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; tenant (agent) credentials cannot |
+| Operator separation | With `SENTINEL_ADMIN_TOKEN` set, only it can change policy or clear a quarantine; tenant (agent) credentials cannot. With a single `SENTINEL_API_TOKEN` and no admin token, that one token is the operator's too, so whatever holds it can administer; `sentinel check` and `sentinel serve` warn about this |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
 | Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
@@ -271,7 +271,7 @@ the service. The defaults sit well above normal use and only affect abuse.
 | `SENTINEL_RATE_LIMIT_PER_MINUTE` | 600 | `429` + `Retry-After`. `0` disables |
 | `SENTINEL_MAX_ACTIVE_RUNS` | 8 per tenant | `429` + `Retry-After` |
 | `SENTINEL_MAX_RETAINED_RUNS` | 1000 | Oldest *finished* run leaves the run index; its spans stay in the forensic store |
-| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 | `503` |
+| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 per tenant | `503`; use `/events` polling |
 | `SENTINEL_MAX_RESULT_BYTES` | 1 MiB | The tool result is withheld and the agent gets an error. The call is still recorded |
 | `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` | 30 | Per downstream operation (connect + initialize, tool listing, one tool call). A timed-out call returns an error to the agent and is recorded like any other result. Raise it for tools that run longer |
 | MCP sessions on `/mcp` | 512 per tenant (fixed) | `initialize` is answered with a JSON-RPC error; open sessions are never evicted to make room |

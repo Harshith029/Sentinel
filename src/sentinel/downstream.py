@@ -220,9 +220,12 @@ def _downstream_http_client(
     Supplying our own rather than letting the SDK build a default is for two
     proven reasons, and no others:
 
-    * **A hang becomes an error.** The SDK default does not bound connect, so a
-      misconfigured or black-holed downstream URL wedges startup instead of
-      failing with something the operator can act on.
+    * **Bounds that fit SENTINEL.** The SDK's default client allows 30 s to
+      connect and 300 s per read. Ours fails a black-holed URL in 10 s, and
+      leaves reads unbounded because a session's GET stream legitimately sits
+      idle; the per-operation deadline (``SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS``)
+      bounds the RPCs instead. (This used to say the SDK default did not bound
+      connect at all, which was wrong.)
     * **Cross-origin redirects are refused.** An MCP mount commonly answers
       ``/mcp`` with a 307 to ``/mcp/``, which must keep working; a redirect to
       another origin must not, because a 307 replays the JSON-RPC body there.

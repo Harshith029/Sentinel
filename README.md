@@ -27,7 +27,7 @@ and only the tools you write rules for are guarded.
 <br>
 <sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
 Layer-1 filter <b>misses</b> the obfuscated injection — the action is refused anyway,
-because its lineage traces back to untrusted content.</i></sub>
+because its lineage includes untrusted tool output.</i></sub>
 </div>
 
 ```bash
@@ -109,7 +109,7 @@ the request was phrased.
 |---|---|
 | **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied — regardless of phrasing, so obfuscation doesn't help |
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
-| **Tool poisoning** | Tool descriptions *and* input schemas are scanned at connect; a poisoned catalogue is refused |
+| **Tool poisoning** | Every agent-visible part of a tool definition (description, title, annotations, input and output schemas, metadata) is scanned at connect; a poisoned catalogue is refused |
 | **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
 | **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on every tool listing and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
@@ -141,9 +141,10 @@ the attacker's inbox; with it, the email is never sent.</i></sub>
 ```
 
 Provenance is a **set of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)
-unioned over an action's transitive `derived_from` ancestry — computed by a real
-cycle-safe graph walk, not a mutable flag. An action is tainted iff
-`RETRIEVED_CONTENT` is in that set.
+unioned over an action's transitive `derived_from` ancestry, never the label of the
+most recent step. The proxy keeps that union incrementally as the session runs; a test
+checks it against a full walk of the provenance graph on random sessions. An action is
+tainted iff `RETRIEVED_CONTENT` is in that set.
 
 Taint clears exactly one way: **declassification**, declared per tool in policy.
 
@@ -357,7 +358,10 @@ it as a public sandbox, not as an example of a secured deployment: everything in
 is synthetic and anyone can drive it. A real deployment must set
 `SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
 attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
-anyway. All demo data is synthetic — the record is a labelled fake
+anyway. Read the block for what it is: the session is already tainted by the
+customer-record lookup before the page is fetched (every tool result is untrusted), and
+the attacker's domain is outside the bundled allowlist, so the email would be refused
+without the poisoned page too. All demo data is synthetic — the record is a labelled fake
 (SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
 writes to an in-memory sink. Nothing is ever sent.
 
@@ -396,7 +400,7 @@ Stating the boundary precisely is what separates a security product from a demo.
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
-.venv/bin/python -m pytest        # 370 tests
+.venv/bin/python -m pytest        # every test must pass
 .venv/bin/python -m ruff check src tests
 .venv/bin/python -m mypy src      # strict
 ```

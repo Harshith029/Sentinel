@@ -109,7 +109,7 @@ We MUST always pass an explicit non-empty list of tool names to
 `allowed_tools`, matching spec §6 ("ENUMERATE proxied tools explicitly").
 SENTINEL therefore registers the exact tool set it intends the protected agent
 to reach. Any future code path that wants "all tools" must pass the full list —
-never `[]`. A linter / runtime assertion in Phase 4 enforces this.
+never `[]`. `build_sentinel_mcp_tool` raises `ValueError` on an empty list.
 
 ---
 

@@ -111,10 +111,14 @@ addopts = "-ra --strict-markers --strict-config"
 # Every test is bounded. There is an open, timing-sensitive defect in which a
 # real-HTTP MCP session can block forever
 # (docs/mcp-streamable-http-teardown.md); unbounded, it takes the whole run down
-# with no indication of which test was stuck. A per-test cap turns that into an
-# ordinary failure naming the test, so the run stays interpretable and CI cannot
-# sit for its full job timeout. 120s is far above the slowest legitimate test
-# (~15s), so this fires only on a genuine hang.
+# with no indication of which test was stuck. A per-test cap bounds it: CI
+# cannot sit for its full job timeout, and the stack dump names the test.
+#
+# It is NOT an ordinary failure. timeout_method = "thread" is the only method
+# that works on Windows (no SIGALRM), and on expiry it dumps every thread's
+# stack and ends the whole pytest process: later tests do not run and there is
+# no summary. Read the dump for the test name. 120s is far above the slowest
+# legitimate test (~15s), so this fires only on a genuine hang.
 timeout = 120
 timeout_method = "thread"
 asyncio_mode = "auto"

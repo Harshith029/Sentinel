@@ -1,9 +1,9 @@
 """Downstream preflight (BUILD_SPEC §Phase 5).
 
 Before any demo run, health-check every downstream MCP server and CACHE its tool
-schema locally, so a malformed registration or a mid-run transport hiccup cannot
-kill the live demo. This is the defense against the MCP-transport flakiness seen
-earlier: tool discovery is served from the cache once preflight has passed.
+schema locally, so a malformed registration fails before the run starts and tool
+discovery is served from the cache once preflight has passed. That covers
+discovery only: a transport failure during a tool call still fails that call.
 """
 from __future__ import annotations
 

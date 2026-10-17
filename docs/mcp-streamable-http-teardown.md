@@ -13,7 +13,7 @@ entry both succeed; the block is inside the MCP handshake. There is no error and
 no timeout.
 
 `tests/test_phase9_mcp_gateway.py::test_real_http_sessions_after_remote_downstream`
-reproduces it **deterministically** — 3/3 runs — and is bounded at 20s so it
+reproduces it **deterministically** — 3/3 runs — and is bounded at 8s so it
 fails fast with a full pending-task dump instead of hanging CI.
 
 ## Ruled out, with evidence

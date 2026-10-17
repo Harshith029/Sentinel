@@ -157,6 +157,18 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Documentation now matches the code. The README described a per-call graph
+  walk for provenance (it is a running union, tested against the walk) and
+  implied the hero block depended on the poisoned page; it does not, because
+  the record lookup already taints the session. CONTRIBUTING said CI runs
+  Python 3.11 only; the pytest timeout comment called a hard process exit an
+  ordinary failure. Module docstrings claimed catalogue findings were
+  forensic events, a `list_changed` subscription, real records and email
+  servers, and an SDK client with no connect timeout. The hackathon write-ups
+  under `deck/` carry a dated correction note instead of being rewritten.
+- The Foundry registration no longer lists `transfer_funds`, which no demo
+  server provides, and refuses an empty tool list, as SDK_VERIFICATION.md
+  said it did.
 - A failing injection scan (an Azure Prompt Shields outage, say) is recorded
   as `scan failed` instead of raising. For a tool result the tool had already
   run, so the call failed after its side effect.

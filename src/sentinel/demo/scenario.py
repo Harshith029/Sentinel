@@ -5,6 +5,12 @@
 deterministic driver for a live one changes only what proposes the calls — the
 provenance / authorization / trust / forensic pipeline is identical. There is
 exactly one pipeline here; nothing about it branches on the driver.
+
+"Identical" means the interception core: every call goes through the same
+:meth:`SentinelProxy._intercept` as a live ``/mcp`` session. The wiring around it
+is the demo's own: in-memory mock tool servers rather than the operator's, the
+bundled policy unless one is passed, a placeholder user input, and an agent id
+per run rather than per credential.
 """
 
 from __future__ import annotations

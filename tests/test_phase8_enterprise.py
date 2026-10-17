@@ -296,3 +296,15 @@ def test_the_azure_client_is_built_once() -> None:
     )
     first = classifier._azure_client()  # noqa: SLF001
     assert classifier._azure_client() is first  # noqa: SLF001
+
+
+def test_foundry_registration_lists_only_real_tools_and_never_an_empty_list() -> None:
+    """transfer_funds was listed though no demo server registers it."""
+    from sentinel.demo.tool_servers import ToolServerState, build_downstream
+
+    served = set()
+    for server in build_downstream(ToolServerState()).values():
+        served |= {t.name for t in server._tool_manager.list_tools()}  # noqa: SLF001
+    assert set(PROXIED_TOOLS) <= served
+    with pytest.raises(ValueError, match="explicitly"):
+        build_sentinel_mcp_tool(server_url="https://sentinel.example/mcp", allowed_tools=[])

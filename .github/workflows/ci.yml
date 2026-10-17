@@ -145,10 +145,10 @@ jobs:
       # One exception, because no fixed release exists:
       #   PYSEC-2026-4146 (PyJWT): decode()/decode_complete() mutate a reused
       #   `options` dict when verify_signature is off. Unreachable here as of
-      #   2026-10-04: SENTINEL never imports jwt, and its only PyJWT users,
-      #   mcp (client_credentials.py) and msal (oauth2cli/assertion.py), call
-      #   jwt.encode only. Re-check on any mcp or msal upgrade; drop the flag
-      #   once PyJWT ships a fix.
+      #   2026-10-04, re-checked 2026-10-18 for mcp 1.30.0: SENTINEL never
+      #   imports jwt, and its only PyJWT users, mcp (client_credentials.py)
+      #   and msal (oauth2cli/assertion.py), call jwt.encode only. Re-check on
+      #   any mcp or msal upgrade; drop the flag once PyJWT ships a fix.
       - name: Audit pinned dependencies (pip-audit)
         run: |
           python -m pip install --upgrade pip "pip-audit==2.10.1"

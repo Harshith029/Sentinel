@@ -102,6 +102,11 @@ anyio 4.14.2 · starlette 1.3.1, rest unchanged). On Windows, running
 `--runxfail` failed 3/3 with the same message: the session did not complete
 within 8.0s, with 20 pending tasks. The test alone passes (1.35s), as before.
 
+**Still present on mcp 1.30.0** (2026-10-18, the upgrade for CVE-2026-59951;
+anyio 4.14.2 · starlette 1.3.1). The same pair with `--runxfail` failed 3/3 on
+Windows: the session did not complete within 8.0s, with 21 pending tasks,
+including both sessions' `_receive_loop`.
+
 **It is not Windows-only.** This page used to say only Windows had been
 tested. CI has run the same strict xfail on ubuntu-latest on every push, and a
 strict xfail that passed there would fail the build. In run 36259905212

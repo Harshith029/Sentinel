@@ -42,6 +42,12 @@ All notable changes to this project are documented here. Format follows
   Host-header check when deployed behind an internal hostname.
 
 ### Security
+- `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
+  (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions
+  accumulate without bound. SENTINEL's per-tenant session cap limited this on
+  `/mcp`, but did not replace the upstream fix. The teardown defect in
+  `docs/mcp-streamable-http-teardown.md` is still present in 1.30.0.
+  `pytest-timeout`, a dev dependency, is now pinned in `versions.lock` too.
 - An agent could pass the allowlist that judged it: with no `config` block
   declaring `allowed_domains`, a call's own `allowed_domains` argument decided
   the rule.

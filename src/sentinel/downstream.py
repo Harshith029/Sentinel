@@ -208,9 +208,14 @@ def _downstream_http_client(
     * **A hang becomes an error.** The SDK default does not bound connect, so a
       misconfigured or black-holed downstream URL wedges startup instead of
       failing with something the operator can act on.
-    * **Same-origin redirects still work.** An MCP mount commonly answers
-      ``/mcp`` with a 307 to ``/mcp/``. Cross-origin redirects are refused before
-      the client can replay an MCP JSON-RPC request body to a new destination.
+    * **Cross-origin redirects are refused.** An MCP mount commonly answers
+      ``/mcp`` with a 307 to ``/mcp/``, which must keep working; a redirect to
+      another origin must not, because a 307 replays the JSON-RPC body there.
+      Since mcp 1.30.0 the SDK enforces this itself: it sends every request
+      with redirect following off and follows only same-origin redirects, so
+      ``follow_redirects`` here no longer decides anything for MCP requests.
+      The response hook stays as a second, SENTINEL-owned check that does not
+      depend on the SDK keeping that policy.
 
     It is NOT a workaround for the teardown wedge in
     ``docs/mcp-streamable-http-teardown.md``. An early reading of one standalone

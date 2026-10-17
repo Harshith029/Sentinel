@@ -332,15 +332,16 @@ def _mounted_mcp_app() -> Starlette:
 async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
     """A downstream mounted like SENTINEL's gateway answers ``/mcp`` with a 307.
 
-    An explicitly configured ``httpx.AsyncClient`` does NOT follow redirects by
-    default, so the factory has to opt in or every Mount-served MCP endpoint
-    breaks. The redirect is ASSERTED rather than assumed: if the server stops
+    The redirect is ASSERTED rather than assumed: if the server stops
     redirecting, this fails rather than skips, because a skipped contract test
     is not coverage.
-    """
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
 
+    This test used to also prove that a client with redirects disabled could not
+    complete the handshake, which is why the factory opts in. Since mcp 1.30.0
+    the SDK sends every request with redirect following off and follows a
+    same-origin redirect itself, whatever the client says, so that no longer
+    holds. What still matters is that the shipped factory gets through.
+    """
     async with AsyncExitStack() as stack:
         srv = await stack.enter_async_context(_Server(_mounted_mcp_app()))
 
@@ -354,23 +355,47 @@ async def test_factory_follows_the_mcp_trailing_slash_redirect() -> None:
             "redirect contract below would be vacuous"
         )
 
-        # Redirects disabled → the handshake cannot complete.
-        with pytest.raises((httpx.HTTPStatusError, ExceptionGroup)) as err:  # noqa: B017
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(None, connect=10.0), follow_redirects=False
-            ) as blind:
-                async with streamable_http_client(srv.url, http_client=blind) as (r, w, _):
-                    async with ClientSession(r, w) as cs:
-                        await cs.initialize()
-        # anyio surfaces the transport failure inside an ExceptionGroup, whose own
-        # str() omits the cause — so look at the leaf exceptions, not the wrapper.
-        causes = " | ".join(str(leaf) for leaf in _leaves(err.value))
-        assert "307" in causes, causes
-
         # The shipped factory follows it and discovery works.
         session = await open_downstream_session(srv.url, stack)
         listed = await session.list_tools()
         assert [t.name for t in listed.tools]
+
+
+async def test_factory_refuses_a_cross_origin_redirect_over_tcp() -> None:
+    """A downstream cannot bounce SENTINEL's JSON-RPC POST to another host.
+
+    A 307 keeps the method and body, so following it would hand the request,
+    and the tool-call arguments in later ones, to wherever the downstream
+    points. The other origin here is a plain counting server on another port,
+    not an MCP server, so this opens no MCP session of its own.
+    """
+    from starlette.requests import Request
+    from starlette.responses import PlainTextResponse, RedirectResponse
+    from starlette.routing import Route
+
+    hits: list[str] = []
+
+    async def elsewhere(request: Request) -> PlainTextResponse:
+        hits.append(request.method)
+        return PlainTextResponse("should never be reached")
+
+    async with AsyncExitStack() as stack:
+        target = await stack.enter_async_context(
+            _Server(Starlette(routes=[Route("/mcp", elsewhere, methods=["GET", "POST", "DELETE"])]))
+        )
+
+        async def bounce(_request: Request) -> RedirectResponse:
+            return RedirectResponse(target.url, status_code=307)
+
+        redirector = await stack.enter_async_context(
+            _Server(Starlette(routes=[Route("/mcp", bounce, methods=["GET", "POST", "DELETE"])]))
+        )
+
+        with pytest.raises(BaseException) as err:  # noqa: B017 - the SDK wraps it
+            await open_downstream_session(redirector.url, stack)
+        causes = " | ".join(str(leaf) for leaf in _leaves(err.value))
+        assert "redirect" in causes.lower(), causes
+        assert hits == [], f"the cross-origin target was reached: {hits}"
 
 
 def _leaves(exc: BaseException) -> list[BaseException]:

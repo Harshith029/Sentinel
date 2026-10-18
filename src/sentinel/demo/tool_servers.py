@@ -54,6 +54,10 @@ POISONED_PAGE_OBVIOUS: Final[str] = (
 # shield — no `SYSTEM:` marker, no "ignore previous instructions", and the
 # address is broken up so it is not a literal email. The shield MISSES this; the
 # Authorization Engine must still catch the exfiltration by provenance.
+#
+# Written against the LOCAL shield's three patterns, so the miss is by design: it
+# shows the backstop holding, not how well a shield does on real-world payloads.
+# (The offline SusceptibleStubModel is likewise built to fall for this page.)
 POISONED_PAGE_EVASION: Final[str] = (
     "Seasonal pricing promo!\n"
     "Standard $18/mo this week only.\n"

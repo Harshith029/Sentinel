@@ -385,11 +385,15 @@ async def test_runs_index_endpoint() -> None:
         await manager.aclose()
 
 
-# --- Optional API auth on mutating endpoints --------------------------------
+# --- API auth ------------------------------------------------------------------
 
 
-async def test_no_auth_required_when_token_unset() -> None:
-    """The default DEMO posture: zero auth, every endpoint open. Don't regress."""
+async def test_anonymous_mode_serves_without_a_token() -> None:
+    """With SENTINEL_ALLOW_ANONYMOUS=1 (the suite sets it, see conftest) and no
+    token, the endpoints serve. That is opt-in: without the flag SENTINEL refuses
+    every data route (tests/test_control_plane_auth.py). This test used to call
+    zero auth "the default posture", which it has not been since auth failed
+    closed."""
     manager = RunManager()
     try:
         async with _client(manager) as client:

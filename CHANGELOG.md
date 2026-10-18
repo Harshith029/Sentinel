@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Format follows
   gateway paths are explicit checks, which `python -O` does not strip).
 
 ### Fixed
+- Documentation: what "durably emitted" means per store; the trust penalties
+  that actually apply; that the evasion page is written against the local
+  shield; which keys `sentinel.yaml` accepts; that the non-bypassability test
+  covers the proxy's own path, not network topology; a positioning claim of
+  "the same class of guarantee" as CaMeL. `docs/design-notes.md` lists the
+  catalogue findings kept as they are, and why.
 - The rule-based attack classifier labels any server's tools by the verbs in
   their names (`delete_*`, `refundCharge`, `sendSlackMessage`...); it knew only
   the demo's tools, so an operator's own blocks were mostly "unclassified".

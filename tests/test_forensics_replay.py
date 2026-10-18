@@ -121,3 +121,15 @@ def test_replay_is_cycle_safe(make_span: Callable[..., Span]) -> None:
     assert rep.malformed is True
     assert rep.roots == []
     assert any("unreachable" in r for r in rep.malformed_reasons)
+
+
+def test_a_duplicate_span_is_reported_as_a_duplicate_not_a_cycle(
+    make_span: Callable[..., Span],
+) -> None:
+    """With one parent per span, only a duplicate can re-enter the walk (REPLAY-1)."""
+    root = make_span(seq=0)
+    rep = build_replay(TRACE_A, [root, root])
+    assert [s.span_id for s in rep.ordered] == [root.span_id]
+    assert rep.malformed
+    assert any("duplicate" in r for r in rep.malformed_reasons)
+    assert not any("cycle" in r for r in rep.malformed_reasons)

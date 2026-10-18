@@ -93,6 +93,16 @@ class FakeAsyncCosmosContainer:
         # partition_key (trace_id) -> { id (span_id) -> document }
         self._partitions: dict[str, dict[str, dict[str, Any]]] = {}
 
+    async def create_item(self, *, body: dict[str, Any]) -> dict[str, Any]:
+        """Atomic: fails if the id already exists in the partition, as Cosmos does."""
+        partition = self._partitions.setdefault(body["trace_id"], {})
+        if body["id"] in partition:
+            from azure.cosmos.exceptions import CosmosResourceExistsError
+
+            raise CosmosResourceExistsError(message=f"{body['id']} exists")
+        partition[body["id"]] = copy.deepcopy(body)
+        return copy.deepcopy(body)
+
     async def upsert_item(self, *, body: dict[str, Any]) -> dict[str, Any]:
         partition_key = body["trace_id"]
         item_id = body["id"]
@@ -118,7 +128,12 @@ class FakeAsyncCosmosContainer:
     ) -> AsyncIterator[dict[str, Any]]:
         # Single-partition query: return exactly the requested partition's docs.
         # That is equivalent to the store's `WHERE c.trace_id = @trace_id`, since
-        # the partition key IS trace_id.
+        # the partition key IS trace_id. Any other query is refused rather than
+        # answered as if it were that one (the fake used to ignore the SQL).
+        expected = "SELECT * FROM c WHERE c.trace_id = @trace_id"
+        bound = {p["name"]: p["value"] for p in parameters or []}
+        if query != expected or bound != {"@trace_id": partition_key}:
+            raise NotImplementedError(f"fake Cosmos container cannot answer {query!r} {bound!r}")
         docs = list(self._partitions.get(partition_key or "", {}).values())
 
         async def _aiter() -> AsyncIterator[dict[str, Any]]:
@@ -126,6 +141,12 @@ class FakeAsyncCosmosContainer:
                 yield copy.deepcopy(doc)
 
         return _aiter()
+
+
+@pytest.fixture()
+def fake_cosmos_container() -> type[FakeAsyncCosmosContainer]:
+    """The fake container class, for tests that need to subclass it."""
+    return FakeAsyncCosmosContainer
 
 
 @pytest.fixture(params=["memory", "cosmos", "sqlite"])

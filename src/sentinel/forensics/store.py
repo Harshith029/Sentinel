@@ -187,26 +187,22 @@ class CosmosForensicStore:
         self._container = container
 
     async def put(self, span: Span) -> None:
-        # Immutable-record guard. A point read (single partition, by id) tells us
-        # whether this span_id already exists; if so we must NOT blindly overwrite:
-        #   identical content → idempotent no-op; different content → raise.
-        # Only genuinely-new spans are written. upsert (not create) keeps the
-        # write idempotent under the Cosmos SDK's default retry policy — we add
-        # no retry of our own.
-        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        # Immutable-record guard, atomic: create_item fails if the id exists, and
+        # only then is the stored copy compared (identical → no-op, different →
+        # raise). This used to read first and then upsert, so two writers of the
+        # same span id could both see "absent" and the second silently replaced
+        # the first. A create the SDK retried after it had in fact succeeded now
+        # meets its own identical copy, so the write stays idempotent.
+        from azure.cosmos.exceptions import CosmosResourceExistsError
 
         try:
+            await self._container.create_item(body=_to_item(span))
+            return
+        except CosmosResourceExistsError:
             existing_doc = await self._container.read_item(
                 item=span.span_id, partition_key=span.trace_id
             )
-        except CosmosResourceNotFoundError:
-            existing_doc = None
-
-        if existing_doc is not None:
-            # Raises on conflict; returns True (duplicate) when identical → no-op.
-            _ensure_no_conflict(_from_item(existing_doc), span)
-            return
-        await self._container.upsert_item(body=_to_item(span))
+        _ensure_no_conflict(_from_item(existing_doc), span)
 
     async def get_spans(self, trace_id: str) -> list[Span]:
         query = "SELECT * FROM c WHERE c.trace_id = @trace_id"
@@ -290,6 +286,16 @@ class SqliteForensicStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS spans_by_trace ON spans(trace_id, seq)"
         )
+        # Each span's timestamp in its own column, so listing and retention read
+        # an index instead of parsing every span's JSON under the store lock.
+        # Databases created before the column existed are migrated in place.
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(spans)")}
+        if "ts" not in columns:
+            self._conn.execute("ALTER TABLE spans ADD COLUMN ts TEXT")
+            self._conn.execute(
+                "UPDATE spans SET ts = json_extract(body, '$.timestamp') WHERE ts IS NULL"
+            )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS spans_by_trace_ts ON spans(trace_id, ts)")
         # Who each trace belongs to. Not forensic evidence (spans are), but
         # without it a restart cannot tell whose history is whose: every
         # restored run used to be attributed to the default tenant, which hid
@@ -342,8 +348,8 @@ class SqliteForensicStore:
         # Plain INSERT: the check above already refused a conflicting span, and
         # OR REPLACE would let anything that slipped past it overwrite evidence.
         self._conn.execute(
-            "INSERT INTO spans (trace_id, span_id, seq, body) VALUES (?, ?, ?, ?)",
-            (span.trace_id, span.span_id, span.seq, body),
+            "INSERT INTO spans (trace_id, span_id, seq, body, ts) VALUES (?, ?, ?, ?, ?)",
+            (span.trace_id, span.span_id, span.seq, body, json.loads(body)["timestamp"]),
         )
 
     async def get_spans(self, trace_id: str) -> list[Span]:
@@ -372,7 +378,7 @@ class SqliteForensicStore:
         # first, not the most recent.
         cursor = self._conn.execute(
             "SELECT trace_id FROM spans GROUP BY trace_id "
-            "ORDER BY MAX(julianday(json_extract(body, '$.timestamp'))) DESC, trace_id"
+            "ORDER BY MAX(julianday(ts)) DESC, trace_id"
         )
         return [row[0] for row in cursor.fetchall()]
 
@@ -411,7 +417,7 @@ class SqliteForensicStore:
         stamp = cutoff.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         rows = self._conn.execute(
             "SELECT trace_id FROM spans GROUP BY trace_id "
-            "HAVING MAX(julianday(json_extract(body, '$.timestamp'))) < julianday(?)",
+            "HAVING MAX(julianday(ts)) < julianday(?)",
             (stamp,),
         ).fetchall()
         doomed = [row[0] for row in rows if row[0] not in keep]

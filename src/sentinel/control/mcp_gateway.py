@@ -548,7 +548,8 @@ class SentinelGateway:
             await self._connect_remote_downstream(urls)
         else:
             await self._connect_inmemory_downstream()
-        assert self._router is not None  # every connect path sets it
+        if self._router is None:  # every connect path sets it; never serve without one
+            raise RuntimeError("no downstream router after connect")
         # Preflight (health-check + cache schemas) so list_tools can't flake, AND
         # vet the catalogue itself: a poisoned tool DESCRIPTION subverts the agent
         # before anything is retrieved, so provenance alone cannot catch it. By

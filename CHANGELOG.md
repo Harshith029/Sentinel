@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- The Cosmos store writes spans with `create_item`, which fails atomically if
+  the id exists. It read first and then upserted, so two writers of one span
+  id could both see it absent and the second silently replaced the first.
+- The authorization engine denies a rule with no condition instead of failing
+  an `assert` outside its fail-closed path (and the asserts on the policy and
+  gateway paths are explicit checks, which `python -O` does not strip).
+
+### Fixed
+- Replay reports a duplicated span id as a duplicate; it was reported as a
+  cycle, which with one parent per span it cannot be.
+- SQLite stores each span's timestamp in an indexed column (existing databases
+  are migrated in place), so listing traces and retention purges no longer
+  parse every span's JSON while holding the store lock.
+- The test suite's fake Cosmos container refuses queries other than the one it
+  can answer; it ignored the SQL entirely.
+
 ## [0.2.2] — 2026-10-19
 
 **Upgrade from 0.2.1 or earlier.** Read *Changed (breaking)* first: catalogue

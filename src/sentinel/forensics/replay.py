@@ -58,10 +58,22 @@ class TraceReplay:
 
 def build_replay(trace_id: str, spans: list[Span]) -> TraceReplay:
     """Pure (store-free) replay builder — the testable core of :func:`replay`."""
-    ordered = sorted(spans, key=_seq_key)
-    spans_by_id: dict[str, Span] = {s.span_id: s for s in ordered}
-
     reasons: list[str] = []
+
+    # One span per id. A duplicate used to reach the DFS twice and be reported
+    # as a cycle, which it is not: with one parent per span, re-entry is only
+    # possible through a duplicate, and real cycles show up as unreachable.
+    first: dict[str, Span] = {}
+    copies: dict[str, int] = {}
+    for span in sorted(spans, key=_seq_key):
+        if span.span_id in first:
+            copies[span.span_id] = copies.get(span.span_id, 1) + 1
+            continue
+        first[span.span_id] = span
+    for span_id, count in sorted(copies.items()):
+        reasons.append(f"span id {span_id} appears {count} times (duplicate)")
+    ordered = list(first.values())
+    spans_by_id: dict[str, Span] = dict(first)
 
     # Group real parent->child edges (parent present in this trace), seq-ordered.
     children: dict[str, list[Span]] = {}
@@ -89,9 +101,8 @@ def build_replay(trace_id: str, spans: list[Span]) -> TraceReplay:
     stack: list[Span] = list(reversed(roots))  # reversed → pop in seq order
     while stack:
         span = stack.pop()
-        if span.span_id in visited:
-            # Re-entry can only happen via a malformed (cyclic) edge; stop branch.
-            reasons.append(f"cycle/re-entry detected at span {span.span_id}")
+        if span.span_id in visited:  # defensive: duplicates were removed above
+            reasons.append(f"re-entry at span {span.span_id}")
             continue
         visited.add(span.span_id)
         depth_first.append(span)

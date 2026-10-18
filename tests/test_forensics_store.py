@@ -285,3 +285,67 @@ async def test_in_memory_spans_cannot_be_rewritten_through_a_reference(
     got.payload.arguments["after_get"] = "y"  # type: ignore[attr-defined]
     stored = (await store.get_spans(span.trace_id))[0]
     assert list(stored.payload.arguments) == ["a"]  # type: ignore[attr-defined]
+
+
+async def test_two_cosmos_writers_of_one_span_id_cannot_both_win(
+    make_span: Callable[..., Span], fake_cosmos_container: type
+) -> None:
+    """Read-then-upsert let both see "absent"; the second silently replaced the first."""
+    from sentinel.forensics.events import ToolCallProposed
+    from sentinel.forensics.store import CosmosForensicStore
+
+    class SlowReads(fake_cosmos_container):  # type: ignore[misc, valid-type]
+        async def read_item(self, *, item: str, partition_key: str) -> dict[str, object]:
+            # Answer first, then yield, as a network round trip does: the other
+            # writer runs between this check and the write that follows it.
+            try:
+                found = await super().read_item(item=item, partition_key=partition_key)
+            except Exception:
+                await asyncio.sleep(0)
+                raise
+            await asyncio.sleep(0)
+            return found
+
+    container = SlowReads()
+    store = CosmosForensicStore(container)  # type: ignore[arg-type]
+    first = make_span(seq=0, payload=ToolCallProposed(tool_name="a", arguments={}))
+    second = first.model_copy(update={"payload": ToolCallProposed(tool_name="b", arguments={})})
+    results = await asyncio.gather(store.put(first), store.put(second), return_exceptions=True)
+    assert any(isinstance(r, ForensicIntegrityError) for r in results), results
+    stored = await store.get_spans(first.trace_id)
+    assert [s.payload.tool_name for s in stored] == ["a"]  # type: ignore[attr-defined]
+
+
+async def test_a_database_from_before_the_timestamp_column_is_migrated(
+    tmp_path: Path, make_span: Callable[..., Span]
+) -> None:
+    """Listing and retention parsed every span's JSON under the lock (STORE-2)."""
+    import json as _json
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    span = make_span(seq=0)
+    with sqlite3.connect(db) as conn:  # the schema as it was
+        conn.execute(
+            "CREATE TABLE spans (trace_id TEXT NOT NULL, span_id TEXT NOT NULL PRIMARY KEY,"
+            " seq INTEGER NOT NULL, body TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO spans VALUES (?, ?, ?, ?)",
+            (span.trace_id, span.span_id, span.seq, _json.dumps(span.model_dump(mode="json"))),
+        )
+    store = SqliteForensicStore(db)
+    assert await store.list_trace_ids() == [span.trace_id]
+    later = make_span(trace_id="b" * 32, seq=0, span_id="2" * 16)
+    await store.put(later)
+    assert await store.list_trace_ids() == ["b" * 32, span.trace_id]
+    store.close()
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM spans WHERE ts IS NULL").fetchone()[0] == 0
+        plan = " ".join(
+            str(r) for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT trace_id FROM spans GROUP BY trace_id"
+                " ORDER BY MAX(julianday(ts))"
+            )
+        )
+    assert "spans_by_trace_ts" in plan

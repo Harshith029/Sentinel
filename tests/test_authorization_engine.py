@@ -172,3 +172,17 @@ def test_compound_deny_if_allows_clean_lineage() -> None:
         )
     )
     assert result.allowed is True
+
+
+def test_a_rule_without_a_condition_denies_instead_of_crashing() -> None:
+    """The engine asserted this outside its fail-closed path (review AUTHZ-16)."""
+    from sentinel.authorization.policy import CompiledPolicy, CompiledRule
+
+    broken = CompiledPolicy(
+        policy_version=1,
+        tools={"t": (CompiledRule(id="r", deny_always=False, condition=None),)},
+    )
+    decision = AuthorizationEngine(broken).authorize(
+        ToolCall(name="t", provenance=frozenset({"USER"}))
+    )
+    assert decision.decision == "DENY" and decision.matched_rule_id == "r"

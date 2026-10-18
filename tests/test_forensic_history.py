@@ -111,8 +111,9 @@ def _age(db: Path, trace_id: str, days: float) -> None:
     stamp = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with sqlite3.connect(db) as conn:
         conn.execute(
-            "UPDATE spans SET body = json_set(body, '$.timestamp', ?) WHERE trace_id = ?",
-            (stamp, trace_id),
+            # Both copies: the store indexes the timestamp in its own column.
+            "UPDATE spans SET body = json_set(body, '$.timestamp', ?), ts = ? WHERE trace_id = ?",
+            (stamp, stamp, trace_id),
         )
 
 

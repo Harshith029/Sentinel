@@ -61,6 +61,7 @@ d. **Drive the pipeline from a Python test** by importing
 ## 3a. Connecting a real MCP client over the wire (`make serve`)
 
 ```bash
+export SENTINEL_API_TOKEN=change-me     # /mcp needs a credential; use it in both terminals
 make serve                              # control plane + dashboard + /mcp endpoint
 python examples/connect_over_http.py    # a real mcp client drives the hero attack
 ```
@@ -143,21 +144,24 @@ Each line is one alert (one per span). `ToolBlocked` alerts carry an
 `privilege_escalation` / `instruction_override`). This is the file you ship
 to Splunk / Datadog / your SIEM of choice.
 
-## 6. Optional auth
+## 6. Authentication
 
-Set `SENTINEL_API_TOKEN=<a-long-random-string>` and the mutating endpoints
-(`POST /runs*`, `POST /attack/*`, `POST /tenants/*/policy`,
-`POST /agents/*/reset`) require:
+SENTINEL fails closed. With no credential configured it refuses every data
+route (503) unless `SENTINEL_ALLOW_ANONYMOUS=1` is set, which `make dashboard`
+does for the local demo. An anonymous instance answers only to `localhost`
+(list other names in `SENTINEL_ALLOWED_HOSTS`) and refuses cross-site writes.
+
+With a credential, every route but `/healthz` needs it, reads included:
 
 ```
 Authorization: Bearer <token>
 ```
 
-When the variable is unset (the local DEMO default), there is no auth — the
-posture matches what's safe for `127.0.0.1` development. Read endpoints
-(replay, audit, runs index) stay open either way because the operator
-inspecting forensic evidence is typically a different principal from the one
-launching scenarios.
+- `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant tokens, is what
+  agents and the examples use. It never administers.
+- `SENTINEL_ADMIN_TOKEN` is the operator's: only it can replace a policy
+  (`POST /tenants/*/policy`) or clear a quarantine (`POST /agents/*/reset`).
+  Without it nobody can. Keep it away from agents.
 
 ## 7. What's coming next (named honestly)
 

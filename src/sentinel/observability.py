@@ -102,6 +102,9 @@ class TextFormatter(logging.Formatter):
         trace = getattr(record, "trace_id", None)
         if trace:
             base = f"{base}  [trace {str(trace)[:12]}]"
+        tenant = getattr(record, "tenant", None)
+        if tenant:
+            base = f"{base}  [tenant {tenant}]"
         if record.exc_info:
             base = f"{base}\n{self.formatException(record.exc_info)}"
         return base
@@ -142,12 +145,28 @@ def security_logger() -> logging.Logger:
     return logging.getLogger(SECURITY_LOGGER)
 
 
+def _tenant_field(tenant: str | None) -> dict[str, str]:
+    """The tenant a security event belongs to, when there is one.
+
+    These lines carried no tenant, so an operator of a multi-tenant deployment
+    could not tell whose block or quarantine a line was.
+    """
+    return {} if tenant is None else {"tenant": _safe_log_value(tenant)}
+
+
 def _safe_log_value(value: object) -> str:
     """Keep attacker-controlled identifiers to one terminal/log line."""
     return _LOG_CONTROL_CHARS.sub(lambda match: f"\\x{ord(match.group()):02x}", str(value))
 
 
-def log_allowed(tool: str, *, trace_id: str, agent_id: str, provenance: tuple[str, ...]) -> None:
+def log_allowed(
+    tool: str,
+    *,
+    trace_id: str,
+    agent_id: str,
+    provenance: tuple[str, ...],
+    tenant: str | None = None,
+) -> None:
     """One line per permitted action — the routine half of the audit trail."""
     safe_tool = _safe_log_value(tool)
     security_logger().info(
@@ -160,6 +179,7 @@ def log_allowed(tool: str, *, trace_id: str, agent_id: str, provenance: tuple[st
             "trace_id": _safe_log_value(trace_id),
             "agent_id": _safe_log_value(agent_id),
             "provenance": list(provenance),
+            **_tenant_field(tenant),
         },
     )
 
@@ -172,6 +192,7 @@ def log_blocked(
     trace_id: str,
     agent_id: str,
     provenance: tuple[str, ...],
+    tenant: str | None = None,
 ) -> None:
     """A refused action. WARNING because this is what an operator filters for."""
     safe_tool = _safe_log_value(tool)
@@ -191,11 +212,19 @@ def log_blocked(
             "trace_id": _safe_log_value(trace_id),
             "agent_id": _safe_log_value(agent_id),
             "provenance": list(provenance),
+            **_tenant_field(tenant),
         },
     )
 
 
-def log_quarantined(agent_id: str, *, trace_id: str, score: float, enforced: bool = True) -> None:
+def log_quarantined(
+    agent_id: str,
+    *,
+    trace_id: str,
+    score: float,
+    enforced: bool = True,
+    tenant: str | None = None,
+) -> None:
     """The trust score crossed the quarantine threshold, enforced or not."""
     consequence = "further tool calls refused" if enforced else "NOT enforced; calls continue"
     security_logger().warning(
@@ -209,11 +238,14 @@ def log_quarantined(agent_id: str, *, trace_id: str, score: float, enforced: boo
             "trace_id": _safe_log_value(trace_id),
             "score": score,
             "enforced": enforced,
+            **_tenant_field(tenant),
         },
     )
 
 
-def log_injection_flagged(target: str, *, trace_id: str, shield: str) -> None:
+def log_injection_flagged(
+    target: str, *, trace_id: str, shield: str, tenant: str | None = None
+) -> None:
     """Layer-1 flagged content. Informational: the shield flags, it does not block."""
     security_logger().info(
         "FLAG   injection markers in %s (%s)",
@@ -224,5 +256,6 @@ def log_injection_flagged(target: str, *, trace_id: str, shield: str) -> None:
             "target": _safe_log_value(target),
             "shield": _safe_log_value(shield),
             "trace_id": _safe_log_value(trace_id),
+            **_tenant_field(tenant),
         },
     )

@@ -8,7 +8,7 @@
 #   * effective_provenance  — the §4.2 provenance SET (frozenset of labels)
 #   * typed tool args        — e.g. recipient_domain, amount
 #   * config                 — e.g. allowed_domains, max_amount
-policy_version: 4
+policy_version: 5
 
 # Deployment values the rules below resolve against. These are the EXAMPLE
 # topology's values; replace them with your own when you point SENTINEL at your
@@ -57,3 +57,6 @@ tools:
         deny_if: "effective_provenance != {USER}"
       - id: cap
         deny_if: "amount >= max_amount"
+      # A cap alone lets any negative amount through.
+      - id: non-negative
+        deny_if: "amount < 0"

@@ -176,6 +176,9 @@ class ToolExecuted(_FrozenPayload):
     arguments: Arguments = Field(default_factory=dict)
     result_label: Label
     result_summary: str
+    # The schema that declassified the result, when one did. The record used
+    # to show only that the label became SYSTEM, not what cleared it.
+    declassified_by: str | None = None
 
 
 class ToolBlocked(_FrozenPayload):

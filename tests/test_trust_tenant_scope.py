@@ -106,7 +106,7 @@ async def test_the_operator_resets_one_tenants_agent_only(
 
 async def test_the_scorer_keeps_tenants_apart() -> None:
     emitter = SpanEmitter(InMemoryForensicStore())
-    scorer = TrustScorer(emitter, load_default_trust_config())
+    scorer = TrustScorer(emitter, load_default_trust_config(), enforce=True)
     trace = emitter.new_trace_id()
     for _ in range(3):
         await scorer.record_blocked_call(
@@ -115,3 +115,37 @@ async def test_the_scorer_keeps_tenants_apart() -> None:
     assert scorer.is_quarantined("agent-x", tenant="globex")
     assert not scorer.is_quarantined("agent-x", tenant="acme")
     assert scorer.score("agent-x", tenant="acme") == 100
+
+
+async def test_a_separator_in_a_name_cannot_reach_another_pairs_state() -> None:
+    """The key was "tenant<US>agent"; ("a<US>b", "c") and ("a", "b<US>c") collided."""
+    emitter = SpanEmitter(InMemoryForensicStore())
+    scorer = TrustScorer(emitter, load_default_trust_config(), enforce=True)
+    sep = chr(0x1F)
+    for _ in range(3):
+        await scorer.record_blocked_call(
+            "c", "delete_record", reason="r", trace_id="a" * 32, tenant=f"a{sep}b"
+        )
+    assert scorer.score("c", tenant=f"a{sep}b") < 100
+    assert scorer.score(f"b{sep}c", tenant="a") == 100
+
+
+def test_the_library_scorer_records_quarantine_by_default() -> None:
+    """It enforced by default while the service, and its own docs, do not."""
+    scorer = TrustScorer(SpanEmitter(InMemoryForensicStore()), load_default_trust_config())
+    assert scorer.enforces_quarantine is False
+
+
+async def test_trust_state_is_bounded_but_never_forgets_a_crossing() -> None:
+    """State lived for the life of the process; each demo run brings a new agent."""
+    emitter = SpanEmitter(InMemoryForensicStore())
+    scorer = TrustScorer(emitter, load_default_trust_config(), max_agents=3)
+    trace = "a" * 32
+    # One agent driven below the threshold first: it must survive eviction.
+    for _ in range(10):
+        await scorer.record_blocked_call("bad", "delete_record", reason="r", trace_id=trace)
+    assert scorer.crossed_threshold("bad")
+    for i in range(20):
+        await scorer.record_tool_transition(f"agent-{i}", "web_fetch", trace_id=trace)
+    assert len(scorer._agents) <= 3  # noqa: SLF001
+    assert scorer.crossed_threshold("bad"), "eviction handed a crossed agent a clean score"

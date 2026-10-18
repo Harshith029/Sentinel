@@ -25,7 +25,7 @@ we stop that recurring.
 .venv/bin/python -m mypy src        # strict; no new ignores without a reason
 ```
 
-CI runs those three on every push and PR (Python 3.11), plus:
+CI runs those three on every push and PR (Python 3.11 and 3.12), plus:
 
 - **package**: builds the sdist and wheel, runs `twine check`, then installs the wheel
   into a clean venv and uses it from outside the source tree;
@@ -33,7 +33,10 @@ CI runs those three on every push and PR (Python 3.11), plus:
   requests when no credential is configured (503), and does not run as root;
 - **Bicep**: compiles `deploy/main.bicep` (this shows it builds, not that it deploys);
 - **supply chain**: `pip-audit` over `versions.lock`, failing on any known
-  vulnerability, and a `gitleaks` scan of the full history.
+  vulnerability, and a `gitleaks` scan of the full history;
+- **real-MCP diagnostics** (non-blocking): the real-HTTP downstream tests in
+  `tests/test_downstream_remote_paths.py`, one per process, quarantined until the
+  teardown defect in `docs/mcp-streamable-http-teardown.md` is fixed.
 
 A PR that fails the audit usually needs a pin bump in `versions.lock`: use the
 smallest fixed version within the current major, then rerun the tests.
@@ -44,10 +47,12 @@ These are the product. A change that weakens one needs an explicit argument in t
 not a passing test suite.
 
 1. **No `eval`/`exec`.** Policy predicates compile to a typed AST and are tree-walked.
-2. **Provenance is a set over transitive ancestry**, computed by a real cycle-safe
-   walk — never a cached flag or the label of the most recent node.
+2. **Provenance is a set over transitive ancestry**, never the label of the most
+   recent node. The proxy keeps it as a running union per session;
+   `tests/test_provenance_incremental.py` checks that union against a full graph walk
+   (`ProvenanceGraph`) on random sessions. Keep the two equal.
 3. **Fail closed.** Unknown tools are default-denied; an unevaluable predicate denies;
-   a malformed or cyclic lineage counts as tainted; a colliding tool name refuses to serve.
+   a colliding tool name refuses to serve.
 4. **The sanitizer is not launderable.** A cleared value has empty `derived_from`;
    recombining it with a tainted sibling re-taints.
 5. **Interception is topological.** Every agent→tool path goes through
@@ -62,8 +67,8 @@ not a passing test suite.
 
 - Every behaviour change ships with a test. Security fixes ship with a test that
   *fails* without the fix.
-- Tests must run offline and deterministically: no network, no API keys, no real
-  models. Use the existing fakes (`FakeAsyncCosmosContainer`, `SusceptibleStubModel`,
+- Tests must run deterministically with no API keys and no real models, and reach
+  nothing beyond this machine: some start real servers on 127.0.0.1. Use the existing fakes (`FakeAsyncCosmosContainer`, `SusceptibleStubModel`,
   `httpx.MockTransport`) as the pattern.
 - Cover the negative case too. A check that never fires is as useless as one that
   never fires correctly — most modules here test both "detects the attack" and "does

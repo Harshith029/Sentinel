@@ -30,11 +30,12 @@ which bundles the new node with the typed value that was extracted (the
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from sentinel.labels import SYSTEM, Label
 from sentinel.provenance.model import ProvenanceNode
@@ -56,6 +57,11 @@ class ExtractionSchema(Protocol):
     def name(self) -> str: ...
 
     def extract(self, content: object) -> object | None: ...
+
+
+# ASCII digits only ([0-9], not \d, which matches every script's digits).
+_PLAIN_DECIMAL: Final[re.Pattern[str]] = re.compile(r"[+-]?[0-9]{1,18}(?:\.[0-9]{1,18})?")
+_ISO_DATE: Final[re.Pattern[str]] = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 @dataclass(frozen=True)
@@ -82,8 +88,14 @@ class DecimalAmountSchema:
         elif isinstance(content, float):
             value = Decimal(str(content))  # via str → avoid binary-float artefacts
         elif isinstance(content, str):
+            text = content.strip()
+            # Plain notation only. Decimal() alone also took "1_000", "1e9999"
+            # and non-ASCII digits: more than an amount, for a value that is
+            # about to be trusted.
+            if _PLAIN_DECIMAL.fullmatch(text) is None:
+                return None
             try:
-                value = Decimal(content.strip())
+                value = Decimal(text)
             except (InvalidOperation, ValueError):
                 return None
         else:
@@ -106,8 +118,13 @@ class IsoDateSchema:
     def extract(self, content: object) -> date | None:
         if not isinstance(content, str):
             return None
+        text = content.strip()
+        # date.fromisoformat also takes "20261018" and ISO week dates such as
+        # "2026-W42-1" since Python 3.11; the schema promises YYYY-MM-DD only.
+        if _ISO_DATE.fullmatch(text) is None:
+            return None
         try:
-            return date.fromisoformat(content.strip())
+            return date.fromisoformat(text)
         except ValueError:
             return None
 

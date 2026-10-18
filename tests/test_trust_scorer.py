@@ -19,7 +19,9 @@ TID = "a" * 32
 
 def _scorer(config: TrustConfig | None = None) -> tuple[TrustScorer, InMemoryForensicStore]:
     store = InMemoryForensicStore()
-    scorer = TrustScorer(SpanEmitter(store), config or load_default_trust_config())
+    scorer = TrustScorer(
+        SpanEmitter(store), config or load_default_trust_config(), enforce=True
+    )
     return scorer, store
 
 

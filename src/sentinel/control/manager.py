@@ -298,8 +298,13 @@ class RunManager:
         # flight at once — so a tenant gets a bounded share, per tenant, so one
         # tenant saturating its quota does not lock out another.
         limit = self._settings.max_active_runs_per_tenant
+        # Live MCP sessions are runs too, but the gateway caps those per tenant
+        # itself. Counted here, a tenant with eight agents connected could not
+        # start a single scenario.
         in_flight = sum(
-            1 for r in self._runs.values() if r.tenant == tenant and r.status == "running"
+            1
+            for r in self._runs.values()
+            if r.tenant == tenant and r.status == "running" and r.scenario != "live-mcp"
         )
         if in_flight >= limit:
             raise RunQuotaExceeded(tenant, limit)
@@ -324,6 +329,7 @@ class RunManager:
     def _on_run_done(self, trace_id: str) -> None:
         """Drop the finished task's reference and keep the index bounded."""
         self._tasks.pop(trace_id, None)
+        self._emitter.forget(trace_id)  # the run is over; it emits nothing more
         self._prune_finished_runs()
 
     def _prune_finished_runs(self) -> None:
@@ -488,6 +494,12 @@ class RunManager:
                 real_web=self._settings.real_web_fetch,
             )
             record.status = "completed"
+        except asyncio.CancelledError:
+            # A BaseException, so the clause below missed it and a run cancelled
+            # at shutdown stayed "running" for good.
+            record.status = "failed"
+            record.error = "cancelled before it finished"
+            raise
         except Exception as exc:  # noqa: BLE001 - record failure; never crash the loop
             record.status = "failed"
             record.error = str(exc)
@@ -522,6 +534,17 @@ class RunManager:
 
     def get_run(self, run_id: str) -> RunRecord | None:
         return self._runs.get(run_id)
+
+    def release_live_run(self, trace_id: str) -> None:
+        """A live session's transport is gone: finish its run and free its state.
+
+        Only from the session's finalizer. The SDK holds the session for the
+        length of any call, so once it is collected nothing can still emit
+        under this trace. Idle retirement uses :meth:`finish_live_run` alone,
+        because a call that outlasted the idle TTL could still be in flight.
+        """
+        self.finish_live_run(trace_id)
+        self._emitter.forget(trace_id)
 
     def finish_live_run(self, trace_id: str, *, status: str = "completed") -> None:
         """Move a live MCP run out of ``running`` when its transport is done.
@@ -632,6 +655,7 @@ class RunManager:
             shield_backend=self._shield.backend,
             classifier_backend=self._classifier.backend,
             store=self._inner_store,
+            demo_mode=self._demo_mode,
         )
         summary["deployment_verification"] = {
             "status": "unverified",
@@ -723,17 +747,23 @@ class RunManager:
         """Clean shutdown: stop runs, finish pending writes, close the store."""
         # Snapshot: finishing tasks remove themselves from _tasks, so iterating
         # the live dict while awaiting would change it mid-loop.
-        tasks = list(self._tasks.values())
-        for task in tasks:
+        pending = list(self._tasks.items())
+        for _trace_id, task in pending:
             if not task.done():
                 task.cancel()
-        for task in tasks:
-            # Teardown: drain cancelled/failed tasks; their failures are already
-            # captured on the RunRecord, so swallowing here is intentional.
+        for trace_id, task in pending:
+            # Teardown: drain cancelled/failed tasks. _execute records its own
+            # failure or cancellation, so swallowing here is intentional.
             try:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                 pass
+            # A task cancelled before it first ran never entered _execute, so
+            # nothing marked its run.
+            record = self._runs.get(trace_id)
+            if record is not None and record.status == "running":
+                record.status = "failed"
+                record.error = "cancelled before it finished"
         # Ownership records and retention are writes, not work to abandon: a
         # run whose owner was never recorded restores as nobody's.
         for write in list(self._pending_writes):

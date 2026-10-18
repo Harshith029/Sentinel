@@ -30,6 +30,7 @@ path are unit-testable without real network access.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from collections.abc import Callable, Sequence
@@ -120,7 +121,10 @@ def _prepare_target(url: str, *, allow_private: bool, resolve: Resolver) -> _Pin
         return "invalid URL"
     if parsed.scheme not in ("http", "https"):
         return f"blocked scheme {parsed.scheme!r}: only http/https allowed"
-    host = parsed.host
+    try:
+        host = parsed.host
+    except UnicodeError:  # idna.IDNAError is a UnicodeError; it escaped before
+        return "invalid URL host"
     if not host:
         return "URL has no host"
     if parsed.username or parsed.password:
@@ -136,6 +140,8 @@ def _prepare_target(url: str, *, allow_private: bool, resolve: Resolver) -> _Pin
     except ValueError:
         try:
             candidates = resolve(host)
+        except UnicodeError:  # a label too long or empty, raised while encoding
+            return "invalid URL host"
         except (socket.gaierror, OSError) as exc:
             return f"DNS resolution failed for {host!r}: {exc}"
         if not candidates:
@@ -179,20 +185,57 @@ async def fetch_url(
     url: str,
     *,
     timeout: float = 10.0,
+    deadline: float = 30.0,
     max_bytes: int = 2_000_000,
     max_redirects: int = 3,
     allow_private: bool = False,
     client: httpx.AsyncClient | None = None,
     resolve: Resolver = _default_resolve,
 ) -> FetchResult:
-    """Fetch ``url`` with SSRF/size/timeout guards. Never raises — errors returned."""
+    """Fetch ``url`` with SSRF/size/timeout guards. Never raises — errors returned.
+
+    ``timeout`` bounds each network operation (connect, one read); ``deadline``
+    bounds the whole fetch, redirects included. Without it, a server sending a
+    byte just inside ``timeout`` kept a fetch going indefinitely.
+    """
+    try:
+        async with asyncio.timeout(deadline):
+            return await _fetch(
+                url,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                max_redirects=max_redirects,
+                allow_private=allow_private,
+                client=client,
+                resolve=resolve,
+            )
+    except TimeoutError:
+        return FetchResult(url, None, None, "", False, f"fetch exceeded its {deadline:g}s deadline")
+    except Exception as exc:  # noqa: BLE001 - "never raises" is this function's contract
+        return FetchResult(url, None, None, "", False, f"fetch error: {type(exc).__name__}")
+
+
+async def _fetch(
+    url: str,
+    *,
+    timeout: float,
+    max_bytes: int,
+    max_redirects: int,
+    allow_private: bool,
+    client: httpx.AsyncClient | None,
+    resolve: Resolver,
+) -> FetchResult:
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(follow_redirects=False, timeout=timeout)
     try:
         current = url
         for _hop in range(max_redirects + 1):
-            prepared = _prepare_target(current, allow_private=allow_private, resolve=resolve)
+            # In a thread: the default resolver is blocking getaddrinfo, which
+            # stalled every session on the shared event loop while it ran.
+            prepared = await asyncio.to_thread(
+                _prepare_target, current, allow_private=allow_private, resolve=resolve
+            )
             if isinstance(prepared, str):
                 return FetchResult(current, None, None, "", False, prepared)
             try:

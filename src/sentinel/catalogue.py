@@ -8,26 +8,28 @@ the proxy is the only component that sees every downstream server's catalogue.
 
 Three documented attack classes are covered here:
 
-* **Tool poisoning** — malicious instructions hidden in a tool's ``description``
-  (the model reads ``tools/list`` and obeys). We scan every description through
-  the same Layer-1 shield used for tool results and report findings; the caller
-  decides whether to refuse or merely flag (see :func:`verify_catalogue`).
+* **Tool poisoning** — malicious instructions hidden in a tool's definition (the
+  model reads ``tools/list`` and obeys). We scan every agent-visible field
+  (description, title, annotations, schemas, metadata) through the same Layer-1
+  shield used for tool results and report findings; the caller decides whether
+  to refuse or merely flag (see :func:`verify_catalogue`).
 * **Cross-server shadowing** — a malicious server exposes a tool with the SAME
   NAME as a trusted server's tool, hoping the router silently routes to it.
   :func:`detect_shadowing` makes the collision explicit instead.
-* **Rug pull** — a server serves a benign catalogue at approval time, then pushes
-  a changed definition afterwards (``notifications/tools/list_changed``).
-  :func:`fingerprint_tool` / :func:`detect_drift` pin the approved catalogue and
-  detect any later divergence.
+* **Rug pull** — a server serves a benign catalogue at approval time, then serves
+  a changed definition afterwards. :func:`fingerprint_tool` / :func:`detect_drift`
+  pin the approved catalogue and detect a later divergence when the catalogue is
+  re-listed (on ``tools/list`` and on a schedule). SENTINEL does not subscribe to
+  ``notifications/tools/list_changed``.
 
 Design notes:
 
 * This module is **pure and side-effect free** apart from the optional shield
   call, so it is trivially testable and reusable by any connect path.
-* It emits no new forensic event type: description findings map onto the existing
-  ``InjectionScanned`` payload (``target="tool_description:<name>"``), and the
-  integrity failures are connect-time errors that fail CLOSED — matching how
-  preflight already refuses to start on an unhealthy downstream.
+* It emits no forensic events. Findings are reported through ``GET /downstream``
+  and the logs, and the integrity failures are connect-time errors that fail
+  CLOSED — matching how preflight already refuses to start on an unhealthy
+  downstream.
 * Shadowing is reported for *any* duplicate name, without guessing which server
   is malicious. Naming the winner is a policy decision for the operator, not an
   inference for us to make.

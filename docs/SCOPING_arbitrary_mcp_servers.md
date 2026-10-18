@@ -1,7 +1,12 @@
 # Scoping: proxying arbitrary user-configured MCP servers
 
-Decision material for the product conversation. **No code has been written for this** —
-the codebase is frozen on this topic pending the decision.
+> **Historical (2026-10-18).** This was decision material written before the work. The
+> declared-servers path it scopes has since shipped (`SENTINEL_MCP_SERVERS`,
+> `src/sentinel/downstream.py`, `sentinel scaffold`, catalogue pinning), so the "no
+> code" statement and the line numbers below are out of date. The README's *Known
+> limitations* section describes what exists now.
+
+Decision material for the product conversation, as originally written.
 
 Premise (from the product correction): SENTINEL should not ship email/record tools.
 It secures the operator's **own** downstream MCP servers. The bundled `web` / `email` /

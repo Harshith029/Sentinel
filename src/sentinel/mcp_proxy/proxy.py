@@ -37,8 +37,9 @@ Claude, or any specific client. Any MCP speaker is secured identically.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from email.utils import getaddresses
 from typing import Final
 from urllib.parse import urlsplit
@@ -69,6 +70,7 @@ from sentinel.observability import log_allowed, log_blocked, log_injection_flagg
 from sentinel.provenance.model import ProvenanceNode
 from sentinel.provenance.sanitizer import StructuredExtractor, get_schema
 from sentinel.shield import InputShield
+from sentinel.shield.input_shield import ShieldVerdict
 from sentinel.trust.scorer import TrustScorer
 
 PROXY_SERVER_NAME: Final[str] = "sentinel"
@@ -96,6 +98,12 @@ def _recipient_domains(value: object) -> list[str] | None:
     domains: list[str] = []
     for item in items:
         if not isinstance(item, str):
+            return None
+        # A control character has no place in an address, and it is where a
+        # downstream mail tool and this parser can disagree: the raw value is
+        # what gets forwarded, so "cfo@corp.example" + CRLF + "Bcc: ..." passed an
+        # allowlist here and could add headers there.
+        if any(ord(char) < 32 or ord(char) == 127 for char in item):
             return None
         for _name, address in getaddresses([item]):
             if "@" not in address:
@@ -182,6 +190,10 @@ def _result_size(result: mcp_types.CallToolResult) -> int:
     embedded resources carry ``text`` or ``blob``, any of which can be large.
     """
     total = 0
+    if result.structuredContent is not None:
+        # Forwarded to the agent like the content blocks, so it counts too; it
+        # used to be outside the cap entirely.
+        total += len(json.dumps(result.structuredContent, default=str).encode("utf-8", "replace"))
     for block in result.content:
         for field in ("text", "data"):
             value = getattr(block, field, None)
@@ -286,16 +298,22 @@ class SentinelProxy:
         provenance node (label ``USER`` by default); the context frontier starts
         as just this node.
         """
-        span = await self._emitter.emit(
-            InputReceived(origin_label=origin_label, content=user_input),
-            trace_id=self._trace_id,
-        )
-        self._root_span_id = span.span_id
-        self._lineage = frozenset({origin_label})
+        async with self._lock:
+            # Once only. A second start() reset the lineage to the origin label
+            # alone, clearing whatever taint the session had picked up, and it
+            # did so without the lock every tool call takes.
+            if self._root_span_id is not None:
+                raise RuntimeError("this proxy session has already been started")
+            span = await self._emitter.emit(
+                InputReceived(origin_label=origin_label, content=user_input),
+                trace_id=self._trace_id,
+            )
+            self._root_span_id = span.span_id
+            self._lineage = frozenset({origin_label})
 
         # Layer-1 scan of the user prompt itself (§5), recorded for forensics.
         if self._input_shield is not None:
-            verdict = await self._input_shield.inspect_user_prompt(user_input)
+            verdict = await self._scan(self._input_shield.inspect_user_prompt, user_input)
             await self._emitter.emit(
                 InjectionScanned(
                     target="user_prompt",
@@ -307,6 +325,28 @@ class SentinelProxy:
                 parent_span_id=span.span_id,
             )
         return span
+
+    async def _scan(
+        self, inspect: Callable[[str], Awaitable[ShieldVerdict]], content: str
+    ) -> ShieldVerdict:
+        """Run one Layer-1 scan; a failing backend is recorded, not raised.
+
+        The scan informs, it does not block. For a tool result the tool has
+        already run by now, so an Azure Prompt Shields error used to fail the
+        call after its side effect, and withhold a result that is tainted
+        either way.
+        """
+        try:
+            return await inspect(content)
+        except Exception as exc:  # noqa: BLE001 - an outage must not fail the call
+            _LOG.warning("injection scan failed: %s", type(exc).__name__)
+            backend = self._input_shield.backend if self._input_shield is not None else "none"
+            return ShieldVerdict(
+                attack_detected=False,
+                shield=backend,
+                detail=f"scan failed: {type(exc).__name__}",
+                penalize_trust=False,
+            )
 
     def _build_server(self) -> Server:
         server: Server = Server(PROXY_SERVER_NAME)
@@ -364,6 +404,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(
                     f"SENTINEL: agent {self._agent_id!r} is quarantined; tool {name!r} refused"
@@ -403,6 +444,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
@@ -440,6 +482,7 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=(),
+                    tenant=self._tenant,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
             provenance = lineage
@@ -485,8 +528,17 @@ class SentinelProxy:
                     trace_id=self._trace_id,
                     agent_id=self._agent_id,
                     provenance=decision.effective_provenance,
+                    tenant=self._tenant,
                 )
-                return mcp_error(f"SENTINEL blocked {name!r}: {decision.reason}")
+                # The agent learns which rule refused it, not the evaluation
+                # detail (a missing config name, an operand type): that stays
+                # in the forensic record and the log for the operator.
+                shown = (
+                    f"denied by rule {decision.matched_rule_id!r}"
+                    if decision.matched_rule_id is not None
+                    else decision.reason
+                )
+                return mcp_error(f"SENTINEL blocked {name!r}: {shown}")
 
             # 3. Allowed: transition telemetry feeds the anomaly model.
             await self._scorer.record_tool_transition(
@@ -503,6 +555,7 @@ class SentinelProxy:
                 trace_id=self._trace_id,
                 agent_id=self._agent_id,
                 provenance=decision.effective_provenance,
+                tenant=self._tenant,
             )
             try:
                 result = await self._downstream.call_tool(name, dict(arguments))
@@ -566,6 +619,7 @@ class SentinelProxy:
                     # SYSTEM here exactly when a value was declassified.
                     result_label=label,
                     result_summary=summarize_result(result),
+                    declassified_by=schema_name if cleared_from else None,
                 ),
                 trace_id=self._trace_id,
                 parent_span_id=proposed.span_id,
@@ -591,7 +645,9 @@ class SentinelProxy:
             # does NOT block — Authorization is the backstop that actually stops
             # the exfiltration even when this shield is evaded.
             if self._input_shield is not None:
-                verdict = await self._input_shield.inspect_document(result_text(result))
+                verdict = await self._scan(
+                    self._input_shield.inspect_document, result_text(result)
+                )
                 await self._emitter.emit(
                     InjectionScanned(
                         target=f"tool_result:{name}",
@@ -607,6 +663,7 @@ class SentinelProxy:
                         f"tool_result:{name}",
                         trace_id=self._trace_id,
                         shield=verdict.shield,
+                        tenant=self._tenant,
                     )
                     if verdict.penalize_trust:
                         await self._scorer.record_injection(

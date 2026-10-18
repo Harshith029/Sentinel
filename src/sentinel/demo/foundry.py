@@ -39,7 +39,6 @@ PROXIED_TOOLS: tuple[str, ...] = (
     "send_email",
     "get_customer_record",
     "delete_record",
-    "transfer_funds",
 )
 
 
@@ -56,6 +55,10 @@ def build_sentinel_mcp_tool(
     runs (§6). ``allowed_tools`` is always an explicit non-empty list. Lazy import
     keeps DEMO MODE free of the Azure dependency at call sites that never deploy.
     """
+    if not allowed_tools:
+        # An empty list may mean "all tools" or "none" depending on the surface;
+        # SDK_VERIFICATION.md records the decision to never send one.
+        raise ValueError("allowed_tools must name the proxied tools explicitly")
     from azure.ai.projects.models import MCPTool
 
     tool = MCPTool(
@@ -71,9 +74,10 @@ def build_sentinel_mcp_tool(
 def foundry_registration_summary(*, server_url: str) -> dict[str, Any]:
     """Inspectable description of how SENTINEL is registered with Foundry.
 
-    Used by the control plane / README to SHOW the real-cloud wiring without
-    requiring a live project. Construction is exercised against the installed SDK
-    when available; otherwise the static shape is returned (offline-safe).
+    Shows the real-cloud wiring without requiring a live project. Nothing in the
+    service calls this; the tests and docs use it. Construction is exercised
+    against the installed SDK when available; otherwise the static shape is
+    returned (offline-safe).
     """
     summary: dict[str, Any] = {
         "server_label": "sentinel",

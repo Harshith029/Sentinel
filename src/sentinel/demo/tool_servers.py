@@ -114,6 +114,11 @@ def build_downstream(state: ToolServerState, *, real_web: bool = False) -> dict[
         async def web_fetch(url: str) -> str:
             """Fetch a real web page over HTTP(S) with SSRF guards."""
             state.executions.append(("web_fetch", url))
+            # A custom attack's page wins over the live one. The baseline run
+            # never fetches for real, so without this the protected run and its
+            # baseline compared two different pages.
+            if url in state.extra_pages:
+                return state.extra_pages[url]
             return (await fetch_url(url)).as_tool_output()
     else:
         @web.tool()

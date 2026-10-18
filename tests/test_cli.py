@@ -31,7 +31,7 @@ from sentinel.config import reset_settings_cache
 _CLI_VARS = (
     "SENTINEL_MCP_SERVERS", "SENTINEL_POLICY_FILE",
     "SENTINEL_CATALOGUE_STRICT", "SENTINEL_REAL_WEB_FETCH", "SENTINEL_API_TOKEN",
-    "SENTINEL_CATALOGUE_APPROVALS",
+    "SENTINEL_CATALOGUE_APPROVALS", "SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS",
 )
 
 
@@ -386,3 +386,104 @@ def test_init_warns_when_the_config_could_be_committed(
     (tmp_path / ".gitignore").write_text("sentinel.yaml\n", encoding="utf-8")
     assert main(["--config", str(target), "init", "--force"]) == 0
     assert "not ignored" not in capsys.readouterr().err
+
+
+def test_check_warns_when_the_agents_token_is_also_the_operators(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With one token and no admin token, the agents' credential administers.
+
+    The README said only SENTINEL_ADMIN_TOKEN could change policy; in this
+    configuration the single token can too, and nothing said so.
+    """
+    _serve_in_memory(monkeypatch, _tool("lookup"))
+    _configure()
+    monkeypatch.setenv("SENTINEL_API_TOKEN", "agent-and-operator")
+    monkeypatch.delenv("SENTINEL_ADMIN_TOKEN", raising=False)
+    reset_settings_cache()
+    assert main(["check"]) == 0
+    assert "also the operator credential" in capsys.readouterr().out
+
+    monkeypatch.setenv("SENTINEL_ADMIN_TOKEN", "operator-only")
+    reset_settings_cache()
+    assert main(["check"]) == 0
+    assert "also the operator credential" not in capsys.readouterr().out
+
+
+# --- config file parsing ---------------------------------------------------------
+
+
+def test_a_quoted_false_in_the_config_file_means_off() -> None:
+    """Converted by truthiness, "false" (a non-empty string) used to mean on."""
+    from sentinel.cli import ConfigError, apply_config
+
+    apply_config({"real_web_fetch": "false", "catalogue_strict": "true"})
+    assert os.environ["SENTINEL_REAL_WEB_FETCH"] == "0"
+    assert os.environ["SENTINEL_CATALOGUE_STRICT"] == "1"
+    os.environ.pop("SENTINEL_REAL_WEB_FETCH")
+    with pytest.raises(ConfigError, match="boolean"):
+        apply_config({"real_web_fetch": "maybe"})
+
+
+def test_a_misspelt_config_key_is_an_error(capsys: pytest.CaptureFixture[str]) -> None:
+    from sentinel.cli import ConfigError, load_config
+
+    Path(DEFAULT_CONFIG).write_text("catalog_strict: false\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="catalog_strict"):
+        load_config(None)
+
+
+def test_a_set_but_empty_env_var_does_not_mask_the_file() -> None:
+    """compose and some platforms export variables that are present but empty."""
+    from sentinel.cli import apply_config
+
+    os.environ["SENTINEL_POLICY_FILE"] = ""
+    apply_config({"policy": "./policy.yaml"})
+    assert os.environ["SENTINEL_POLICY_FILE"] == "./policy.yaml"
+
+
+def test_the_commit_warning_checks_the_right_path_for_a_nested_config(
+    tmp_path: Path,
+) -> None:
+    """`sub/sentinel.yaml` was checked as `sub/sub/sentinel.yaml`."""
+    import subprocess
+
+    from sentinel.cli import _is_committable
+
+    if subprocess.run(["git", "init", "-q"], cwd=tmp_path).returncode != 0:  # noqa: S603,S607
+        pytest.skip("git is not available")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / ".gitignore").write_text("/sub/sentinel.yaml\n", encoding="utf-8")
+    nested = Path("sub") / "sentinel.yaml"  # relative, as `sentinel init -c` gets it
+    nested.write_text("{}\n", encoding="utf-8")
+    assert _is_committable(nested) is False  # ignored: no warning
+    Path(".gitignore").write_text("", encoding="utf-8")
+    assert _is_committable(nested) is True
+
+
+def test_check_gives_fingerprints_for_flag_only_findings_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the strict refusal printed them; flag-only gave no way to approve."""
+    from sentinel.catalogue import fingerprint_tool
+
+    helper = _tool("helper", _POISON)
+    _serve_in_memory(monkeypatch, _tool("lookup"), helper)
+    _configure(catalogue_strict=False)
+    assert main(["check"]) == 1
+    assert f"helper: {fingerprint_tool(helper)}" in capsys.readouterr().err
+
+
+def test_check_does_not_call_approved_findings_no_poisoning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With an approval, check passed and said "no poisoning" about a flagged tool."""
+    from sentinel.catalogue import fingerprint_tool
+
+    ordinary = _tool("send_email", "Send an email to a recipient, e.g. user@example.com.")
+    _serve_in_memory(monkeypatch, _tool("lookup"), ordinary)
+    _configure(catalogue_approvals={"send_email": fingerprint_tool(ordinary)})
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "no poisoning" not in out
+    assert "approved by fingerprint" in out and "send_email" in out

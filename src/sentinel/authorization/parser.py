@@ -10,8 +10,17 @@ into a :class:`~sentinel.authorization.ast.Predicate`. The grammar is::
     atom       := comparison | "(" condition ")"
     comparison := operand cmp_op operand
     cmp_op     := "==" | "!=" | "<" | ">=" | "in" | "not" "in"
-    operand    := number | string | label | variable | set
+    operand    := number | string | bool | label | variable | set
+    bool       := "true" | "false"            (also "True" / "False")
     set        := "{" ( operand ("," operand)* )? "}"
+
+``null`` / ``None`` are reserved and rejected: there is no null value, and a
+name that looks like a literal must not quietly become a variable.
+
+A predicate may nest at most ``MAX_PREDICATE_DEPTH`` levels, counting
+parentheses, ``not`` and each ``and`` / ``or`` in a chain. Deeper predicates
+used to load and then fail at evaluation (or raise RecursionError while
+loading); use a set literal for long lists of alternatives.
 
 Operator precedence (highest → lowest): comparisons, parens, ``not``,
 ``and``, ``or`` — matching Python so policy authors who read the rule as a
@@ -35,6 +44,7 @@ from typing import Final, cast
 
 from sentinel.authorization.ast import (
     And,
+    BoolLiteral,
     Comparison,
     LabelLiteral,
     Not,
@@ -46,8 +56,13 @@ from sentinel.authorization.ast import (
     SetLiteral,
     StringLiteral,
     Variable,
+    predicate_depth,
 )
 from sentinel.labels import ALL_LABELS, Label
+
+MAX_PREDICATE_DEPTH: Final[int] = 64
+_BOOLEANS: Final[dict[str, bool]] = {"true": True, "True": True, "false": False, "False": False}
+_RESERVED: Final[frozenset[str]] = frozenset({"null", "None", "none", "NULL"})
 
 
 class PolicyParseError(ValueError):
@@ -103,6 +118,12 @@ def _tokenize(text: str) -> list[_Token]:
                 kind = "OR"
             elif value in ALL_LABELS:
                 kind = "LABEL"
+            elif value in _BOOLEANS:
+                kind = "BOOL"
+            elif value in _RESERVED:
+                raise PolicyParseError(
+                    f"{value!r} is reserved: the policy language has no null value, in {text!r}"
+                )
             else:
                 kind = "VAR"
         tokens.append(_Token(kind, value))
@@ -114,6 +135,14 @@ class _Parser:
         self._tokens = tokens
         self._text = text
         self._pos = 0
+        self._depth = 0
+
+    def _descend(self) -> None:
+        self._depth += 1
+        if self._depth > MAX_PREDICATE_DEPTH:
+            raise PolicyParseError(
+                f"predicate nests deeper than {MAX_PREDICATE_DEPTH} levels in {self._text!r}"
+            )
 
     def _peek(self) -> _Token | None:
         return self._tokens[self._pos] if self._pos < len(self._tokens) else None
@@ -164,14 +193,19 @@ class _Parser:
             and self._tokens[self._pos + 1].kind != "IN"
         ):
             self._advance()  # consume "not"
-            return Not(inner=self._parse_not())
+            self._descend()
+            inner = self._parse_not()
+            self._depth -= 1
+            return Not(inner=inner)
         return self._parse_atom()
 
     def _parse_atom(self) -> Predicate:
         token = self._peek()
         if token is not None and token.kind == "LPAREN":
             self._advance()  # consume "("
+            self._descend()
             inner = self._parse_or()
+            self._depth -= 1
             close = self._advance()
             if close.kind != "RPAREN":
                 raise PolicyParseError(
@@ -221,6 +255,8 @@ class _Parser:
                 raise PolicyParseError(f"invalid number {token.value!r}") from exc
         if token.kind == "STRING":
             return StringLiteral(token.value[1:-1])
+        if token.kind == "BOOL":
+            return BoolLiteral(_BOOLEANS[token.value])
         if token.kind == "LABEL":
             # token.value is one of ALL_LABELS, so it is a valid Label.
             return LabelLiteral(cast(Label, token.value))
@@ -259,4 +295,13 @@ def parse_condition(text: str) -> Predicate:
     """
     if not text or not text.strip():
         raise PolicyParseError("empty predicate")
-    return _Parser(_tokenize(text), text).parse_condition()
+    try:
+        predicate = _Parser(_tokenize(text), text).parse_condition()
+    except RecursionError as exc:  # backstop; _descend should stop it first
+        raise PolicyParseError(f"predicate nests too deeply in {text[:80]!r}") from exc
+    if predicate_depth(predicate) > MAX_PREDICATE_DEPTH:
+        raise PolicyParseError(
+            f"predicate chains more than {MAX_PREDICATE_DEPTH} levels of and/or/not; "
+            "use a set literal for long lists of alternatives"
+        )
+    return predicate

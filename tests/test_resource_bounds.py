@@ -14,6 +14,7 @@ Each of these was unbounded and demonstrated before it was fixed:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -264,10 +265,31 @@ async def test_live_stream_subscribers_are_capped_and_slots_come_back() -> None:
         assert done.status_code == 200
         assert slots.active == 0, "a finished stream leaked its subscriber slot"
 
-        slots.active = 1  # one subscriber already holding the only slot
+        slots.by_tenant["*"] = 1  # one subscriber already holding the only slot
         refused = await client.get("/events/stream", params={"follow": "false"})
         assert refused.status_code == 503
-        slots.active = 0
+        slots.by_tenant.clear()
+
+
+async def test_one_tenant_cannot_take_every_live_stream_slot() -> None:
+    """The subscriber cap is per tenant (it used to be one shared count)."""
+    tokens = json.dumps({"acme": "tok-acme", "globex": "tok-globex"})
+    async with _client(
+        SENTINEL_MAX_SSE_SUBSCRIBERS="1",
+        SENTINEL_ALLOW_ANONYMOUS="0",
+        SENTINEL_API_TOKENS=tokens,
+    ) as (client, _, app):
+        app.state.sse_streams.by_tenant["acme"] = 1  # acme holds its only slot
+        params = {"follow": "false"}
+        acme = await client.get(
+            "/events/stream", params=params, headers={"authorization": "Bearer tok-acme"}
+        )
+        globex = await client.get(
+            "/events/stream", params=params, headers={"authorization": "Bearer tok-globex"}
+        )
+        assert acme.status_code == 503
+        assert globex.status_code == 200
+        assert app.state.sse_streams.by_tenant == {"acme": 1}, "globex's slot leaked"
 
 
 def test_the_event_buffer_cut_matches_a_linear_scan() -> None:
@@ -378,3 +400,43 @@ def test_a_malformed_limit_is_an_error_not_a_silent_default() -> None:
     finally:
         os.environ.pop("SENTINEL_MAX_BODY_BYTES", None)
         reset_settings_cache()
+
+
+async def test_connected_mcp_agents_do_not_use_up_the_scenario_quota() -> None:
+    """Live sessions are runs too, and counted here they locked scenarios out."""
+    async with _client(SENTINEL_MAX_ACTIVE_RUNS="2") as (client, manager, _app):
+        for i in range(2):  # two agents connected over /mcp
+            manager._runs[f"live{i}"] = RunRecord(  # noqa: SLF001
+                run_id=f"live{i}",
+                trace_id=f"live{i}",
+                agent_id="a",
+                scenario="live-mcp",
+                tenant="acme",
+                status="running",
+            )
+        started = await client.post("/runs", json={"scenario": "hero-obvious", "tenant": "acme"})
+        assert started.status_code == 200, started.text
+        await manager.join(started.json()["trace_id"])
+        for i in range(2):
+            manager._runs[f"live{i}"].status = "completed"  # noqa: SLF001
+
+
+async def test_runs_cut_short_by_shutdown_are_not_left_running() -> None:
+    """CancelledError is a BaseException; `except Exception` left them "running"."""
+    manager = RunManager(store=InMemoryForensicStore())
+    records = [manager.start_scenario("hero-obvious") for _ in range(3)]
+    await manager.aclose()
+    assert all(r.status != "running" for r in records), [r.status for r in records]
+    assert all(r.error for r in records if r.status == "failed")
+
+
+async def test_a_finished_run_releases_its_sequence_counter() -> None:
+    """The emitter kept one counter per trace for the life of the process."""
+    manager = RunManager(store=InMemoryForensicStore())
+    try:
+        record = manager.start_scenario("hero-obvious")
+        await manager.join(record.trace_id)
+        await asyncio.sleep(0)  # let the done-callback run
+        assert record.trace_id not in manager._emitter._next_seq  # noqa: SLF001
+    finally:
+        await manager.aclose()

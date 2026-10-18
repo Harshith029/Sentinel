@@ -90,7 +90,7 @@ from sentinel.downstream import (
 )
 from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.proxy import SentinelProxy
-from sentinel.mcp_proxy.router import ToolRouter
+from sentinel.mcp_proxy.router import DownstreamConnection, ToolRouter
 from sentinel.shield import InputShield
 
 _LOG: Final[logging.Logger] = logging.getLogger("sentinel.control.mcp_gateway")
@@ -117,6 +117,11 @@ _PRINCIPAL_SALT: Final[bytes] = os.urandom(16)
 _SESSION_HEADER: Final[str] = "mcp-session-id"
 # Session owners are pruned against the live transport past this many.
 _OWNER_PRUNE_THRESHOLD: Final[int] = 2 * _MAX_SESSIONS
+# How often tools/list may re-check the downstream catalogues. The SDK also runs
+# the tools/list handler whenever a call names a tool it has not cached, so an
+# unthrottled check let an agent cost every downstream server a tools/list per
+# call. The scheduled re-check (SENTINEL_CATALOGUE_RECHECK_SECONDS) is separate.
+_LIST_RECHECK_MIN_INTERVAL_SECONDS: Final[float] = 5.0
 
 
 def _credential(request: object | None) -> str:
@@ -225,7 +230,7 @@ def _request_authorized(scope: Scope) -> bool:
 
 
 async def gateway_preflight(
-    router: ToolRouter, *, declared: bool, settings: Settings
+    source: DownstreamConnection, *, declared: bool, settings: Settings
 ) -> ToolSchemaCache:
     """The catalogue vetting the gateway performs before it serves anything.
 
@@ -239,7 +244,7 @@ async def gateway_preflight(
     closed inside the router by the time this runs.
     """
     return await preflight(
-        router,
+        source,
         # With declared servers there is no fixed expected tool set — whatever
         # discovery found IS the catalogue. Only the bundled example topology
         # has required tools to assert.
@@ -385,8 +390,11 @@ class SentinelGateway:
         tenant: str = DEFAULT_TENANT,
         max_sessions: int = _MAX_SESSIONS,
         idle_ttl: float = _SESSION_IDLE_TTL_SECONDS,
+        list_recheck_interval: float = _LIST_RECHECK_MIN_INTERVAL_SECONDS,
     ) -> None:
         self._manager = manager
+        self._list_recheck_interval = list_recheck_interval
+        self._last_list_recheck: float | None = None
         self._tenant = tenant
         self._max_sessions = max_sessions
         self._idle_ttl = idle_ttl
@@ -547,7 +555,10 @@ class SentinelGateway:
         # default a poisoned catalogue refuses to boot. (Cross-server tool-name
         # shadowing already fails closed inside ToolRouter.list_tools.)
         settings = get_settings()
-        cache = await gateway_preflight(self._router, declared=bool(declared), settings=settings)
+        # Approve exactly what the routes were built from: on the declared path,
+        # discovery's own listing, not a second fetch (see discovered()).
+        source = self._topology.discovered() if self._topology is not None else self._router
+        cache = await gateway_preflight(source, declared=bool(declared), settings=settings)
         self._cache = cache.tools
         self._approved = cache.names
         self._preflight_findings = cache.findings
@@ -688,7 +699,11 @@ class SentinelGateway:
         session must also come from the principal that opened it.
         """
         if scope["type"] != "http":
-            await self._session_manager.handle_request(scope, receive, send)
+            # Mount("/mcp") routes websockets here too. MCP has no websocket
+            # transport in this gateway, and passing one on reached SDK code
+            # before the credential check below. Refuse it at the handshake.
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
             return
         if not _request_authorized(scope):
             await _reject_unauthorized(send)
@@ -710,8 +725,21 @@ class SentinelGateway:
                 # nothing about whether the session exists.
                 await _reject_unknown_session(send)
                 return
-            await self._session_manager.handle_request(scope, receive, send)
-            if scope.get("method") == "DELETE":
+            if scope.get("method") != "DELETE":
+                await self._session_manager.handle_request(scope, receive, send)
+                return
+            # Forget the owner only when the SDK actually ended the session. A
+            # DELETE it refused leaves the session alive, and dropping the
+            # owner then locked the owner out of it.
+            status: list[int] = []
+
+            async def status_send(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    status.append(int(message["status"]))
+                await send(message)
+
+            await self._session_manager.handle_request(scope, receive, status_send)
+            if status and 200 <= status[0] < 300:
                 self._session_owners.pop(presented, None)
                 self._transport_sessions.pop(presented, None)
             return
@@ -778,6 +806,20 @@ class SentinelGateway:
             self._transport_sessions.pop(session_id, None)
             self._session_owners.pop(session_id, None)
 
+    async def _verify_catalogue_for_listing(self) -> None:
+        """The tools/list rug-pull check, at most once per interval.
+
+        Callers inside the interval get the findings of the last check, which
+        is what the call path enforces anyway. The timestamp is taken before
+        the check runs, so concurrent listings do not start one each.
+        """
+        now = time.monotonic()
+        last = self._last_list_recheck
+        if last is not None and now - last < self._list_recheck_interval:
+            return
+        self._last_list_recheck = now
+        await self._verify_catalogue()
+
     async def _verify_catalogue(self) -> tuple[CatalogueFinding, ...]:
         """Re-check the live downstream against the catalogue pinned at connect.
 
@@ -809,19 +851,16 @@ class SentinelGateway:
             # after approval, and (strict mode) makes the call path refuse the
             # changed tools. A transport hiccup is not drift — the
             # monitor records the error and we keep serving the cache.
-            await self._verify_catalogue()
+            await self._verify_catalogue_for_listing()
             return list(self._cache)
 
         @front.call_tool()  # type: ignore[untyped-decorator]
         async def _call_tool(name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
             proxy = await self._proxy_for_current_session()
             if proxy is None:
-                # Fail closed at capacity (see _proxy_for_current_session). We
-                # refuse rather than mint a fresh proxy that would carry no taint.
-                return mcp_error(
-                    "SENTINEL: at session capacity; refusing a new agent session "
-                    "rather than reset an existing one. Retry shortly."
-                )
+                # Fail closed (see _proxy_for_current_session). We refuse rather
+                # than mint a fresh proxy that would carry no taint.
+                return mcp_error(self._no_proxy_message(self._front.request_context.session))
             return await proxy.handle_call(name, arguments)
 
         return front
@@ -921,8 +960,28 @@ class SentinelGateway:
             # showing disconnected agents as permanently running. It captures
             # the trace id, never the session, or it would keep alive the very
             # object whose death it waits for.
-            weakref.finalize(session, self._manager.finish_live_run, proxy.trace_id)
+            weakref.finalize(session, self._manager.release_live_run, proxy.trace_id)
             return proxy
+
+    def _no_proxy_message(self, session: object) -> str:
+        """Why a session got no proxy, worded for what the client should do.
+
+        A retired session used to get the capacity message, "retry shortly",
+        and retrying in that session can never succeed: the SDK may still hold
+        it (its idle clock counts any request, ours only tool calls), but its
+        proxy is gone for good.
+        """
+        tracked = self._sessions.get(session)  # type: ignore[call-overload]
+        if tracked is not None and tracked.proxy is None:
+            return (
+                f"SENTINEL: this MCP session was retired after {self._idle_ttl:g}s "
+                "without a tool call. Open a new session; retrying in this one "
+                "will not succeed."
+            )
+        return (
+            "SENTINEL: at session capacity; refusing a new agent session "
+            "rather than reset an existing one. Retry shortly."
+        )
 
     @property
     def active_sessions(self) -> int:

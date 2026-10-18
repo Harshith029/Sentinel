@@ -16,7 +16,7 @@ from sentinel.authorization.policy import (
 
 def test_default_policy_loads_and_compiles() -> None:
     policy = load_default_policy()
-    assert policy.policy_version == 4
+    assert policy.policy_version == 5
     assert set(policy.tools) == {
         "web_fetch",
         "send_email",
@@ -122,3 +122,57 @@ _MALFORMED = {
 def test_malformed_policy_rejected_at_load(name: str) -> None:
     with pytest.raises(PolicyLoadError):
         load_policy(_MALFORMED[name])
+
+
+def test_default_policy_caps_transfers_from_below_too() -> None:
+    """`amount >= max_amount` alone let -5, or "-Infinity", through."""
+    engine = AuthorizationEngine(load_default_policy())
+
+    def decide(amount: object) -> str:
+        return engine.authorize(
+            ToolCall(
+                name="transfer_funds", arguments={"amount": amount}, provenance=frozenset({"USER"})
+            )
+        ).decision
+
+    assert decide(250) == "ALLOW"
+    assert decide(-5) == "DENY"
+    assert decide("-Infinity") == "DENY"
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "(" * 500 + "a == 1" + ")" * 500,  # used to raise RecursionError: a 500 on reload
+        "not " * 500 + "a == 1",
+        " and ".join(["a == 1"] * 2000),  # loaded, then crashed the engine or never evaluated
+    ],
+    ids=["deep-parens", "deep-not", "long-chain"],
+)
+def test_overly_deep_predicates_are_refused_at_load(predicate: str) -> None:
+    policy = (
+        "policy_version: 1\ntools:\n  t:\n    rules:\n"
+        f"      - id: r\n        deny_if: '{predicate}'\n"
+    )
+    with pytest.raises(PolicyLoadError, match="deep|levels"):
+        load_policy(policy)
+
+
+def test_a_reasonable_chain_still_loads() -> None:
+    policy = load_policy(
+        "policy_version: 1\ntools:\n  t:\n    rules:\n      - id: r\n        deny_if: '"
+        + " or ".join(f"a == {i}" for i in range(40))
+        + "'\n"
+    )
+    assert AuthorizationEngine(policy).authorize(
+        ToolCall(name="t", arguments={"a": 39}, provenance=frozenset({"USER"}))
+    ).decision == "DENY"
+
+
+def test_duplicate_rule_ids_within_a_tool_are_refused() -> None:
+    with pytest.raises(PolicyLoadError, match="duplicate rule id"):
+        load_policy(
+            "policy_version: 1\ntools:\n  t:\n    rules:\n"
+            "      - {id: same, deny_always: true}\n"
+            "      - {id: same, deny_if: 'a == 1'}\n"
+        )

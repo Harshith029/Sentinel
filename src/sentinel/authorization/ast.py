@@ -47,18 +47,42 @@ def _to_decimal(value: object) -> Decimal:
             f"operand is not numeric for ordered comparison: {type(value).__name__}"
         )
     try:
-        return value if isinstance(value, Decimal) else Decimal(str(value))
+        number = value if isinstance(value, Decimal) else Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ConditionError(
             f"operand is not a valid number: {type(value).__name__}"
         ) from exc
+    # NaN and the infinities are not amounts. "-Infinity" used to pass a cap
+    # such as `amount >= max_amount`; a non-finite operand is now an error,
+    # which the engine turns into a deny.
+    if not number.is_finite():
+        raise ConditionError("operand is not a finite number")
+    return number
+
+
+def _numeric_text(value: object) -> bool:
+    """A string an ordered comparison would accept as a number."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return Decimal(value.strip()).is_finite()
+    except (InvalidOperation, ValueError):
+        return False
 
 
 def _equal(left: object, right: object) -> bool:
-    # Numbers compare by value (12 == 12.0 == Decimal('12')); everything else,
-    # including frozenset == frozenset for provenance, uses Python equality.
-    if _is_number(left) and _is_number(right):
-        return _to_decimal(left) == _to_decimal(right)
+    # Booleans equal only booleans. Python's True == 1 used to make
+    # `flag == 1` match a boolean argument.
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    # Numbers compare by value (12 == 12.0 == Decimal('12')), and so does a
+    # numeric string against a number, exactly as `<` and `>=` already treat
+    # it. Otherwise "1000" escaped `amount == 1000` but not `amount >= 1000`.
+    if (_is_number(left) or _numeric_text(left)) and (_is_number(right) or _numeric_text(right)):
+        if _is_number(left) or _is_number(right):
+            return _to_decimal(left) == _to_decimal(right)
+    # Everything else, including frozenset == frozenset for provenance, uses
+    # Python equality.
     return bool(left == right)
 
 
@@ -102,6 +126,16 @@ class StringLiteral(Operand):
 @dataclass(frozen=True)
 class NumberLiteral(Operand):
     value: Decimal
+
+    def resolve(self, namespace: Mapping[str, object]) -> object:
+        return self.value
+
+
+@dataclass(frozen=True)
+class BoolLiteral(Operand):
+    """``true`` or ``false``. Before these existed, both parsed as variables."""
+
+    value: bool
 
     def resolve(self, namespace: Mapping[str, object]) -> object:
         return self.value
@@ -199,15 +233,52 @@ def comparand_names(predicate: Comparison | And | Or | Not) -> frozenset[str]:
     ``allowed_domains`` and ``max_amount``. The engine never lets a call's own
     arguments supply these names (see :class:`AuthorizationEngine`).
     """
-    if isinstance(predicate, Comparison):
-        return (
-            frozenset({predicate.right.name})
-            if isinstance(predicate.right, Variable)
-            else frozenset()
-        )
-    if isinstance(predicate, Not):
-        return comparand_names(predicate.inner)
-    return comparand_names(predicate.left) | comparand_names(predicate.right)
+    names: set[str] = set()
+    pending: list[Predicate] = [predicate]
+    while pending:  # iterative: a long and/or chain must not hit the recursion limit
+        node = pending.pop()
+        if isinstance(node, Comparison):
+            if isinstance(node.right, Variable):
+                names.add(node.right.name)
+        elif isinstance(node, Not):
+            pending.append(node.inner)
+        else:
+            pending.extend((node.left, node.right))
+    return frozenset(names)
+
+
+def subject_names(predicate: Comparison | And | Or | Not) -> frozenset[str]:
+    """Variables used as the LEFT-hand side of any comparison: the call's fields."""
+    names: set[str] = set()
+    pending: list[Predicate] = [predicate]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, Comparison):
+            if isinstance(node.left, Variable):
+                names.add(node.left.name)
+        elif isinstance(node, Not):
+            pending.append(node.inner)
+        else:
+            pending.extend((node.left, node.right))
+    return frozenset(names)
+
+
+def predicate_depth(predicate: Comparison | And | Or | Not) -> int:
+    """Nesting depth of ``predicate``: 1 for a lone comparison.
+
+    A left-deep ``a and b and c`` chain is as deep as it is long, and
+    evaluation recurses once per level, so the loader bounds this.
+    """
+    deepest = 0
+    pending: list[tuple[Predicate, int]] = [(predicate, 1)]
+    while pending:
+        node, depth = pending.pop()
+        deepest = max(deepest, depth)
+        if isinstance(node, Not):
+            pending.append((node.inner, depth + 1))
+        elif isinstance(node, (And, Or)):
+            pending.extend(((node.left, depth + 1), (node.right, depth + 1)))
+    return deepest
 
 
 # A condition is either a leaf comparison or a Boolean combination of conditions.

@@ -27,7 +27,7 @@ and only the tools you write rules for are guarded.
 <br>
 <sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
 Layer-1 filter <b>misses</b> the obfuscated injection — the action is refused anyway,
-because its lineage traces back to untrusted content.</i></sub>
+because its lineage includes untrusted tool output.</i></sub>
 </div>
 
 ```bash
@@ -63,7 +63,7 @@ Read this before deploying anything.
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
-| Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; tenant (agent) credentials cannot |
+| Operator separation | With `SENTINEL_ADMIN_TOKEN` set, only it can change policy or clear a quarantine; tenant (agent) credentials cannot. With a single `SENTINEL_API_TOKEN` and no admin token, that one token is the operator's too, so whatever holds it can administer; `sentinel check` and `sentinel serve` warn about this |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
 | Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
@@ -81,6 +81,10 @@ protects you from.
 | **Only guarded tools are guarded** | A tool without policy rules can carry tainted data out. The bundled policy treats `web_fetch` as an outbound capability and constrains its hostname through `allowed_fetch_hosts`; add equivalent rules for every outbound tool you introduce. Rules are deny-only and there is no notion of a general outbound "sink" yet. |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
+| **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and policies replaced through `POST /tenants/{t}/policy` are in memory. A restart forgets API policy reloads (put durable policy in `SENTINEL_POLICY_FILE` / `SENTINEL_TENANT_POLICIES`), and two replicas share none of it, which is why the Azure template runs one. |
+| **Cosmos persistence is partial** | With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
+| **Some state is visible across tenants** | Event ids on `/events` are one global counter, so a tenant can infer how busy the deployment is. `/downstream` and `/capabilities` describe the whole deployment to any authenticated caller. |
+| **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees the call, so they leave no forensic record. |
 
 `SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
 With neither it nor `SENTINEL_ALLOW_ANONYMOUS=1` set, the service refuses to
@@ -109,9 +113,9 @@ the request was phrased.
 |---|---|
 | **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied — regardless of phrasing, so obfuscation doesn't help |
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
-| **Tool poisoning** | Tool descriptions *and* input schemas are scanned at connect; a poisoned catalogue is refused |
+| **Tool poisoning** | Every agent-visible part of a tool definition (description, title, annotations, input and output schemas, metadata) is scanned at connect; a poisoned catalogue is refused |
 | **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
-| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on every tool listing and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
 | **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
 
@@ -141,9 +145,10 @@ the attacker's inbox; with it, the email is never sent.</i></sub>
 ```
 
 Provenance is a **set of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)
-unioned over an action's transitive `derived_from` ancestry — computed by a real
-cycle-safe graph walk, not a mutable flag. An action is tainted iff
-`RETRIEVED_CONTENT` is in that set.
+unioned over an action's transitive `derived_from` ancestry, never the label of the
+most recent step. The proxy keeps that union incrementally as the session runs; a test
+checks it against a full walk of the provenance graph on random sessions. An action is
+tainted iff `RETRIEVED_CONTENT` is in that set.
 
 Taint clears exactly one way: **declassification**, declared per tool in policy.
 
@@ -230,8 +235,11 @@ tools:
         deny_always: true
 ```
 
-Predicates support `== != < >= in "not in"`, set literals (`{USER}`), tool arguments,
-and config values. In a comparison the left side describes the call and the right
+Predicates support `== != < >= in "not in"`, `and`/`or`/`not`, set literals
+(`{USER}`), `true`/`false`, tool arguments, and config values. There is no null, and a
+predicate may nest at most 64 levels; use a set for long lists of alternatives.
+Numbers must be finite, a numeric string compares as a number, and a boolean never
+equals a number. In a comparison the left side describes the call and the right
 side is what you allow: a variable on the right (`allowed_domains`, `max_amount`) is
 read from `config` only, never from the call's arguments. If you forget to declare
 it, the rule denies every call rather than letting the agent supply its own
@@ -271,7 +279,7 @@ the service. The defaults sit well above normal use and only affect abuse.
 | `SENTINEL_RATE_LIMIT_PER_MINUTE` | 600 | `429` + `Retry-After`. `0` disables |
 | `SENTINEL_MAX_ACTIVE_RUNS` | 8 per tenant | `429` + `Retry-After` |
 | `SENTINEL_MAX_RETAINED_RUNS` | 1000 | Oldest *finished* run leaves the run index; its spans stay in the forensic store |
-| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 | `503` |
+| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 per tenant | `503`; use `/events` polling |
 | `SENTINEL_MAX_RESULT_BYTES` | 1 MiB | The tool result is withheld and the agent gets an error. The call is still recorded |
 | `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` | 30 | Per downstream operation (connect + initialize, tool listing, one tool call). A timed-out call returns an error to the agent and is recorded like any other result. Raise it for tools that run longer |
 | MCP sessions on `/mcp` | 512 per tenant (fixed) | `initialize` is answered with a JSON-RPC error; open sessions are never evicted to make room |
@@ -354,7 +362,10 @@ it as a public sandbox, not as an example of a secured deployment: everything in
 is synthetic and anyone can drive it. A real deployment must set
 `SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
 attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
-anyway. All demo data is synthetic — the record is a labelled fake
+anyway. Read the block for what it is: the session is already tainted by the
+customer-record lookup before the page is fetched (every tool result is untrusted), and
+the attacker's domain is outside the bundled allowlist, so the email would be refused
+without the poisoned page too. All demo data is synthetic — the record is a labelled fake
 (SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
 writes to an in-memory sink. Nothing is ever sent.
 
@@ -393,7 +404,7 @@ Stating the boundary precisely is what separates a security product from a demo.
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
-.venv/bin/python -m pytest        # 370 tests
+.venv/bin/python -m pytest        # every test must pass
 .venv/bin/python -m ruff check src tests
 .venv/bin/python -m mypy src      # strict
 ```

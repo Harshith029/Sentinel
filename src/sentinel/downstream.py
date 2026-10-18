@@ -40,10 +40,26 @@ import httpx
 import mcp.types as mcp_types
 
 from sentinel.catalogue import CatalogueIntegrityError, detect_shadowing
+from sentinel.mcp_proxy.content import mcp_error
 from sentinel.mcp_proxy.router import (
     DEFAULT_DOWNSTREAM_OPERATION_TIMEOUT_SECONDS,
     ToolRouter,
+    list_all_tools,
 )
+
+
+def _display_url(url: str) -> str:
+    """A server URL fit for an error message or a log line.
+
+    Without user info, query or fragment: those are where a URL carries a
+    credential (``https://user:token@host`` or ``?api_key=``), and connection
+    errors are printed and logged.
+    """
+    try:
+        parsed = httpx.URL(url)
+        return str(parsed.copy_with(userinfo=b"", query=None, fragment=None))
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return "<unparseable url>"
 
 
 class DownstreamConfigError(ValueError):
@@ -64,7 +80,8 @@ class DownstreamServer:
             raise DownstreamConfigError(f"server {self.name!r}: 'url' must be a non-empty string")
         if not self.url.startswith(("http://", "https://")):
             raise DownstreamConfigError(
-                f"server {self.name!r}: url must start with http:// or https://, got {self.url!r}"
+                f"server {self.name!r}: url must start with http:// or https://, "
+                f"got {_display_url(self.url)!r}"
             )
 
 
@@ -93,12 +110,36 @@ class DownstreamTopology:
     def tool_names(self) -> frozenset[str]:
         return frozenset(t.name for t in self.tools)
 
+    def discovered(self) -> DiscoveredCatalogue:
+        """The catalogue routes were built from, for preflight to approve.
+
+        Preflight used to list the servers again, so the routes and the
+        approved definitions came from two different fetches: a tool could be
+        approved from one server's listing and routed to another's.
+        """
+        return DiscoveredCatalogue(self.tools)
+
     def server_of(self, tool_name: str) -> str | None:
         """Which declared server owns ``tool_name`` (for forensics/debugging)."""
         for server, tools in self.catalogues.items():
             if any(t.name == tool_name for t in tools):
                 return server
         return None
+
+
+@dataclass(frozen=True)
+class DiscoveredCatalogue:
+    """A fixed catalogue served through the ``list_tools`` surface preflight reads."""
+
+    tools: tuple[mcp_types.Tool, ...]
+
+    async def list_tools(self) -> mcp_types.ListToolsResult:
+        return mcp_types.ListToolsResult(tools=list(self.tools))
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, object] | None = None
+    ) -> mcp_types.CallToolResult:
+        return mcp_error("a discovered catalogue cannot call tools")
 
 
 def parse_servers(raw: str | None) -> tuple[DownstreamServer, ...]:
@@ -166,8 +207,7 @@ async def build_topology(
         # large topology to hold startup hostage for N times the deadline.
         async with asyncio.timeout(operation_timeout_seconds):
             for name, session in sessions.items():
-                listed = await session.list_tools()
-                catalogues[name] = tuple(listed.tools)
+                catalogues[name] = tuple(await list_all_tools(session))
     except TimeoutError as exc:
         raise DownstreamConfigError("downstream tool discovery timed out") from exc
     except Exception as exc:  # noqa: BLE001 - any transport failure is fatal here
@@ -205,9 +245,12 @@ def _downstream_http_client(
     Supplying our own rather than letting the SDK build a default is for two
     proven reasons, and no others:
 
-    * **A hang becomes an error.** The SDK default does not bound connect, so a
-      misconfigured or black-holed downstream URL wedges startup instead of
-      failing with something the operator can act on.
+    * **Bounds that fit SENTINEL.** The SDK's default client allows 30 s to
+      connect and 300 s per read. Ours fails a black-holed URL in 10 s, and
+      leaves reads unbounded because a session's GET stream legitimately sits
+      idle; the per-operation deadline (``SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS``)
+      bounds the RPCs instead. (This used to say the SDK default did not bound
+      connect at all, which was wrong.)
     * **Cross-origin redirects are refused.** An MCP mount commonly answers
       ``/mcp`` with a 307 to ``/mcp/``, which must keep working; a redirect to
       another origin must not, because a 307 replays the JSON-RPC body there.
@@ -344,7 +387,8 @@ async def connect_downstream(
             )
         except Exception as exc:  # noqa: BLE001 - surface any connect failure clearly
             raise DownstreamConfigError(
-                f"downstream server {server.name!r} at {server.url}: connection failed: {exc}"
+                f"downstream server {server.name!r} at {_display_url(server.url)}: "
+                f"connection failed: {exc}"
             ) from exc
         sessions[server.name] = session
     return await build_topology(sessions, operation_timeout_seconds=operation_timeout_seconds)

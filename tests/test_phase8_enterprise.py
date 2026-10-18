@@ -241,3 +241,81 @@ def test_phase4_policy_still_loads() -> None:
         )
     )
     assert policy.rules_for("web_fetch") == ()
+
+
+# --- Azure classifier: errors, reuse, exact labels (no network) ---------------
+
+
+class _FakeCompletions:
+    def __init__(self, reply: str | Exception) -> None:
+        self._reply = reply
+
+    async def create(self, **_kwargs: object) -> object:
+        if isinstance(self._reply, Exception):
+            raise self._reply
+        message = type("M", (), {"content": self._reply})()
+        return type("C", (), {"choices": [type("Ch", (), {"message": message})()]})()
+
+
+def _azure_classifier(reply: str | Exception) -> AttackClassifier:
+    classifier = AttackClassifier(
+        demo_mode=False,
+        azure_openai_endpoint="https://oai.example",
+        azure_openai_deployment="gpt-4o-mini",
+    )
+    chat = type("Chat", (), {"completions": _FakeCompletions(reply)})()
+    fake = type("Client", (), {"chat": chat})()
+    classifier._client = fake  # type: ignore[assignment]  # noqa: SLF001
+    return classifier
+
+
+async def test_an_azure_classifier_outage_falls_back_to_rule_labels() -> None:
+    """An Azure error used to fail the whole audit endpoint."""
+    label = await _azure_classifier(RuntimeError("401 from Azure")).classify(
+        BlockedAttempt("delete_record", "never", "authorization", "denied")
+    )
+    assert label.attack_class == "privilege_escalation"
+    assert label.classifier == "rule_based" and "unavailable" in label.rationale
+
+
+async def test_an_azure_reply_must_be_exactly_one_class() -> None:
+    """A substring match read "not exfiltration" as exfiltration."""
+    attempt = BlockedAttempt("delete_record", "never", "authorization", "denied")
+    hedged = await _azure_classifier("not exfiltration").classify(attempt)
+    assert hedged.attack_class == "privilege_escalation"  # the rule label, not the substring
+    exact = await _azure_classifier("Exfiltration.").classify(attempt)
+    assert exact.attack_class == "exfiltration"
+
+
+def test_the_azure_client_is_built_once() -> None:
+    """A new sync credential per call blocked the event loop on every token fetch."""
+    classifier = AttackClassifier(
+        demo_mode=False,
+        azure_openai_endpoint="https://oai.example",
+        azure_openai_deployment="gpt-4o-mini",
+    )
+    first = classifier._azure_client()  # noqa: SLF001
+    assert classifier._azure_client() is first  # noqa: SLF001
+
+
+def test_foundry_registration_lists_only_real_tools_and_never_an_empty_list() -> None:
+    """transfer_funds was listed though no demo server registers it."""
+    from sentinel.demo.tool_servers import ToolServerState, build_downstream
+
+    served = set()
+    for server in build_downstream(ToolServerState()).values():
+        served |= {t.name for t in server._tool_manager.list_tools()}  # noqa: SLF001
+    assert set(PROXIED_TOOLS) <= served
+    with pytest.raises(ValueError, match="explicitly"):
+        build_sentinel_mcp_tool(server_url="https://sentinel.example/mcp", allowed_tools=[])
+
+
+async def test_the_capability_mode_follows_the_running_manager() -> None:
+    """A manager built with demo_mode=False still reported DEMO MODE."""
+    manager = RunManager(demo_mode=False)
+    try:
+        summary = manager.capabilities()
+        assert summary["mode"] == "PRODUCTION MODE"
+        assert summary["demo_mode"] is False
+    finally:
+        await manager.aclose()

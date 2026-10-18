@@ -130,13 +130,33 @@ _EVENT_PAGE_MAX: Final[int] = 1000
 
 
 class _StreamSlots:
-    """How many live SSE streams are open on this app."""
+    """Live SSE streams open on this app, counted per tenant.
+
+    ``SENTINEL_MAX_SSE_SUBSCRIBERS`` applies to each tenant. One shared count
+    let a single tenant hold every slot and shut all the others out of the
+    live feed. Callers with no tenant (the operator, anonymous mode) share one
+    bucket.
+    """
 
     def __init__(self) -> None:
-        self.active = 0
+        self.by_tenant: dict[str, int] = {}
 
-    def release(self) -> None:
-        self.active = max(0, self.active - 1)
+    @property
+    def active(self) -> int:
+        return sum(self.by_tenant.values())
+
+    def held(self, tenant: str) -> int:
+        return self.by_tenant.get(tenant, 0)
+
+    def acquire(self, tenant: str) -> None:
+        self.by_tenant[tenant] = self.held(tenant) + 1
+
+    def release(self, tenant: str) -> None:
+        remaining = self.held(tenant) - 1
+        if remaining > 0:
+            self.by_tenant[tenant] = remaining
+        else:
+            self.by_tenant.pop(tenant, None)
 
 
 class _BoundedEventSource(EventSourceResponse):
@@ -738,14 +758,15 @@ def create_app(
                     if _matches(event.span.trace_id):
                         yield _to_sse(event)
 
-        if streams.active >= get_settings().max_sse_subscribers:
+        bucket = _scope(request) or "*"
+        if streams.held(bucket) >= get_settings().max_sse_subscribers:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="too many live-stream subscribers; use /events polling",
                 headers={"Retry-After": "5"},
             )
-        streams.active += 1
-        return _BoundedEventSource(publisher(), on_close=streams.release)
+        streams.acquire(bucket)
+        return _BoundedEventSource(publisher(), on_close=lambda: streams.release(bucket))
 
     @app.get("/demo/sanitization", dependencies=[Depends(require_demo), Depends(require_auth)])
     async def sanitization_demo() -> dict[str, Any]:

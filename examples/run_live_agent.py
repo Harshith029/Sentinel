@@ -20,6 +20,9 @@ Run it::
     python examples/run_live_agent.py --offline
 
 Watch http://localhost:8765 — the run appears live as a `live-mcp` trace.
+
+Exit status: 0 when SENTINEL blocked at least one action, 4 when nothing was
+blocked, 3 when no live model is available, 2 when the run failed.
 """
 from __future__ import annotations
 
@@ -85,7 +88,10 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
         print("A real agent loop was secured without modifying the agent.")
         return 0
     print("RESULT: nothing was blocked (the model may not have attempted the action).")
-    return 0
+    # Not 0: a script or CI job running this to demonstrate a block must be able
+    # to tell that it did not see one. With --offline the stand-in model always
+    # attempts the exfiltration, so this means SENTINEL let it through.
+    return 4
 
 
 def main() -> int:

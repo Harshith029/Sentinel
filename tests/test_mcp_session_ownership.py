@@ -275,3 +275,118 @@ async def test_an_active_session_is_not_cut_by_the_idle_ttl(
                 json=_fetch("https://corp.example/busy", 10 + i),
             )
             assert kept.status_code == 200, f"cut after {0.1 * (i + 1):.1f}s of activity"
+
+
+# --- the gate comes first, for every connection type ----------------------------
+
+
+async def test_a_websocket_to_mcp_is_refused_before_the_sdk_sees_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mount("/mcp") routes websockets too, and they used to skip the auth gate.
+
+    The SDK only failed on them because Starlette's Request rejects the scope
+    type: an unauthenticated caller reached SDK code, and nothing in SENTINEL
+    stood in the way.
+    """
+    async with _gateway(monkeypatch) as (_client, gateway, _store):
+        reached: list[str] = []
+
+        async def spy(scope: Any, receive: Any, send: Any) -> None:
+            reached.append(scope["type"])
+
+        monkeypatch.setattr(gateway._session_manager, "handle_request", spy)  # noqa: SLF001
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "websocket.connect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await gateway.handle_asgi(
+            {"type": "websocket", "path": "/", "headers": [], "query_string": b""},
+            receive,
+            send,
+        )
+        assert reached == []
+        assert sent and sent[0]["type"] == "websocket.close"
+
+
+async def test_a_rejected_delete_does_not_orphan_the_owners_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a DELETE the SDK accepted ends the session.
+
+    The owner record used to be dropped after any DELETE. One the SDK refused
+    (here, an unsupported protocol version) left the session alive in the SDK
+    but unreachable: every later request from its owner was "unknown session".
+    """
+    async with _gateway(monkeypatch) as (client, gateway, _store):
+        session = await _open_session(client, _ACME)
+        refused = await client.delete(
+            "/",
+            headers={**_ACME, "mcp-session-id": session, "mcp-protocol-version": "1999-01-01"},
+        )
+        assert refused.status_code >= 400
+        assert session in gateway._session_owners  # noqa: SLF001
+
+        listed = await client.post(
+            "/",
+            headers={**_ACME, "mcp-session-id": session},
+            json=_rpc("tools/list", {}, 2),
+        )
+        assert listed.status_code == 200, listed.text
+
+
+async def test_unknown_tool_names_do_not_each_recheck_every_downstream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK re-runs tools/list on a tool-cache miss, and tools/list re-checks.
+
+    So every call naming a tool that does not exist cost a tools/list on every
+    downstream server: an agent could multiply its load on them at will.
+    """
+    async with _gateway(monkeypatch) as (client, gateway, _store):
+        session = await _open_session(client, _ACME)
+        monitor = gateway._monitor  # noqa: SLF001
+        assert monitor is not None
+        checks: list[int] = []
+        real_check = monitor.check
+
+        async def counting_check(downstream: Any) -> Any:
+            checks.append(1)
+            return await real_check(downstream)
+
+        monkeypatch.setattr(monitor, "check", counting_check)
+        for i in range(5):
+            response = await client.post(
+                "/",
+                headers={**_ACME, "mcp-session-id": session},
+                json=_rpc("tools/call", {"name": f"no_such_tool_{i}", "arguments": {}}, 10 + i),
+            )
+            assert response.status_code == 200
+        assert len(checks) <= 1, f"{len(checks)} downstream re-checks for 5 calls"
+
+
+async def test_a_retired_session_is_told_to_reconnect_not_to_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retired session used to be told the gateway was at capacity."""
+
+    class _Session:  # weak-referenceable stand-in for the SDK's ServerSession
+        pass
+
+    async with _gateway(monkeypatch, idle_ttl=0.2) as (_client, gateway, _store):
+        idle, fresh = _Session(), _Session()
+        args = {"principal": "p", "tenant": "acme", "transport_reserved": True}
+        assert await gateway._proxy_for_session(idle, **args) is not None  # noqa: SLF001
+        await asyncio.sleep(0.3)
+        # A new session needing room is what retires idle ones.
+        assert await gateway._proxy_for_session(fresh, **args) is not None  # noqa: SLF001
+        assert await gateway._proxy_for_session(idle, **args) is None  # noqa: SLF001
+
+        message = gateway._no_proxy_message(idle)  # noqa: SLF001
+        assert "retired" in message and "new session" in message
+        assert "Retry shortly" not in message
+        assert "capacity" in gateway._no_proxy_message(_Session())  # noqa: SLF001

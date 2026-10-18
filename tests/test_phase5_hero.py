@@ -210,3 +210,27 @@ async def test_preflight_rejects_missing_required_tool(
         await client.initialize()
         with pytest.raises(PreflightError, match="missing required tools"):
             await preflight(client, required_tools={"web_fetch", "send_email"})
+
+
+async def test_demo_runs_honour_the_operators_catalogue_approvals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The demo's preflight ignored SENTINEL_CATALOGUE_APPROVALS; serve's did not."""
+    import sentinel.demo.scenario as scenario
+    from sentinel.config import reset_settings_cache
+
+    seen: dict[str, object] = {}
+    real_preflight = scenario.preflight
+
+    async def spy(*args: object, **kwargs: object) -> object:
+        seen.update(kwargs)
+        return await real_preflight(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(scenario, "preflight", spy)
+    monkeypatch.setenv("SENTINEL_CATALOGUE_APPROVALS", '{"send_email": "' + "a" * 64 + '"}')
+    reset_settings_cache()
+    try:
+        await run_hero_attack(variant="obvious")
+    finally:
+        reset_settings_cache()
+    assert seen.get("approved") == {"send_email": "a" * 64}

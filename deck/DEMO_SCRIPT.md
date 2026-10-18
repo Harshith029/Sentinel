@@ -4,6 +4,23 @@ Companion to `SENTINEL_pitch.pptx`. Everything below is grounded in a run verifi
 live over the real control plane (not a mock): the 16-span hero-evasion kill chain,
 trust 100→70, and the before/after exfiltration contrast.
 
+
+> **Correction (2026-10-18).** Kept as submitted to the hackathon. Some claims here
+> did not hold, or no longer do:
+>
+> - Application Insights, Key Vault and a Foundry agent driver are not used by the
+>   service. No telemetry exporter is started, nothing reads Key Vault, and the
+>   Foundry module only builds a tool registration. Forensic spans use
+>   OpenTelemetry's id *format*; SENTINEL does not export OpenTelemetry traces.
+> - Provenance is kept as a running union per session, not by a graph walk on
+>   each call.
+> - In the hero scenario the `send_email` is already tainted by the customer-record
+>   lookup (every tool result is untrusted), and the attacker's domain is outside
+>   the bundled allowlist. The block does not depend on the poisoned page.
+> - Test counts are from submission time.
+> - The record lookup's origin badge shows `{USER}`, not `{USER, AGENT}`, and the
+>   next call, the page fetch, already carries `RETRIEVED_CONTENT` from the record.
+
 ---
 
 ## Before you start (1 min, off-camera)

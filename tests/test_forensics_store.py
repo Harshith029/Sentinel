@@ -6,7 +6,10 @@ requirement that "every store passes the IDENTICAL test suite."
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -217,3 +220,52 @@ async def test_sqlite_lists_by_recency_not_by_trace_length(
         assert await store.list_trace_ids() == [TRACE_B, TRACE_A]
     finally:
         store.close()
+
+
+# --- SQLite: cancellation and orphaned ownership rows ----------------------------
+
+
+async def test_a_cancelled_sqlite_write_holds_the_lock_until_its_thread_ends(
+    tmp_path: Path, make_span: Callable[..., Span]
+) -> None:
+    """Cancelling the caller released the lock while the thread kept writing.
+
+    The next operation then used the connection alongside it, and the write
+    the caller believed abandoned still landed afterwards.
+    """
+    store = SqliteForensicStore(tmp_path / "forensics.db")
+    events: list[str] = []
+    real_put, real_read = store._put_blocking, store._read_blocking  # noqa: SLF001
+
+    def slow_put(span: Span, body: str) -> None:
+        events.append("put-start")
+        time.sleep(0.3)
+        real_put(span, body)
+        events.append("put-end")
+
+    def read(trace_id: str) -> list[str]:
+        events.append("read")
+        return real_read(trace_id)
+
+    store._put_blocking = slow_put  # type: ignore[method-assign]  # noqa: SLF001
+    store._read_blocking = read  # type: ignore[method-assign]  # noqa: SLF001
+    span = make_span(seq=0)
+    writer = asyncio.create_task(store.put(span))
+    await asyncio.sleep(0.05)
+    writer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await writer
+    await store.get_spans(span.trace_id)
+    assert events == ["put-start", "put-end", "read"]
+    store.close()
+
+
+async def test_ownership_rows_without_spans_are_purged(tmp_path: Path) -> None:
+    """A run that never wrote a span had nothing to age out with."""
+    store = SqliteForensicStore(tmp_path / "forensics.db")
+    await store.put_run("a" * 32, tenant="acme", agent_id="x", scenario="custom")
+    await store.put_run("b" * 32, tenant="acme", agent_id="x", scenario="custom")
+    future = datetime.now(UTC) + timedelta(days=1)
+    await store.purge_older_than(future, keep=frozenset({"b" * 32}))
+    assert set(await store.run_owners()) == {"b" * 32}  # the running one is kept
+    store.close()

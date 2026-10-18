@@ -380,33 +380,40 @@ async def test_mcp_requires_bearer_token_when_configured(
         manager = RunManager(store=InMemoryForensicStore())
         app = create_app(manager, enable_mcp_gateway=True)
         async with _RunningServer(app) as server:
-            # No credential → refused (initialize fails; never hangs).
-            refused = False
-            try:
+            # No credential → refused with a 401 (initialize fails; never hangs).
+            # Any exception used to count as "refused", a timeout included.
+            with pytest.raises(BaseException) as refusal:  # noqa: B017 - the SDK wraps it
                 async with _mcp_client(server.mcp_url) as (read, write, _s):
                     async with ClientSession(read, write) as session:
                         await asyncio.wait_for(session.initialize(), timeout=8)
-            except Exception:  # noqa: BLE001 - any failure means it was refused
-                refused = True
-            assert refused, "unauthenticated /mcp must be refused when a token is set"
+            leaves = _exception_leaves(refusal.value)
+            assert not any(isinstance(leaf, TimeoutError) for leaf in leaves), leaves
+            assert any("401" in str(leaf) for leaf in leaves), leaves
 
             # Correct bearer token → works. follow_redirects mirrors the SDK's
             # default client (the /mcp mount 307-redirects to /mcp/).
-            authed = httpx.AsyncClient(
+            async with httpx.AsyncClient(
                 headers={"Authorization": "Bearer s3cr3t-wire-token"},
                 follow_redirects=True,
-            )
-            async with streamable_http_client(
-                server.mcp_url, http_client=authed
-            ) as (read, write, _s):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools = await session.list_tools()
-                    assert any(t.name == "send_email" for t in tools.tools)
+            ) as authed:
+                async with streamable_http_client(
+                    server.mcp_url, http_client=authed
+                ) as (read, write, _s):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        tools = await session.list_tools()
+                        assert any(t.name == "send_email" for t in tools.tools)
     finally:
         monkeypatch.delenv("SENTINEL_API_TOKEN", raising=False)
         reset_settings_cache()
 
+
+
+def _exception_leaves(exc: BaseException) -> list[BaseException]:
+    """Every non-group exception inside a (possibly nested) ExceptionGroup."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for inner in exc.exceptions for leaf in _exception_leaves(inner)]
+    return [exc]
 
 async def test_remote_http_tool_servers_are_secured(
     monkeypatch: pytest.MonkeyPatch,

@@ -7,6 +7,9 @@ on the internal-network vectors an SSRF attacker would reach for.
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import httpx
 import pytest
 
@@ -154,3 +157,68 @@ def test_validate_target_allows_public_and_blocks_private() -> None:
     assert validate_target("http://127.0.0.1/", allow_private=False, resolve=PUBLIC) is not None
     # allow_private bypass (trusted internal use) skips the IP check
     assert validate_target("http://127.0.0.1/", allow_private=True, resolve=PUBLIC) is None
+
+
+# --- malformed hosts, slow servers, blocking DNS --------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://" + "a" * 64 + ".com/", "http://xn--zz-xxx/"],
+    ids=["label-too-long", "invalid-idna"],
+)
+async def test_a_malformed_host_is_an_error_result_not_an_exception(url: str) -> None:
+    """Both raised out of fetch_url (UnicodeError, idna.InvalidCodepoint).
+
+    Neither reaches the network: the first fails while encoding the name for
+    getaddrinfo, the second while decoding it.
+    """
+    result = await fetch_url(url)
+    assert not result.ok and "invalid URL host" in result.error
+
+
+async def test_a_slow_drip_response_is_cut_off_by_the_deadline() -> None:
+    """Each chunk arrives inside the per-read timeout; the whole fetch must not."""
+
+    async def drip():  # type: ignore[no-untyped-def]
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            yield b"x"
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=drip())
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    async with _client(handler) as c:
+        result = await fetch_url("http://public.test/slow", resolve=PUBLIC, client=c, deadline=0.3)
+    assert not result.ok and "deadline" in result.error
+    assert loop.time() - started < 2.0
+
+
+async def test_dns_resolution_does_not_block_the_event_loop() -> None:
+    """getaddrinfo is blocking; it used to run on the loop every session shares."""
+
+    def slow_resolver(host: str) -> list[str]:
+        time.sleep(0.3)  # what a slow DNS server does to a blocking call
+        return ["93.184.216.34"]
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"ok")
+
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    try:
+        async with _client(handler) as c:
+            result = await fetch_url("http://public.test/", resolve=slow_resolver, client=c)
+    finally:
+        task.cancel()
+    assert result.ok
+    assert ticks >= 5, f"the loop ran only {ticks} ticks during a 0.3s lookup"

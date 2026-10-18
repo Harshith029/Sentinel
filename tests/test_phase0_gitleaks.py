@@ -4,11 +4,11 @@ The kickoff explicitly requires PROOF that the gitleaks pre-commit hook
 intercepts a planted key. The gitleaks pre-commit hook runs
 `gitleaks protect --staged`, so to exercise the real code path we:
 
-1. Write a planted-secret file inside the repo.
-2. `git add` it (staged content is what gitleaks scans).
-3. Invoke `pre-commit run gitleaks`.
+1. Create a throwaway git repository carrying this repo's pre-commit config.
+2. Write a planted-secret file there and `git add` it (staged content is what
+   gitleaks scans).
+3. Invoke `pre-commit run gitleaks` in that repository.
 4. Assert the run failed (non-zero) AND reported a leak.
-5. Unstage and delete the file regardless of outcome.
 
 Using a GitHub PAT shape (`ghp_<36>`) because gitleaks's `github-pat` rule is
 explicit and not masked by the default allowlist (which silently ignores
@@ -58,39 +58,34 @@ def _make_planted_pat() -> str:
 
 
 @pytest.fixture()
-def staged_planted_secret() -> Iterator[Path]:
-    """Plant + stage a fake credential, yield path, then unstage + delete.
+def staged_planted_secret(tmp_path: Path) -> Iterator[Path]:
+    """Plant + stage a fake credential in a THROWAWAY repo and yield that repo.
 
-    Teardown runs unconditionally so a failed assertion does NOT leave the
-    secret in the index. We MUST NOT leak a planted credential into git
-    history — that is the very thing this test exists to prevent.
+    This used to stage the file in this repository's own index and remove it
+    in a ``finally``. The suite's timeout ends the whole process without
+    running ``finally``, so a hang here would have left a planted credential
+    staged in the developer's index. A temporary repository has nothing to
+    leak into. It gets this repository's pre-commit config, so the hook under
+    test is the real one.
     """
-    planted = REPO_ROOT / "_phase0_planted_secret_DELETE_ME.txt"
-    fake_pat = _make_planted_pat()
+    git = _git_executable()
+    repo = tmp_path / "planted-repo"
+    repo.mkdir()
+    subprocess.run([git, "init", "-q"], cwd=repo, check=True, capture_output=True)  # noqa: S603
+    shutil.copy2(PRECOMMIT_CONFIG, repo / PRECOMMIT_CONFIG.name)
+    planted = repo / "_phase0_planted_secret_DELETE_ME.txt"
     planted.write_text(
-        f"# Phase 0 test — PLANTED fake credential to prove gitleaks blocks.\n"
-        f"GITHUB_TOKEN = {fake_pat!r}\n",
+        "# Phase 0 test — PLANTED fake credential to prove gitleaks blocks.\n"
+        f"GITHUB_TOKEN = {_make_planted_pat()!r}\n",
         encoding="utf-8",
     )
-
-    git = _git_executable()
-    try:
-        subprocess.run(  # noqa: S603
-            [git, "add", "--force", str(planted)],
-            cwd=str(REPO_ROOT),
-            check=True,
-            capture_output=True,
-        )
-        yield planted
-    finally:
-        # Always unstage so the planted credential cannot be committed.
-        subprocess.run(  # noqa: S603
-            [git, "restore", "--staged", str(planted)],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            check=False,
-        )
-        planted.unlink(missing_ok=True)
+    subprocess.run(  # noqa: S603
+        [git, "add", "--force", planted.name, PRECOMMIT_CONFIG.name],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    yield repo
 
 
 def test_gitleaks_blocks_planted_secret(staged_planted_secret: Path) -> None:
@@ -98,7 +93,7 @@ def test_gitleaks_blocks_planted_secret(staged_planted_secret: Path) -> None:
 
     proc = subprocess.run(  # noqa: S603
         [_pre_commit_executable(), "run", "gitleaks"],
-        cwd=str(REPO_ROOT),
+        cwd=str(staged_planted_secret),
         capture_output=True,
         text=True,
         timeout=180,

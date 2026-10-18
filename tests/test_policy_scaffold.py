@@ -129,3 +129,10 @@ def test_overlong_description_is_truncated_not_wrapped() -> None:
     comment_lines = [ln for ln in text.splitlines() if "AAA" in ln]
     assert len(comment_lines) == 1  # truncated onto one line, never wrapped
     assert len(comment_lines[0]) < 200
+
+
+def test_a_long_tool_name_with_spaces_stays_one_key() -> None:
+    """PyYAML folded it onto two lines at 80 characters, so the policy failed to load."""
+    name = ("a tool with a rather long name " * 4).strip()
+    compiled = load_policy(scaffold_policy({"srv": [tool(name)]}))
+    assert compiled.rules_for(name) is not None

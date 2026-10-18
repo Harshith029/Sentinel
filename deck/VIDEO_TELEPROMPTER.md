@@ -1,5 +1,8 @@
 # SENTINEL — 3-minute demo video · teleprompter script
 
+> **Correction (2026-10-18):** see the note at the top of `SUBMISSION.md`; the same
+> claims about Azure integrations and the hero block apply to this script.
+
 **How to read this:** talk like you're showing a friend something cool on your screen —
 relaxed, not announcing. The little "so", "okay", "yeah", "kind of" are just there to
 keep it sounding human; if any of them feel forced when *you* say it, drop them. Don't

@@ -223,8 +223,14 @@ def mode_summary(
     shield_backend: str | None = None,
     classifier_backend: str | None = None,
     store: object | None = None,
+    demo_mode: bool | None = None,
 ) -> dict[str, object]:
-    """The payload the dashboard renders, now describing reality."""
+    """The payload the dashboard renders, now describing reality.
+
+    ``demo_mode`` is the RUNNING mode when the caller knows it: a manager can be
+    built with an override, and the label used to follow the settings instead.
+    """
+    demo = settings.demo_mode if demo_mode is None else demo_mode
     caps = capability_matrix(
         settings,
         shield_backend=shield_backend,
@@ -232,7 +238,7 @@ def mode_summary(
         store=store,
     )
     free = [c for c in caps if c.cost == _FREE]
-    if settings.demo_mode:
+    if demo:
         mode = "DEMO MODE"
         tagline = (
             "Offline demo with synthetic tools. The security pipeline is identical "
@@ -246,7 +252,7 @@ def mode_summary(
         )
     return {
         "mode": mode,
-        "demo_mode": settings.demo_mode,
+        "demo_mode": demo,
         "tagline": tagline,
         "degraded": [c.name for c in caps if c.degraded],
         "capabilities": [

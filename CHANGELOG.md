@@ -7,6 +7,31 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- Declassification schemas are strict. `iso_date` takes `YYYY-MM-DD` only
+  (`date.fromisoformat` also took `20261018` and ISO week dates), and
+  `decimal_amount` takes plain ASCII notation up to 18 digits each side of
+  the point (`1_000`, `1e9999` and non-ASCII digits were accepted).
+- `TrustScorer(...)` records quarantine by default (`enforce=False`), as the
+  service and the scorer's own documentation already did. It enforced by
+  default, so the standalone demo enforced while the dashboard did not; the
+  trust-collapse demo now asks for enforcement explicitly.
+- `sentinel.yaml` rejects unknown keys (a misspelt key was ignored), and
+  booleans must be booleans: the quoted string `"false"` used to mean on.
+  An environment variable that is set but empty no longer masks the file's
+  value.
+- Policy language: `true` and `false` are literals (they parsed as variables,
+  so a call's argument named `true` set them), and `null`/`None` are refused.
+  A boolean never equals a number. `==` reads a numeric string as a number,
+  as `<` and `>=` already did, so `"1000"` no longer escapes
+  `amount == 1000`. NaN and the infinities are errors, so the rule denies:
+  `"-Infinity"` used to pass `amount >= max_amount`. A predicate nesting more
+  than 64 levels is refused at load (deep parentheses raised RecursionError,
+  a 500 on reload; long chains loaded and then never evaluated), and so are
+  duplicate rule ids within a tool.
+- The bundled policy (version 5) also denies `transfer_funds` with a negative
+  amount; the cap alone let one through.
+- A blocked agent is told which rule refused it, not the evaluation detail,
+  which could name config values. The forensic record keeps the full reason.
 - Catalogue fingerprints cover the whole tool definition: title, annotations,
   output schema, icons and metadata as well as the description and input
   schema. Existing `catalogue_approvals` entries no longer match. Re-run
@@ -51,6 +76,45 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- Tool approval uses the same `tools/list` snapshot as routing. Preflight
+  listed the servers a second time, so a tool could be approved from one
+  server's definition and routed to another's.
+- Trust state is keyed by a `(tenant, agent)` pair. The joined
+  `tenant<US>agent` string let names containing the separator collide.
+- Cancelling a caller no longer releases the SQLite store's lock while its
+  thread is still using the connection, and spans are written with a plain
+  `INSERT` rather than `INSERT OR REPLACE`.
+- `structuredContent` counts toward `SENTINEL_MAX_RESULT_BYTES`; it reached
+  the agent outside the cap.
+- A proxy session can be started once. A second `start()` reset the lineage
+  to the user's label alone, clearing the session's taint.
+- A recipient address containing a control character is unparseable, so an
+  allowlist denies it. The raw value is what is forwarded, and a CRLF in it
+  could add mail headers downstream.
+- `web_fetch` resolves DNS off the event loop. The blocking `getaddrinfo`
+  stalled every session while a lookup ran. It also has an overall deadline
+  (`deadline`, 30 s): a server sending a byte just inside the per-read
+  timeout kept a fetch going indefinitely. Malformed hosts (a label over 63
+  characters, invalid IDNA) are error results; they raised out of a function
+  documented never to.
+- Downstream connection errors no longer print a server URL's user info,
+  query or fragment, where URLs carry credentials.
+- An explicit `SENTINEL_SHIELD=azure` is honoured in demo mode, the default.
+  It was silently replaced by the local regexes.
+- `/mcp` refuses websocket connections at the handshake. `Mount` routes them
+  to the gateway too, and they went to the MCP SDK before the credential
+  check.
+- A `DELETE` the SDK refused no longer forgets the session's owner, which
+  locked the owner out of a session that was still alive.
+- `tools/list` re-checks the downstream catalogues at most every 5 seconds.
+  The SDK runs that handler whenever a call names a tool it has not cached,
+  so every call with a made-up tool name cost a `tools/list` on every
+  downstream server.
+- `SENTINEL_MAX_SSE_SUBSCRIBERS` applies per tenant; one tenant could hold
+  every live-stream slot.
+- `sentinel check` and `sentinel serve` warn when a single `SENTINEL_API_TOKEN`
+  with no `SENTINEL_ADMIN_TOKEN` makes the agents' credential the operator's.
+  The README claimed only the admin token could administer.
 - `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
   (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions
   accumulate without bound. SENTINEL's per-tenant session cap limited this on
@@ -100,6 +164,63 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- A declassified result's execution span names the schema that cleared it
+  (`declassified_by`); only the `SYSTEM` label was recorded.
+- Loading a policy warns when a config key has the same name as a call field
+  a rule reads, since config then replaces that field for every rule.
+- `sentinel check` prints the approval fingerprints for flag-only findings as
+  it does for a strict refusal, and lists approved findings instead of
+  reporting "no poisoning".
+- Demo runs honour `SENTINEL_CATALOGUE_APPROVALS`, as `sentinel serve` does.
+- With `SENTINEL_REAL_WEB_FETCH=1`, a custom attack's page is served for its
+  URL. The protected run fetched the live URL while its baseline used the
+  custom page, so the two compared different content.
+- `examples/run_live_agent.py` exits 4 when nothing was blocked; it exited 0,
+  so a script could not tell a demonstration from a non-event.
+- Dashboard: a refused launch (a 4xx such as an unknown scenario or a full
+  quota) or a run that fails before emitting anything shows REFUSED with the
+  reason; it spun forever. It auto-plays once, on a dashboard with no runs,
+  instead of launching a run and a baseline on every page load.
+- Security log lines (allow, block, quarantine, injection flag) name the
+  tenant, as `tenant` in JSON and `[tenant ...]` in text.
+- `/capabilities` reports the manager's running mode; a manager built with
+  `demo_mode=False` still said DEMO MODE.
+- Discovery follows `tools/list` pagination (up to 100 pages). Only the first
+  page was read, so a large server's later tools were never routed or scanned.
+- Documentation now matches the code. The README described a per-call graph
+  walk for provenance (it is a running union, tested against the walk) and
+  implied the hero block depended on the poisoned page; it does not, because
+  the record lookup already taints the session. CONTRIBUTING said CI runs
+  Python 3.11 only; the pytest timeout comment called a hard process exit an
+  ordinary failure. Module docstrings claimed catalogue findings were
+  forensic events, a `list_changed` subscription, real records and email
+  servers, and an SDK client with no connect timeout. The hackathon write-ups
+  under `deck/` carry a dated correction note instead of being rewritten.
+- The Foundry registration no longer lists `transfer_funds`, which no demo
+  server provides, and refuses an empty tool list, as SDK_VERIFICATION.md
+  said it did.
+- A failing injection scan (an Azure Prompt Shields outage, say) is recorded
+  as `scan failed` instead of raising. For a tool result the tool had already
+  run, so the call failed after its side effect.
+- The Azure OpenAI classifier builds its credential and client once and
+  fetches tokens off the event loop; it built a new credential and fetched a
+  token synchronously on every call. An Azure error falls back to the rule
+  label instead of failing `/runs/{id}/audit`, and a reply must be exactly
+  one class (`"not exfiltration"` was read as exfiltration).
+- Live MCP sessions no longer count against `SENTINEL_MAX_ACTIVE_RUNS`; with
+  eight agents connected a tenant could not start a scenario. The gateway caps
+  sessions itself.
+- A run cancelled at shutdown is marked failed; it stayed `running`.
+- Retention purges ownership rows for runs that never wrote a span.
+- Trust state is capped at 10,000 agents, evicting the least recently used and
+  never one that crossed the threshold. The emitter frees a trace's sequence
+  counter when its run or session ends. Both grew for the life of the process.
+- `sentinel scaffold` kept a long tool name with spaces on one line; PyYAML
+  folded it at 80 characters and the generated policy did not load.
+- `sentinel init`'s "this file could be committed" check looked at
+  `sub/sub/sentinel.yaml` for a config at `sub/sentinel.yaml`.
+- A session retired for idleness is told to open a new session. It was told
+  the gateway was at capacity and to retry, which could never succeed.
 - `/capabilities` reported "Azure Monitor · Application Insights" as active
   whenever `APPLICATIONINSIGHTS_CONNECTION_STRING` was set, but nothing ever
   initialized an exporter. Observability is reported as what it is, structured

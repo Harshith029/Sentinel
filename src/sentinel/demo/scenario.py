@@ -5,6 +5,12 @@
 deterministic driver for a live one changes only what proposes the calls — the
 provenance / authorization / trust / forensic pipeline is identical. There is
 exactly one pipeline here; nothing about it branches on the driver.
+
+"Identical" means the interception core: every call goes through the same
+:meth:`SentinelProxy._intercept` as a live ``/mcp`` session. The wiring around it
+is the demo's own: in-memory mock tool servers rather than the operator's, the
+bundled policy unless one is passed, a placeholder user input, and an agent id
+per run rather than per credential.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 
 from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import load_default_policy
+from sentinel.catalogue import parse_approvals
 from sentinel.config import get_settings
 from sentinel.demo.driver import AgentDriver, ScriptedAgentDriver, Step, ToolInvocation
 from sentinel.demo.preflight import preflight
@@ -110,11 +117,14 @@ async def run_demo_session(
 
         # PREFLIGHT: health-check + cache schemas BEFORE the run (anti-flakiness),
         # and vet the catalogue for tool poisoning with the same Layer-1 shield.
+        # The operator's approvals too, as the gateway passes them: without them
+        # a demo run refused a definition `sentinel serve` would accept.
         cache = await preflight(
             router,
             required_tools=REQUIRED_TOOLS,
             shield=shield,
             strict=get_settings().catalogue_strict,
+            approved=parse_approvals(get_settings().catalogue_approvals),
         )
 
         if skip_sentinel:
@@ -236,14 +246,27 @@ async def run_privilege_violation(*, demo_mode: bool = True) -> DemoResult:
     )
 
 
-async def run_trust_collapse(*, attempts: int = 5, demo_mode: bool = True) -> DemoResult:
-    """Attack 3 — trust collapse: repeated blocked calls → quarantine → refusals."""
+async def run_trust_collapse(
+    *, attempts: int = 5, demo_mode: bool = True, enforce: bool = True
+) -> DemoResult:
+    """Attack 3 — trust collapse: repeated blocked calls → quarantine → refusals.
+
+    Runs with quarantine ENFORCED, which a deployment opts into with
+    SENTINEL_ENFORCE_QUARANTINE=1; by default the crossing is only recorded.
+    It used to get enforcement from the scorer's default, so this standalone
+    run enforced while the same scenario on the dashboard did not.
+    """
+    store = InMemoryForensicStore()
+    emitter = SpanEmitter(store)
     return await run_demo_session(
         ScriptedAgentDriver(
             [ToolInvocation(tool="delete_record", arguments={"id": i}) for i in range(attempts)]
         ),
         user_input="Bulk-delete the records.",
         demo_mode=demo_mode,
+        store=store,
+        emitter=emitter,
+        scorer=TrustScorer(emitter, load_default_trust_config(), enforce=enforce),
     )
 
 

@@ -61,7 +61,9 @@ def _yaml_key(name: str) -> str:
     """Emit a tool name as a safe YAML key (quoted/escaped as needed)."""
     # yaml.safe_dump handles quoting for names with ':', '#', spaces, or names
     # that would otherwise parse as bools/ints ('yes', '123').
-    dumped = yaml.safe_dump(name, default_flow_style=True).strip()
+    # width: PyYAML folds a long plain scalar onto a second line at 80
+    # characters, which as a mapping key no longer parses.
+    dumped = yaml.safe_dump(name, default_flow_style=True, width=2**31).strip()
     # It appends a "..." document-end marker after a plain scalar. Strip it as a
     # SUFFIX: rstrip("\n...") is a character set and would eat a legitimate
     # trailing dot (a tool literally named "report." must stay "report.").

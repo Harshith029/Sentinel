@@ -84,13 +84,29 @@ catalogue_strict: true
 # here without editing it.
 """
 
+def _flag(value: object) -> str:
+    """A config-file boolean as the env var expects it.
+
+    Converted by truthiness, the quoted string "false" (common in YAML written
+    by hand) used to mean on.
+    """
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return "1"
+    if text in {"0", "false", "no", "off"}:
+        return "0"
+    raise ConfigError(f"expected a boolean (true/false), got {value!r}")
+
+
 # config key -> (env var, serializer)
 _ENV_MAP: dict[str, tuple[str, Any]] = {
     "servers": ("SENTINEL_MCP_SERVERS", json.dumps),
     "policy": ("SENTINEL_POLICY_FILE", str),
-    "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", lambda v: "1" if v else "0"),
+    "catalogue_strict": ("SENTINEL_CATALOGUE_STRICT", _flag),
     "catalogue_approvals": ("SENTINEL_CATALOGUE_APPROVALS", json.dumps),
-    "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", lambda v: "1" if v else "0"),
+    "real_web_fetch": ("SENTINEL_REAL_WEB_FETCH", _flag),
     "downstream_timeout_seconds": ("SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", str),
     "api_token": ("SENTINEL_API_TOKEN", str),
 }
@@ -98,6 +114,13 @@ _ENV_MAP: dict[str, tuple[str, Any]] = {
 
 class ConfigError(RuntimeError):
     """Raised when the config file is missing or malformed."""
+
+
+# Every key the config file may contain: the env-backed ones above plus those
+# read by the commands themselves (see _resolve).
+_CONFIG_KEYS: frozenset[str] = frozenset(
+    {*_ENV_MAP, "host", "port", "dashboard", "log_level", "log_format"}
+)
 
 
 def load_config(path: str | os.PathLike[str] | None) -> dict[str, Any]:
@@ -116,6 +139,13 @@ def load_config(path: str | os.PathLike[str] | None) -> dict[str, Any]:
         return {}
     if not isinstance(data, dict):
         raise ConfigError(f"{target}: top level must be a mapping")
+    # A misspelt key used to be ignored without a word, leaving the operator
+    # believing a setting was in force.
+    unknown = sorted(str(key) for key in data if key not in _CONFIG_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"{target}: unknown key(s) {unknown}; known keys: {sorted(_CONFIG_KEYS)}"
+        )
     return data
 
 
@@ -132,7 +162,10 @@ def apply_config(config: dict[str, Any]) -> None:
         # turn a fresh config into a hard downstream error.
         if value is None or value == [] or value == "":
             continue
-        if env_var not in os.environ:
+        # Set-but-empty counts as unset, as Settings itself reads it: an empty
+        # SENTINEL_POLICY_FILE used to mask the file's policy and select the
+        # bundled example one.
+        if not os.environ.get(env_var):
             os.environ[env_var] = serialize(value)
 
 
@@ -187,7 +220,9 @@ def _is_committable(target: Path) -> bool:
         # path that looks like a flag from being read as one. `git` is resolved
         # from PATH on purpose — that is the git the operator actually uses.
         proc = subprocess.run(  # noqa: S603
-            ["git", "check-ignore", "-q", "--", str(target)],  # noqa: S607
+            # The NAME, since cwd is already the parent: the full relative
+            # path, read from there, named parent/parent/file.
+            ["git", "check-ignore", "-q", "--", target.name],  # noqa: S607
             cwd=target.parent if target.parent.exists() else None,
             capture_output=True,
             timeout=5,
@@ -260,7 +295,12 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"policy          : {source} - valid; tenants: {tenants}")
 
     # --- authentication: would serve answer anyone? ----------------------------
-    from sentinel.authn import auth_configured, tenant_credentials
+    from sentinel.authn import (
+        OPERATOR_SHARED_WARNING,
+        auth_configured,
+        operator_credential_is_shared,
+        tenant_credentials,
+    )
 
     if auth_configured():
         kinds = []
@@ -271,6 +311,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         if settings.admin_token:
             kinds.append("operator token")
         print(f"auth            : {', '.join(kinds)}")
+        if operator_credential_is_shared():
+            print(f"  WARNING: {OPERATOR_SHARED_WARNING}")
     elif settings.allow_anonymous:
         print(
             "auth            : ANONYMOUS (SENTINEL_ALLOW_ANONYMOUS=1) - anyone who "
@@ -295,6 +337,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"shield          : {backend}")
 
     # --- downstream servers and their catalogue --------------------------------
+    from sentinel.catalogue import fingerprint_catalogue
     from sentinel.control.mcp_gateway import gateway_preflight
     from sentinel.demo.preflight import PreflightError
     from sentinel.downstream import connect_downstream, parse_servers
@@ -322,7 +365,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 print(f"  {name:<16} {len(tools)} tool(s): {names}")
             try:
                 cache = await gateway_preflight(
-                    topology.router, declared=True, settings=settings
+                    topology.discovered(), declared=True, settings=settings
                 )
             except PreflightError as exc:
                 _fail(f"catalogue       : REFUSED - serve would not start\n  {exc}")
@@ -336,7 +379,24 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
                 for finding in cache.findings:
                     _fail(f"  {finding}")
+                # The strict refusal prints these; flag-only mode used not to,
+                # leaving the operator no way to approve what they reviewed.
+                prints = fingerprint_catalogue(cache.tools)
+                flagged = sorted({f.tool_name for f in cache.findings} & prints.keys())
+                _fail(
+                    "  after review, approve exactly these definitions in sentinel.yaml:\n"
+                    "  catalogue_approvals:\n"
+                    + "".join(f"    {name}: {prints[name]}\n" for name in flagged)
+                )
                 ok = False
+            elif cache.acknowledged:
+                # Approved findings are still findings; "no poisoning" hid them.
+                print(
+                    f"catalogue       : OK - no shadowing, {len(cache.tools)} tool(s); "
+                    f"{len(cache.acknowledged)} finding(s) approved by fingerprint:"
+                )
+                for finding in cache.acknowledged:
+                    print(f"  {finding}")
             else:
                 print(
                     f"catalogue       : OK - no shadowing, no poisoning, "
@@ -442,6 +502,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from sentinel.control.app import create_app
 
     app = create_app(enable_mcp_gateway=True, dashboard=dashboard)
+
+    from sentinel.authn import OPERATOR_SHARED_WARNING, operator_credential_is_shared
+
+    if operator_credential_is_shared():
+        print(f"WARNING: {OPERATOR_SHARED_WARNING}", file=sys.stderr)
     print(f"SENTINEL proxy on http://{host}:{port}/mcp")
     suffix = "" if dashboard else " (dashboard disabled)"
     print(f"  point your agent's MCP endpoint at that URL{suffix}")

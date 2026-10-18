@@ -296,9 +296,9 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     # --- authentication: would serve answer anyone? ----------------------------
     from sentinel.authn import (
-        OPERATOR_SHARED_WARNING,
+        NO_OPERATOR_NOTICE,
+        administration_disabled,
         auth_configured,
-        operator_credential_is_shared,
         tenant_credentials,
     )
 
@@ -311,8 +311,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         if settings.admin_token:
             kinds.append("operator token")
         print(f"auth            : {', '.join(kinds)}")
-        if operator_credential_is_shared():
-            print(f"  WARNING: {OPERATOR_SHARED_WARNING}")
+        if administration_disabled():
+            print(f"  note: {NO_OPERATOR_NOTICE}")
     elif settings.allow_anonymous:
         print(
             "auth            : ANONYMOUS (SENTINEL_ALLOW_ANONYMOUS=1) - anyone who "
@@ -503,10 +503,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     app = create_app(enable_mcp_gateway=True, dashboard=dashboard)
 
-    from sentinel.authn import OPERATOR_SHARED_WARNING, operator_credential_is_shared
+    from sentinel.authn import NO_OPERATOR_NOTICE, administration_disabled
 
-    if operator_credential_is_shared():
-        print(f"WARNING: {OPERATOR_SHARED_WARNING}", file=sys.stderr)
+    if administration_disabled():
+        print(f"note: {NO_OPERATOR_NOTICE}", file=sys.stderr)
     print(f"SENTINEL proxy on http://{host}:{port}/mcp")
     suffix = "" if dashboard else " (dashboard disabled)"
     print(f"  point your agent's MCP endpoint at that URL{suffix}")

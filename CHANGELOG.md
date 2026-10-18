@@ -118,9 +118,12 @@ All notable changes to this project are documented here. Format follows
   downstream server.
 - `SENTINEL_MAX_SSE_SUBSCRIBERS` applies per tenant; one tenant could hold
   every live-stream slot.
-- `sentinel check` and `sentinel serve` warn when a single `SENTINEL_API_TOKEN`
-  with no `SENTINEL_ADMIN_TOKEN` makes the agents' credential the operator's.
-  The README claimed only the admin token could administer.
+- `SENTINEL_API_TOKEN` no longer administers, even in a single-token
+  deployment: it is the credential agents hold, so agents could replace their
+  own policy and clear their own quarantine. Only `SENTINEL_ADMIN_TOKEN`
+  administers; without it nobody does, and `sentinel check` and `sentinel
+  serve` say so. (Breaking for single-token deployments that used the policy
+  or trust-reset endpoints: set `SENTINEL_ADMIN_TOKEN`.)
 - `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
   (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions
   accumulate without bound. SENTINEL's per-tenant session cap limited this on

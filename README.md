@@ -63,7 +63,7 @@ Read this before deploying anything.
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
-| Operator separation | With `SENTINEL_ADMIN_TOKEN` set, only it can change policy or clear a quarantine; tenant (agent) credentials cannot. With a single `SENTINEL_API_TOKEN` and no admin token, that one token is the operator's too, so whatever holds it can administer; `sentinel check` and `sentinel serve` warn about this |
+| Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; agent credentials (`SENTINEL_API_TOKEN`, `SENTINEL_API_TOKENS`) never can. Without an admin token nobody administers, and `sentinel check` and `sentinel serve` say so |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
 | Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
@@ -265,8 +265,9 @@ Put your tool servers on an internal network reachable **only** by SENTINEL — 
 topology is what makes interception unbypassable.
 
 Authentication is required: with no credential configured SENTINEL refuses to serve.
-Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials plus
-`SENTINEL_ADMIN_TOKEN` for the operator (see [`.env.example`](./.env.example)).
+Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials, for your
+agents, and `SENTINEL_ADMIN_TOKEN` for the operator if you need to replace policies or
+clear quarantines through the API (see [`.env.example`](./.env.example)).
 
 ### Resource limits
 

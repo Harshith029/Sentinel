@@ -180,6 +180,11 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- The dashboard no longer says SENTINEL tracks "every byte" (lineage is per
+  tool result) or that its log streams live (it replays a run that finished
+  in milliseconds). DEPLOY.md says the Azure template's tool servers rely on
+  internal-only ingress, not authentication, and the README says catalogue
+  approval is trust on first use.
 - A declassified result's execution span names the schema that cleared it
   (`declassified_by`); only the `SYSTEM` label was recorded.
 - Loading a policy warns when a config key has the same name as a call field

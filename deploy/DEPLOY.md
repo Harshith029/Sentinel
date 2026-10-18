@@ -91,6 +91,10 @@ ingress, the tool servers internal-only, Key Vault with RBAC, Cosmos DB for span
 which shows the template is valid, not that it deploys or works. If you do
 deploy it, please report what happened.
 
+The demo tool servers it deploys have no authentication of their own. What keeps
+them behind SENTINEL is internal-only ingress, so anything else running in the same
+Container Apps environment can reach them directly. Put nothing else there.
+
 ```bash
 az group create -n sentinel-rg -l eastus
 az acr create -n <acr> -g sentinel-rg --sku Basic

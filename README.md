@@ -115,7 +115,7 @@ the request was phrased.
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
 | **Tool poisoning** | Every agent-visible part of a tool definition (description, title, annotations, input and output schemas, metadata) is scanned at connect; a poisoned catalogue is refused |
 | **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
-| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. Approval is trust on first use: what a server presents when SENTINEL connects is what gets pinned, so review it with `sentinel check` before going live. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
 | **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
 

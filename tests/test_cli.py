@@ -459,3 +459,31 @@ def test_the_commit_warning_checks_the_right_path_for_a_nested_config(
     assert _is_committable(nested) is False  # ignored: no warning
     Path(".gitignore").write_text("", encoding="utf-8")
     assert _is_committable(nested) is True
+
+
+def test_check_gives_fingerprints_for_flag_only_findings_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the strict refusal printed them; flag-only gave no way to approve."""
+    from sentinel.catalogue import fingerprint_tool
+
+    helper = _tool("helper", _POISON)
+    _serve_in_memory(monkeypatch, _tool("lookup"), helper)
+    _configure(catalogue_strict=False)
+    assert main(["check"]) == 1
+    assert f"helper: {fingerprint_tool(helper)}" in capsys.readouterr().err
+
+
+def test_check_does_not_call_approved_findings_no_poisoning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With an approval, check passed and said "no poisoning" about a flagged tool."""
+    from sentinel.catalogue import fingerprint_tool
+
+    ordinary = _tool("send_email", "Send an email to a recipient, e.g. user@example.com.")
+    _serve_in_memory(monkeypatch, _tool("lookup"), ordinary)
+    _configure(catalogue_approvals={"send_email": fingerprint_tool(ordinary)})
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "no poisoning" not in out
+    assert "approved by fingerprint" in out and "send_email" in out

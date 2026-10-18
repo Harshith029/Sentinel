@@ -164,6 +164,9 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- `sentinel check` prints the approval fingerprints for flag-only findings as
+  it does for a strict refusal, and lists approved findings instead of
+  reporting "no poisoning".
 - Demo runs honour `SENTINEL_CATALOGUE_APPROVALS`, as `sentinel serve` does.
 - With `SENTINEL_REAL_WEB_FETCH=1`, a custom attack's page is served for its
   URL. The protected run fetched the live URL while its baseline used the

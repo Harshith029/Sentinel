@@ -337,6 +337,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"shield          : {backend}")
 
     # --- downstream servers and their catalogue --------------------------------
+    from sentinel.catalogue import fingerprint_catalogue
     from sentinel.control.mcp_gateway import gateway_preflight
     from sentinel.demo.preflight import PreflightError
     from sentinel.downstream import connect_downstream, parse_servers
@@ -378,7 +379,24 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
                 for finding in cache.findings:
                     _fail(f"  {finding}")
+                # The strict refusal prints these; flag-only mode used not to,
+                # leaving the operator no way to approve what they reviewed.
+                prints = fingerprint_catalogue(cache.tools)
+                flagged = sorted({f.tool_name for f in cache.findings} & prints.keys())
+                _fail(
+                    "  after review, approve exactly these definitions in sentinel.yaml:\n"
+                    "  catalogue_approvals:\n"
+                    + "".join(f"    {name}: {prints[name]}\n" for name in flagged)
+                )
                 ok = False
+            elif cache.acknowledged:
+                # Approved findings are still findings; "no poisoning" hid them.
+                print(
+                    f"catalogue       : OK - no shadowing, {len(cache.tools)} tool(s); "
+                    f"{len(cache.acknowledged)} finding(s) approved by fingerprint:"
+                )
+                for finding in cache.acknowledged:
+                    print(f"  {finding}")
             else:
                 print(
                     f"catalogue       : OK - no shadowing, no poisoning, "

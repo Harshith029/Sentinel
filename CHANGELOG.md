@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-19
+
+**Upgrade from 0.2.1 or earlier.** Read *Changed (breaking)* first: catalogue
+approval fingerprints, the bundled policy, `sentinel.yaml` validation and
+administration (`SENTINEL_ADMIN_TOKEN` only) all change.
+
 ### Changed (breaking)
 - The bundled policy (version 6) trusts `get_customer_record`'s output, and
   the hero demo's scripted agent emails only where the fetched page tells it

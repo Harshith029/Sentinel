@@ -31,11 +31,7 @@ because its lineage includes untrusted tool output.</i></sub>
 </div>
 
 ```bash
-# PyPI currently serves only insecure 0.1.1. Do NOT install `sentinel-prox`
-# from PyPI until 0.2.1+ has been published.
-git clone https://github.com/Harshith029/Sentinel.git
-cd Sentinel
-python -m pip install . -c versions.lock
+pip install "sentinel-prox>=0.2.2"   # never 0.1.x: those releases are insecure
 sentinel init             # write sentinel.yaml
 sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
 sentinel scaffold > policy.yaml
@@ -54,7 +50,7 @@ Read this before deploying anything.
 
 | Area | State |
 |---|---|
-| PyPI distribution | **Blocked pending release:** PyPI currently serves vulnerable 0.1.1 only. Install this source checkout until a verified 0.2.1+ release is published. |
+| PyPI distribution | `sentinel-prox` 0.2.2 and later carry the fixes in the CHANGELOG. 0.1.x is insecure (open `/mcp`, overridable policy config, unredacted forensics); do not install it. For the exact tested dependency set, install from a checkout with `-c versions.lock` |
 | Provenance tracking + deterministic default-deny enforcement | Working, tested |
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence. Each run's tenant is recorded, so history stays with its tenant across restarts. Traces are deleted after `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90). Not encrypted at rest by SENTINEL (see *Forensic data*) |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting. The poisoning scan is a heuristic that also flags ordinary descriptions; approve a reviewed definition with `catalogue_approvals` (the fingerprint `sentinel check` prints) rather than turning strict mode off |

@@ -1,7 +1,7 @@
 name: release
 
 # Publishes to PyPI when a version tag is pushed:
-#   git tag -a v0.2.1 -m "..." && git push origin v0.2.1
+#   git tag -a v0.2.2 -m "..." && git push origin v0.2.2
 #
 # Uses PyPI Trusted Publishing (OIDC): GitHub proves the workflow's identity to
 # PyPI directly, so there is NO API token to store, rotate, or leak. This must be

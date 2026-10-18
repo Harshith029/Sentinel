@@ -189,6 +189,9 @@ administration (`SENTINEL_ADMIN_TOKEN` only) all change.
   names one with `?tenant=`.
 
 ### Fixed
+- The trust model tracks the previous tool per trace. One value per agent
+  mixed concurrent sessions of the same principal, so interleaved calls made
+  transitions no session took and were scored as anomalies.
 - The dashboard no longer says SENTINEL tracks "every byte" (lineage is per
   tool result) or that its log streams live (it replays a run that finished
   in milliseconds). DEPLOY.md says the Azure template's tool servers rely on

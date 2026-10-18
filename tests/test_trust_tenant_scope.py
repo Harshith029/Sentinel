@@ -149,3 +149,14 @@ async def test_trust_state_is_bounded_but_never_forgets_a_crossing() -> None:
         await scorer.record_tool_transition(f"agent-{i}", "web_fetch", trace_id=trace)
     assert len(scorer._agents) <= 3  # noqa: SLF001
     assert scorer.crossed_threshold("bad"), "eviction handed a crossed agent a clean score"
+
+
+async def test_concurrent_sessions_of_one_agent_keep_their_own_transitions() -> None:
+    """One last-tool field per agent made transitions no session took (TRUST-1)."""
+    emitter = SpanEmitter(InMemoryForensicStore())
+    scorer = TrustScorer(emitter, load_default_trust_config())
+    a, b = "a" * 32, "b" * 32
+    await scorer.record_tool_transition("agent", "web_fetch", trace_id=a)
+    await scorer.record_tool_transition("agent", "send_email", trace_id=b)
+    span = await scorer.record_tool_transition("agent", "web_fetch", trace_id=a)
+    assert span.payload.reason.startswith("tool_transition web_fetch->web_fetch")  # type: ignore[attr-defined]

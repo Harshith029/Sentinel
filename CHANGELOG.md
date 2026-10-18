@@ -15,6 +15,9 @@ All notable changes to this project are documented here. Format follows
   gateway paths are explicit checks, which `python -O` does not strip).
 
 ### Fixed
+- The rule-based attack classifier labels any server's tools by the verbs in
+  their names (`delete_*`, `refundCharge`, `sendSlackMessage`...); it knew only
+  the demo's tools, so an operator's own blocks were mostly "unclassified".
 - The before/after baseline uses the same driver (scripted or live model) and
   web mode as the protected run; it was always the scripted transcript.
 - The dashboard's kill chain and verdict come from the run's data. They named

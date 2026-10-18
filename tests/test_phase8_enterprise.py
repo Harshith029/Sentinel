@@ -334,3 +334,21 @@ async def test_capabilities_carry_the_real_trust_threshold() -> None:
         / "src/sentinel/control/static/index.html"
     ).read_text(encoding="utf-8")
     assert "TRUST.threshold=d.trust.quarantine_threshold" in source
+
+
+@pytest.mark.parametrize(
+    "tool,expected",
+    [
+        ("drop_table", "privilege_escalation"),
+        ("refundCharge", "privilege_escalation"),
+        ("sendSlackMessage", "exfiltration"),
+        ("upload-file", "exfiltration"),
+        ("list_repos", "unclassified"),
+    ],
+)
+async def test_rule_labels_cover_tools_beyond_the_demo(tool: str, expected: str) -> None:
+    """Labels knew only the demo's tool names; others were unclassified (CLS-2)."""
+    label = await AttackClassifier(demo_mode=True).classify(
+        BlockedAttempt(tool, "some-rule", "authorization", "denied")
+    )
+    assert label.attack_class == expected

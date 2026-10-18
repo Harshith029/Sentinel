@@ -507,13 +507,18 @@ class RunManager:
         the dashboard — shows the two outboxes side-by-side so a viewer can
         FEEL the win, not just read the BLOCKED banner.
         """
+        # The same driver choice and web mode as the protected run. The baseline
+        # used to be the scripted transcript always, so with a live model the
+        # dashboard compared a model's run against a script. (A live model may
+        # still behave differently on the second run; that is the model.)
         result = await run_demo_session(
-            build.driver,
+            self._select_driver(build),
             user_input=build.user_input,
             demo_mode=self._demo_mode,
             agent_id="baseline-no-sentinel",
             extra_pages=build.extra_pages,
             skip_sentinel=True,
+            real_web=self._settings.real_web_fetch,
         )
         return {
             "outbox": result.outbox,
@@ -624,6 +629,7 @@ class RunManager:
             "quarantined": self._scorer.is_quarantined(agent_id, tenant=tenant),
             "below_threshold": self._scorer.crossed_threshold(agent_id, tenant=tenant),
             "quarantine_enforced": self._scorer.enforces_quarantine,
+            "quarantine_threshold": self._scorer.quarantine_threshold,
         }
 
     def reset(self, agent_id: str, tenant: str = DEFAULT_TENANT) -> dict[str, Any]:
@@ -646,6 +652,11 @@ class RunManager:
             store=self._inner_store,
             demo_mode=self._demo_mode,
         )
+        # The dashboard draws its trust gauge against this; it used to hard-code 40.
+        summary["trust"] = {
+            "quarantine_threshold": self._scorer.quarantine_threshold,
+            "quarantine_enforced": self._scorer.enforces_quarantine,
+        }
         summary["deployment_verification"] = {
             "status": "unverified",
             "detail": (

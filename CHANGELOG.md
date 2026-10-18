@@ -15,6 +15,14 @@ All notable changes to this project are documented here. Format follows
   gateway paths are explicit checks, which `python -O` does not strip).
 
 ### Fixed
+- The before/after baseline uses the same driver (scripted or live model) and
+  web mode as the protected run; it was always the scripted transcript.
+- The dashboard's kill chain and verdict come from the run's data. They named
+  `web_fetch`, `block-untrusted-origin` and "the exfiltration" whatever the
+  run did. Its trust gauge uses the configured quarantine threshold (now in
+  `/capabilities` and the trust endpoint) instead of a hard-coded 40.
+- The examples no longer say an external `/mcp` run appears in the live view;
+  it is listed in the history tab.
 - Cosmos DB persistence could not start: its async Azure clients need aiohttp,
   which is not installed, and setting `AZURE_COSMOS_ENDPOINT` failed at startup
   with a bare import error. Install `sentinel-prox[cosmos]`; without it the

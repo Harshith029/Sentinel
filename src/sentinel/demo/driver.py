@@ -100,6 +100,14 @@ class _DirectAgentClient:
         # as a DownstreamConnection in the mcp SDK.
         self._downstream = downstream
 
+    async def list_tools(self) -> mcp_types.ListToolsResult:
+        """What a live-model driver asks for first; without it, only the scripted
+        driver could run here and every baseline was scripted."""
+        listed = await self._downstream.list_tools()
+        if not isinstance(listed, mcp_types.ListToolsResult):
+            raise TypeError("downstream list_tools did not return a ListToolsResult")
+        return listed
+
     async def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None
     ) -> mcp_types.CallToolResult:

@@ -88,3 +88,23 @@ def test_the_agent_driver_can_be_pinned(monkeypatch: pytest.MonkeyPatch) -> None
 
     auto = default_agent_driver(task="t", scripted_fallback=fallback, settings=settings())
     assert auto is fallback  # no credentials: the transcript, as before
+
+
+async def test_the_baseline_uses_the_same_driver_as_the_protected_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The baseline was always the script, even when a live model drove the run."""
+    import sentinel.demo.llm_driver as llm_driver
+    from sentinel.control.manager import RunManager
+    from sentinel.demo.scenario import build_scenario_full
+    from sentinel.demo.tool_servers import OBVIOUS_URL
+
+    stub = SusceptibleStubModel(poisoned_url=OBVIOUS_URL)
+    monkeypatch.setattr(llm_driver, "build_live_model", lambda *_a, **_k: stub)
+    manager = RunManager()
+    try:
+        baseline = await manager.run_baseline(build_scenario_full("hero-obvious"))
+    finally:
+        await manager.aclose()
+    assert stub.issued, "the baseline never consulted the live model"
+    assert baseline["outbox"], "with nothing in front, the induced email goes out"

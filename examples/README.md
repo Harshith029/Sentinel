@@ -70,8 +70,9 @@ python examples/connect_over_http.py    # a real mcp client drives the hero atta
 SENTINEL-specific code** — to connect to `/mcp`, list tools, and run the hero
 kill chain. The poisoned-lineage `send_email` comes back `isError=True` with
 `SENTINEL blocked …`. Swap in your own client the same way; to your agent,
-SENTINEL is just an MCP tool server. Each connection is its own `live-mcp` trace
-on the dashboard.
+SENTINEL is just an MCP tool server. Each connection is its own `live-mcp` run,
+listed in the dashboard's history tab (the live view follows dashboard-launched
+runs only).
 
 For a **real LLM agent loop** (the model decides; SENTINEL is the backstop):
 

@@ -22,8 +22,9 @@ Run it::
 What you'll see: tool discovery and the legit read calls succeed, and the
 poisoned-lineage ``send_email`` to the attacker is BLOCKED at the MCP boundary
 with a clean error — the same result as the in-process demo, now over real HTTP.
-Open the dashboard (http://127.0.0.1:8765) to watch the live run appear as a
-``live-mcp`` trace.
+The session is recorded as a ``live-mcp`` run: open the dashboard
+(http://127.0.0.1:8765), go to the history tab and select it to replay its trace.
+The live view follows runs launched from the dashboard itself.
 """
 from __future__ import annotations
 

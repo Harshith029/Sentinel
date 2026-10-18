@@ -319,3 +319,18 @@ async def test_the_capability_mode_follows_the_running_manager() -> None:
         assert summary["demo_mode"] is False
     finally:
         await manager.aclose()
+
+
+async def test_capabilities_carry_the_real_trust_threshold() -> None:
+    """The dashboard hard-coded 40 whatever the trust config said (DEMO-26)."""
+    manager = RunManager()
+    try:
+        trust = manager.capabilities()["trust"]
+        assert trust["quarantine_threshold"] == manager._scorer.quarantine_threshold  # noqa: SLF001
+    finally:
+        await manager.aclose()
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src/sentinel/control/static/index.html"
+    ).read_text(encoding="utf-8")
+    assert "TRUST.threshold=d.trust.quarantine_threshold" in source

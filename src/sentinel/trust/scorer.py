@@ -168,6 +168,10 @@ class TrustScorer:
     def enforces_quarantine(self) -> bool:
         return self._enforce
 
+    @property
+    def quarantine_threshold(self) -> float:
+        return self._config.quarantine_threshold
+
     # --- read-only views (do not create state) -------------------------------
 
     def score(self, agent_id: str, *, tenant: str | None = None) -> float:

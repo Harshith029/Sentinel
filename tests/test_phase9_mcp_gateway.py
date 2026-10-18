@@ -491,6 +491,10 @@ async def test_concurrent_runners_get_distinct_working_ports() -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    # Only the wedge's own pytest.fail counts as expected. Without raises=, any
+    # failure in this test, a real regression included, was absorbed as the
+    # known defect (review TCD-13).
+    raises=pytest.fail.Exception,
     reason="UNRESOLVED streamable-HTTP teardown wedge, not yet attributed to "
            "SENTINEL or upstream; see docs/mcp-streamable-http-teardown.md. "
            "strict=True so an XPASS fails CI and forces this marker's removal.",

@@ -63,7 +63,7 @@ from sentinel.forensics.events import (
     ToolExecuted,
 )
 from sentinel.forensics.span import Span
-from sentinel.labels import AGENT, RETRIEVED_CONTENT, USER, Label
+from sentinel.labels import AGENT, RETRIEVED_CONTENT, SYSTEM, USER, Label
 from sentinel.mcp_proxy.content import mcp_error, result_text, summarize_result
 from sentinel.mcp_proxy.router import DownstreamConnection
 from sentinel.observability import log_allowed, log_blocked, log_injection_flagged
@@ -579,7 +579,12 @@ class SentinelProxy:
                     f"SENTINEL withheld {name!r}'s result: {size} bytes exceeds the "
                     f"{self._max_result_bytes}-byte limit (SENTINEL_MAX_RESULT_BYTES)"
                 )
-            label = self._result_labels.get(name, self._default_result_label)
+            # Policy may vouch for a tool's output; otherwise it is untrusted.
+            label = (
+                SYSTEM
+                if engine.trusted_output(name)
+                else self._result_labels.get(name, self._default_result_label)
+            )
 
             # 4b. DECLASSIFICATION (§4.4), the only way taint ever clears.
             #

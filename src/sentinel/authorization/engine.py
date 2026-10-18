@@ -162,6 +162,10 @@ class AuthorizationEngine:
         """
         return self._policy.declassifier_for(tool_name)
 
+    def trusted_output(self, tool_name: str) -> bool:
+        """Whether policy declares this tool's output trusted (not tainting)."""
+        return tool_name in self._policy.trusted_outputs
+
     def authorize(self, call: ToolCall) -> AuthorizationResult:
         provenance = _sorted_provenance(call.provenance)
         rules = self._policy.rules_for(call.name)

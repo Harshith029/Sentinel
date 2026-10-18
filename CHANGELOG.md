@@ -6,7 +6,17 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-10-19
+
+**Upgrade from 0.2.1 or earlier.** Read *Changed (breaking)* first: catalogue
+approval fingerprints, the bundled policy, `sentinel.yaml` validation and
+administration (`SENTINEL_ADMIN_TOKEN` only) all change.
+
 ### Changed (breaking)
+- The bundled policy (version 6) trusts `get_customer_record`'s output, and
+  the hero demo's scripted agent emails only where the fetched page tells it
+  to. The hero block now depends on the poisoned page: before, the record
+  lookup alone tainted the session and the agent always sent the email.
 - Declassification schemas are strict. `iso_date` takes `YYYY-MM-DD` only
   (`date.fromisoformat` also took `20261018` and ISO week dates), and
   `decimal_amount` takes plain ASCII notation up to 18 digits each side of
@@ -59,6 +69,11 @@ All notable changes to this project are documented here. Format follows
   reload applies to them at once.
 
 ### Added
+- `SENTINEL_AGENT_DRIVER` (`auto`, `scripted`, `llm`) chooses what drives demo
+  runs. Configuring Azure OpenAI for the classifier also switched every demo
+  run to a live model, with no way to keep the scripted transcript.
+- `trusted_output: true` on a policy tool labels its results `SYSTEM` instead of
+  `RETRIEVED_CONTENT`, for tools whose output nobody outside can write to.
 - `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` (default 30, also
   `downstream_timeout_seconds` in `sentinel.yaml`): a deadline for each
   downstream operation. Before, a downstream server that accepted a connection
@@ -76,6 +91,13 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- The in-memory forensic store keeps and returns private copies of spans. A
+  caller holding a returned span could rewrite the stored payload's
+  arguments; the SQLite and Cosmos stores were never affected.
+- An unauthenticated deployment answers only to loopback and the hosts in
+  `SENTINEL_ALLOWED_HOSTS`, and refuses state-changing requests from another
+  site's `Origin`. With no credential, a web page the operator had open could
+  submit forms to a local instance or, by DNS rebinding, drive `/mcp`.
 - Tool approval uses the same `tools/list` snapshot as routing. Preflight
   listed the servers a second time, so a tool could be approved from one
   server's definition and routed to another's.
@@ -112,9 +134,12 @@ All notable changes to this project are documented here. Format follows
   downstream server.
 - `SENTINEL_MAX_SSE_SUBSCRIBERS` applies per tenant; one tenant could hold
   every live-stream slot.
-- `sentinel check` and `sentinel serve` warn when a single `SENTINEL_API_TOKEN`
-  with no `SENTINEL_ADMIN_TOKEN` makes the agents' credential the operator's.
-  The README claimed only the admin token could administer.
+- `SENTINEL_API_TOKEN` no longer administers, even in a single-token
+  deployment: it is the credential agents hold, so agents could replace their
+  own policy and clear their own quarantine. Only `SENTINEL_ADMIN_TOKEN`
+  administers; without it nobody does, and `sentinel check` and `sentinel
+  serve` say so. (Breaking for single-token deployments that used the policy
+  or trust-reset endpoints: set `SENTINEL_ADMIN_TOKEN`.)
 - `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
   (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions
   accumulate without bound. SENTINEL's per-tenant session cap limited this on
@@ -164,6 +189,14 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- The trust model tracks the previous tool per trace. One value per agent
+  mixed concurrent sessions of the same principal, so interleaved calls made
+  transitions no session took and were scored as anomalies.
+- The dashboard no longer says SENTINEL tracks "every byte" (lineage is per
+  tool result) or that its log streams live (it replays a run that finished
+  in milliseconds). DEPLOY.md says the Azure template's tool servers rely on
+  internal-only ingress, not authentication, and the README says catalogue
+  approval is trust on first use.
 - A declassified result's execution span names the schema that cleared it
   (`declassified_by`); only the `SYSTEM` label was recorded.
 - Loading a policy warns when a config key has the same name as a call field

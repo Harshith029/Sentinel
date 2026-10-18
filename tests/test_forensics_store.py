@@ -269,3 +269,19 @@ async def test_ownership_rows_without_spans_are_purged(tmp_path: Path) -> None:
     await store.purge_older_than(future, keep=frozenset({"b" * 32}))
     assert set(await store.run_owners()) == {"b" * 32}  # the running one is kept
     store.close()
+
+
+async def test_in_memory_spans_cannot_be_rewritten_through_a_reference(
+    make_span: Callable[..., Span],
+) -> None:
+    """Span is frozen but its payload's dicts were not, and get handed out the originals."""
+    from sentinel.forensics.events import ToolCallProposed
+
+    store = InMemoryForensicStore()
+    span = make_span(seq=0, payload=ToolCallProposed(tool_name="x", arguments={"a": "v"}))
+    await store.put(span)
+    span.payload.arguments["after_put"] = "x"  # type: ignore[attr-defined]
+    got = (await store.get_spans(span.trace_id))[0]
+    got.payload.arguments["after_get"] = "y"  # type: ignore[attr-defined]
+    stored = (await store.get_spans(span.trace_id))[0]
+    assert list(stored.payload.arguments) == ["a"]  # type: ignore[attr-defined]

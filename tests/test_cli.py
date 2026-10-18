@@ -388,26 +388,22 @@ def test_init_warns_when_the_config_could_be_committed(
     assert "not ignored" not in capsys.readouterr().err
 
 
-def test_check_warns_when_the_agents_token_is_also_the_operators(
+def test_check_says_when_nobody_can_administer(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """With one token and no admin token, the agents' credential administers.
-
-    The README said only SENTINEL_ADMIN_TOKEN could change policy; in this
-    configuration the single token can too, and nothing said so.
-    """
+    """Without an admin token, policy replacement and quarantine resets are off."""
     _serve_in_memory(monkeypatch, _tool("lookup"))
     _configure()
-    monkeypatch.setenv("SENTINEL_API_TOKEN", "agent-and-operator")
+    monkeypatch.setenv("SENTINEL_API_TOKEN", "agent-token")
     monkeypatch.delenv("SENTINEL_ADMIN_TOKEN", raising=False)
     reset_settings_cache()
     assert main(["check"]) == 0
-    assert "also the operator credential" in capsys.readouterr().out
+    assert "no SENTINEL_ADMIN_TOKEN" in capsys.readouterr().out
 
     monkeypatch.setenv("SENTINEL_ADMIN_TOKEN", "operator-only")
     reset_settings_cache()
     assert main(["check"]) == 0
-    assert "also the operator credential" not in capsys.readouterr().out
+    assert "no SENTINEL_ADMIN_TOKEN" not in capsys.readouterr().out
 
 
 # --- config file parsing ---------------------------------------------------------

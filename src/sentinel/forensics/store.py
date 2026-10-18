@@ -137,7 +137,10 @@ class InMemoryForensicStore:
                 self._traces.popitem(last=False)  # evict least-recently-used trace
             trace = {}
             self._traces[span.trace_id] = trace
-        trace[span.span_id] = span
+        # A private copy, in and out: Span is frozen but its payload holds
+        # mutable dicts, so a caller holding the object could rewrite stored
+        # evidence. The SQLite and Cosmos stores serialize, so they never could.
+        trace[span.span_id] = span.model_copy(deep=True)
         self._traces.move_to_end(span.trace_id)  # mark most-recently-used
 
     async def get_spans(self, trace_id: str) -> list[Span]:
@@ -145,7 +148,7 @@ class InMemoryForensicStore:
         if trace is None:
             return []
         self._traces.move_to_end(trace_id)
-        return _by_seq(list(trace.values()))
+        return _by_seq([span.model_copy(deep=True) for span in trace.values()])
 
 
 def _to_item(span: Span) -> dict[str, Any]:

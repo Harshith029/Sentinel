@@ -161,3 +161,68 @@ class RateLimit:
             await _reject(send, 429, "rate limit exceeded", retry_after=retry_after)
             return
         await self._app(scope, receive, send)
+
+
+# Hosts an unauthenticated deployment answers to without being told otherwise.
+_LOOPBACK_HOSTS: Final[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
+_UNSAFE_METHODS: Final[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Platform health checks may arrive under an internal Host.
+_GUARD_EXEMPT_PATHS: Final[frozenset[str]] = frozenset({"/healthz"})
+
+
+def _host_name(authority: str) -> str:
+    """The host part of a ``Host`` header or URL authority, lowercased."""
+    authority = authority.strip().lower()
+    if authority.startswith("["):
+        end = authority.find("]")
+        return authority[1:end] if end != -1 else authority
+    return authority.rsplit(":", 1)[0] if authority.count(":") == 1 else authority
+
+
+class AnonymousBrowserGuard:
+    """Browser-borne requests against an unauthenticated deployment (review GW-16).
+
+    With no credential, SENTINEL cannot tell its own dashboard from any other
+    page the operator has open. A page anywhere could then submit a form POST
+    to it (resetting trust, say), or rebind its own DNS name to 127.0.0.1 and
+    drive ``/mcp``. In anonymous mode only:
+
+    * the ``Host`` must be loopback or listed in ``SENTINEL_ALLOWED_HOSTS``; a
+      DNS-rebinding page still sends its own host name;
+    * a state-changing request whose ``Origin`` is another site is refused.
+
+    Authenticated deployments need neither: a page cannot supply the bearer
+    token, and the browser session cookie is ``SameSite=Strict``.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket") or scope.get("path") in _GUARD_EXEMPT_PATHS:
+            await self._app(scope, receive, send)
+            return
+        from sentinel.authn import auth_configured
+
+        settings = get_settings()
+        if auth_configured() or not settings.allow_anonymous:
+            await self._app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        host = headers.get("host", "")
+        allowed = _LOOPBACK_HOSTS | settings.allowed_host_names()
+        if _host_name(host) not in allowed:
+            await _reject(
+                send,
+                421,
+                "this unauthenticated deployment does not answer to that host; "
+                "list it in SENTINEL_ALLOWED_HOSTS",
+            )
+            return
+        origin = headers.get("origin")
+        if scope.get("method") in _UNSAFE_METHODS and origin is not None:
+            origin_authority = origin.split("://", 1)[-1].rstrip("/")
+            if origin == "null" or origin_authority.lower() != host.strip().lower():
+                await _reject(send, 403, "cross-site request refused")
+                return
+        await self._app(scope, receive, send)

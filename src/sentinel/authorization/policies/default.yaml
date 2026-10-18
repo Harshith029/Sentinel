@@ -8,7 +8,7 @@
 #   * effective_provenance  — the §4.2 provenance SET (frozenset of labels)
 #   * typed tool args        — e.g. recipient_domain, amount
 #   * config                 — e.g. allowed_domains, max_amount
-policy_version: 5
+policy_version: 6
 
 # Deployment values the rules below resolve against. These are the EXAMPLE
 # topology's values; replace them with your own when you point SENTINEL at your
@@ -37,7 +37,11 @@ tools:
       - id: domain-allowlist
         deny_if: "recipient_domain not in allowed_domains"
 
+  # The example deployment's own records service: nothing outside can write to
+  # what it returns, so its output is trusted rather than tainting the session.
+  # Only declare this for a tool whose output an outsider cannot influence.
   get_customer_record:
+    trusted_output: true
     rules:
       - id: user-initiated-only
         deny_if: "RETRIEVED_CONTENT in effective_provenance"

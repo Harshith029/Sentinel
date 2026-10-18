@@ -115,21 +115,15 @@ def auth_configured() -> bool:
     )
 
 
-OPERATOR_SHARED_WARNING: Final[str] = (
-    "the single SENTINEL_API_TOKEN is also the operator credential: anything "
-    "holding it, including your agents, can replace the policy and clear "
-    "quarantines. Set SENTINEL_ADMIN_TOKEN to keep administration separate."
+NO_OPERATOR_NOTICE: Final[str] = (
+    "no SENTINEL_ADMIN_TOKEN is set, so nobody can replace a policy or clear a "
+    "quarantine through the API. Set it to administer; never give it to agents."
 )
 
 
-def operator_credential_is_shared() -> bool:
-    """Whether the agents' credential is also the operator's (see is_admin)."""
-    settings = get_settings()
-    return (
-        settings.api_token is not None
-        and settings.admin_token is None
-        and not _multi_tenant_configured()
-    )
+def administration_disabled() -> bool:
+    """Whether authentication is on but no operator credential exists (see is_admin)."""
+    return auth_configured() and get_settings().admin_token is None
 
 
 def is_admin(presented: str) -> bool:
@@ -142,18 +136,16 @@ def is_admin(presented: str) -> bool:
     would share a key.
 
     * ``SENTINEL_ADMIN_TOKEN`` set: that credential, and only that one.
-    * Single-token deployment, no admin token: the one token is the operator's,
-      because there is nobody else it could belong to.
-    * Per-tenant tokens, no admin token: NOBODY administers. Falling back to
-      "any tenant may" is precisely the hole this closes.
+    * No admin token: NOBODY administers, whatever else is configured.
+
+    A single-token deployment used to make its one token the operator's too.
+    That token is what the agents hold, so the agents could administer.
     """
     if not presented:
         return False
     settings = get_settings()
     if settings.admin_token is not None:
         return _credentials_match(presented, settings.admin_token)
-    if settings.api_token is not None and not _multi_tenant_configured():
-        return _credentials_match(presented, settings.api_token)
     return False
 
 

@@ -47,7 +47,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict, deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from sentinel.forensics.emitter import SpanEmitter
@@ -105,13 +105,18 @@ def transition_penalty(stats: TransitionStats, max_penalty: float) -> float:
 
 # Per-agent trust states kept in memory (see TrustScorer._evict_stale).
 _MAX_TRACKED_AGENTS: Final[int] = 10_000
+# Per agent, how many recent traces' previous tool is remembered.
+_TRACES_PER_AGENT: Final[int] = 64
 
 
 @dataclass
 class _AgentState:
     score: float
     transitions: deque[tuple[str, str]]
-    last_tool: str | None = None
+    # The previous tool PER TRACE. One field per agent mixed concurrent sessions
+    # of the same principal: their interleaved calls made transitions no session
+    # took, and those read as anomalies. Bounded to the most recent traces.
+    last_tool_by_trace: OrderedDict[str, str] = field(default_factory=OrderedDict)
     quarantined: bool = False
     # The threshold crossing has been recorded (once), enforced or not.
     reported_crossing: bool = False
@@ -285,7 +290,7 @@ class TrustScorer:
         key = _key(agent_id, tenant)
         async with self._lock(key):
             state = self._state(key)
-            from_tool = state.last_tool if state.last_tool is not None else START
+            from_tool = state.last_tool_by_trace.get(trace_id, START)
             stats = transition_stats(state.transitions, from_tool, tool_name)
             penalty = transition_penalty(stats, self._config.max_transition_penalty)
             previous = state.score
@@ -312,7 +317,10 @@ class TrustScorer:
                 payload, trace_id=trace_id, parent_span_id=parent_span_id
             )
             state.transitions.append((from_tool, tool_name))
-            state.last_tool = tool_name
+            state.last_tool_by_trace[trace_id] = tool_name
+            state.last_tool_by_trace.move_to_end(trace_id)
+            while len(state.last_tool_by_trace) > _TRACES_PER_AGENT:
+                state.last_tool_by_trace.popitem(last=False)
             state.score = new_score
             await self._maybe_quarantine(state, agent_id, trace_id, parent_span_id, tenant)
             return span

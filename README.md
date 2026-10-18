@@ -31,11 +31,7 @@ because its lineage includes untrusted tool output.</i></sub>
 </div>
 
 ```bash
-# PyPI currently serves only insecure 0.1.1. Do NOT install `sentinel-prox`
-# from PyPI until 0.2.1+ has been published.
-git clone https://github.com/Harshith029/Sentinel.git
-cd Sentinel
-python -m pip install . -c versions.lock
+pip install "sentinel-prox>=0.2.2"   # never 0.1.x: those releases are insecure
 sentinel init             # write sentinel.yaml
 sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
 sentinel scaffold > policy.yaml
@@ -54,7 +50,7 @@ Read this before deploying anything.
 
 | Area | State |
 |---|---|
-| PyPI distribution | **Blocked pending release:** PyPI currently serves vulnerable 0.1.1 only. Install this source checkout until a verified 0.2.1+ release is published. |
+| PyPI distribution | `sentinel-prox` 0.2.2 and later carry the fixes in the CHANGELOG. 0.1.x is insecure (open `/mcp`, overridable policy config, unredacted forensics); do not install it. For the exact tested dependency set, install from a checkout with `-c versions.lock` |
 | Provenance tracking + deterministic default-deny enforcement | Working, tested |
 | Forensic spans, replay, audit trail | Working; payloads redacted before persistence. Each run's tenant is recorded, so history stays with its tenant across restarts. Traces are deleted after `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90). Not encrypted at rest by SENTINEL (see *Forensic data*) |
 | Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting. The poisoning scan is a heuristic that also flags ordinary descriptions; approve a reviewed definition with `catalogue_approvals` (the fingerprint `sentinel check` prints) rather than turning strict mode off |
@@ -63,7 +59,7 @@ Read this before deploying anything.
 | Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
 | Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
 | Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
-| Operator separation | With `SENTINEL_ADMIN_TOKEN` set, only it can change policy or clear a quarantine; tenant (agent) credentials cannot. With a single `SENTINEL_API_TOKEN` and no admin token, that one token is the operator's too, so whatever holds it can administer; `sentinel check` and `sentinel serve` warn about this |
+| Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; agent credentials (`SENTINEL_API_TOKEN`, `SENTINEL_API_TOKENS`) never can. Without an admin token nobody administers, and `sentinel check` and `sentinel serve` say so |
 | Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
 | Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
 | Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
@@ -77,7 +73,7 @@ protects you from.
 | Limitation | What it means for you |
 |---|---|
 | **Taint is per MCP session** | Lineage covers the calls made in one MCP session. A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried from one call to the next, so a page read in one call does not taint an email sent in the next. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects. |
-| **Every tool result is untrusted** | All tool output is labelled retrieved content, including your own internal systems. A benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Only per-tool declassification (a value that validates against a strict schema) clears taint. |
+| **Every tool result is untrusted** (by default) | All tool output is labelled retrieved content unless the policy marks the tool `trusted_output: true`, which you should do only for a tool whose output nobody outside can write to (your own records service, say). Otherwise a benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Per-tool declassification (a value that validates against a strict schema) also clears taint. |
 | **Only guarded tools are guarded** | A tool without policy rules can carry tainted data out. The bundled policy treats `web_fetch` as an outbound capability and constrains its hostname through `allowed_fetch_hosts`; add equivalent rules for every outbound tool you introduce. Rules are deny-only and there is no notion of a general outbound "sink" yet. |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
@@ -115,7 +111,7 @@ the request was phrased.
 | **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
 | **Tool poisoning** | Every agent-visible part of a tool definition (description, title, annotations, input and output schemas, metadata) is scanned at connect; a poisoned catalogue is refused |
 | **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
-| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. Approval is trust on first use: what a server presents when SENTINEL connects is what gets pinned, so review it with `sentinel check` before going live. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
 | **Privilege escalation** | Unknown tools are default-denied until you write a rule |
 | **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
 
@@ -265,8 +261,9 @@ Put your tool servers on an internal network reachable **only** by SENTINEL — 
 topology is what makes interception unbypassable.
 
 Authentication is required: with no credential configured SENTINEL refuses to serve.
-Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials plus
-`SENTINEL_ADMIN_TOKEN` for the operator (see [`.env.example`](./.env.example)).
+Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials, for your
+agents, and `SENTINEL_ADMIN_TOKEN` for the operator if you need to replace policies or
+clear quarantines through the API (see [`.env.example`](./.env.example)).
 
 ### Resource limits
 
@@ -362,10 +359,12 @@ it as a public sandbox, not as an example of a secured deployment: everything in
 is synthetic and anyone can drive it. A real deployment must set
 `SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
 attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
-anyway. Read the block for what it is: the session is already tainted by the
-customer-record lookup before the page is fetched (every tool result is untrusted), and
-the attacker's domain is outside the bundled allowlist, so the email would be refused
-without the poisoned page too. All demo data is synthetic — the record is a labelled fake
+anyway. The taint comes from the page: the bundled policy marks the records service's
+output as trusted (`trusted_output`), so the record lookup alone taints nothing, and
+without the page the agent never attempts the email. The attacker's domain is also
+outside the bundled allowlist, a second, independent reason for the same refusal; the
+tests show that an email to an allowed address is refused after the page and allowed
+without it. All demo data is synthetic — the record is a labelled fake
 (SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
 writes to an in-memory sink. Nothing is ever sent.
 

@@ -34,8 +34,9 @@ class ToolInvocation:
 
 # A transcript step is either a fixed invocation or one computed from the results
 # observed so far (so e.g. an exfil body can include a previously fetched record),
-# while staying fully deterministic.
-StepFactory = Callable[[list[mcp_types.CallToolResult]], ToolInvocation]
+# while staying fully deterministic. A computed step may return None: the agent
+# makes no call at that point.
+StepFactory = Callable[[list[mcp_types.CallToolResult]], ToolInvocation | None]
 Step = ToolInvocation | StepFactory
 
 
@@ -60,6 +61,8 @@ class ScriptedAgentDriver:
         results: list[mcp_types.CallToolResult] = []
         for step in self._steps:
             invocation = step(results) if callable(step) else step
+            if invocation is None:
+                continue
             results.append(await client.call_tool(invocation.tool, invocation.arguments))
         return results
 

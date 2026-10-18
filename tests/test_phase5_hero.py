@@ -16,7 +16,7 @@ from mcp.client.session import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session as connect
 
-from sentinel.demo.driver import CallbackAgentDriver, ScriptedAgentDriver
+from sentinel.demo.driver import CallbackAgentDriver, ScriptedAgentDriver, ToolInvocation
 from sentinel.demo.preflight import PreflightError, preflight
 from sentinel.demo.scenario import (
     DemoResult,
@@ -98,16 +98,17 @@ async def test_record_retrieval_and_exfil_attempt_share_one_lineage(
 ) -> None:
     result = await run_hero_attack(variant=variant)  # type: ignore[arg-type]
 
-    # The synthetic record WAS retrieved (a visible ToolExecuted, RETRIEVED_CONTENT)...
+    # The synthetic record WAS retrieved. The bundled policy trusts the records
+    # service's output, so the record itself does not taint the session...
     (record_exec,) = [
         p
         for p in result.payloads("ToolExecuted")
         if p.tool_name == "get_customer_record"  # type: ignore[attr-defined]
     ]
-    assert record_exec.result_label == "RETRIEVED_CONTENT"  # type: ignore[attr-defined]
+    assert record_exec.result_label == "SYSTEM"  # type: ignore[attr-defined]
 
-    # ...and the attempted exfiltration is tainted because that retrieved content
-    # is in its provenance — both events on the SAME trace.
+    # ...the poisoned page does, and the attempted exfiltration carries it —
+    # all events on the SAME trace.
     email = _authz(result, "send_email")
     assert email.is_tainted is True  # type: ignore[attr-defined]
     assert "RETRIEVED_CONTENT" in email.effective_provenance  # type: ignore[attr-defined]
@@ -234,3 +235,40 @@ async def test_demo_runs_honour_the_operators_catalogue_approvals(
     finally:
         reset_settings_cache()
     assert seen.get("approved") == {"send_email": "a" * 64}
+
+
+# --- provenance, isolated (review TCD-05 / DEMO-01) ------------------------------
+#
+# The hero block used to be overdetermined: the record lookup already tainted the
+# session, and the attacker's domain is outside the allowlist, so neither the page
+# nor provenance changed the outcome. These pin the page as the cause.
+
+
+async def test_without_the_page_the_agent_sends_nothing() -> None:
+    steps = [s for s in hero_steps(OBVIOUS_URL) if getattr(s, "tool", None) != "web_fetch"]
+    steps.insert(1, ToolInvocation("web_fetch", {"url": "https://acme.test/clean"}))
+    result = await run_demo_session(ScriptedAgentDriver(steps), user_input="research")
+    assert not [p for p in result.payloads("ToolCallProposed") if p.tool_name == "send_email"]  # type: ignore[attr-defined]
+
+
+async def _email_cfo(*, read_page: bool) -> DemoResult:
+    steps: list[ToolInvocation] = [ToolInvocation("get_customer_record", {"id": 42})]
+    if read_page:
+        steps.append(ToolInvocation("web_fetch", {"url": "https://acme.test/clean"}))
+    steps.append(
+        ToolInvocation("send_email", {"to": "cfo@corp.example", "subject": "s", "body": "b"})
+    )
+    return await run_demo_session(ScriptedAgentDriver(steps), user_input="email the cfo")
+
+
+async def test_the_same_email_is_allowed_without_the_page_and_blocked_with_it() -> None:
+    """An allowed recipient, so only provenance can make the difference."""
+    clean = await _email_cfo(read_page=False)
+    assert _authz(clean, "send_email").decision == "ALLOW"  # type: ignore[attr-defined]
+    assert len(clean.outbox) == 1
+
+    tainted = await _email_cfo(read_page=True)
+    decision = _authz(tainted, "send_email")
+    assert decision.decision == "DENY"  # type: ignore[attr-defined]
+    assert decision.matched_rule_id == "block-untrusted-origin"  # type: ignore[attr-defined]
+    assert tainted.outbox == []

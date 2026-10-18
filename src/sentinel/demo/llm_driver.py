@@ -238,20 +238,20 @@ def build_live_model(
 
     1. **Azure OpenAI** if ``AZURE_OPENAI_ENDPOINT`` + a deployment are set —
        identity auth via :class:`DefaultAzureCredential` (same pattern as the
-       classifier, §6); the deployment name is the model.
-    2. **OpenAI** if ``OPENAI_API_KEY`` is set — ``model`` arg or ``OPENAI_MODEL``
-       (default ``gpt-4o-mini``).
-    3. **Any OpenAI-compatible endpoint** if ``OPENAI_BASE_URL`` is set — a local
-       runtime (Ollama ``http://localhost:11434/v1``, LM Studio, vLLM) or a
-       free-tier hosted provider (Groq, Gemini's OpenAI-compat URL). Needs no paid
-       key: ``OPENAI_API_KEY`` is sent if present, else a placeholder, since local
-       servers ignore it. ``OPENAI_MODEL`` names the model (e.g. ``llama3.2``).
-    4. Otherwise raise :class:`LiveAgentUnavailable`.
+       classifier, §6); the deployment name is the model. This wins over
+       everything below.
+    2. **OpenAI or any OpenAI-compatible endpoint** if ``OPENAI_API_KEY`` or
+       ``OPENAI_BASE_URL`` is set. Both go to one client: with a base URL the
+       requests, and the key if one is set, go to that URL (a local runtime such
+       as Ollama ``http://localhost:11434/v1``, or a hosted provider); without
+       one, to OpenAI. A local runtime needs no key, so a placeholder is sent.
+       ``model`` or ``OPENAI_MODEL`` names the model (default ``gpt-4o-mini``).
+       Do not leave a real OpenAI key set while pointing ``OPENAI_BASE_URL`` at
+       another provider: that provider receives it.
+    3. Otherwise raise :class:`LiveAgentUnavailable`.
 
-    Checking the base-URL case AFTER the plain-key case is deliberate: with both a
-    real key and a base URL set, the explicit endpoint wins only if no key-only
-    OpenAI path applies — see the ordering below (base_url is honoured together
-    with a key by passing both to the same client).
+    (This docstring used to describe the base URL as a separate, lower-priority
+    case; it never was.)
     """
     import os
 
@@ -311,11 +311,19 @@ def default_agent_driver(
     With ``OPENAI_API_KEY`` (or Azure OpenAI settings) present, an actual model
     decides the actions and SENTINEL is the backstop. With no credential it degrades
     to ``scripted_fallback`` so offline / CI runs stay deterministic and key-free.
-    The scripted transcript is thus a fixture / fallback — no longer the default.
+
+    ``SENTINEL_AGENT_DRIVER`` overrides that: ``scripted`` always uses the
+    transcript, ``llm`` requires a model. Without it, configuring Azure OpenAI for
+    the classifier also switched every demo run to an LLM, with no way back.
     """
+    choice = (settings or get_settings()).agent_driver
+    if choice == "scripted":
+        return scripted_fallback
     try:
         model = build_live_model(settings)
     except LiveAgentUnavailable:
+        if choice == "llm":
+            raise  # asked for a model explicitly: fail rather than fake it
         return scripted_fallback
     return LLMAgentDriver(model, task=task, system=system, max_steps=max_steps)
 

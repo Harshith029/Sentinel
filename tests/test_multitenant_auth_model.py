@@ -313,11 +313,22 @@ async def test_with_no_operator_credential_nobody_administers() -> None:
         assert "SENTINEL_ADMIN_TOKEN" in refused.text
 
 
-async def test_a_single_token_deployment_is_its_own_operator() -> None:
-    """One token, one tenant: that token is the operator's, as it always was."""
+async def test_a_single_token_does_not_administer() -> None:
+    """The one token is what the agents hold, so it is not the operator's.
+
+    It used to be: a single-token deployment let its agents replace the policy
+    and clear their own quarantine. Administration needs SENTINEL_ADMIN_TOKEN.
+    """
     async with _client(SENTINEL_API_TOKEN=ACME) as (client, manager):
-        ok = await client.post(
+        refused = await client.post(
             "/tenants/default/policy", json={"policy": PERMISSIVE}, headers=_auth(ACME)
+        )
+        assert refused.status_code == 403, refused.text
+        assert manager.registry.version("default") != 99
+
+    async with _client(SENTINEL_API_TOKEN=ACME, SENTINEL_ADMIN_TOKEN=ADMIN) as (client, manager):
+        ok = await client.post(
+            "/tenants/default/policy", json={"policy": PERMISSIVE}, headers=_auth(ADMIN)
         )
         assert ok.status_code == 200, ok.text
         assert manager.registry.version("default") == 99

@@ -8,7 +8,9 @@ blocked at the MCP boundary.
 
 Run it::
 
-    # Terminal 1 — the full product (control plane + dashboard + /mcp gateway):
+    # Terminal 1 — the full product (control plane + dashboard + /mcp gateway).
+    # /mcp needs a credential: export the same SENTINEL_API_TOKEN in both terminals.
+    export SENTINEL_API_TOKEN=change-me
     make serve
 
     # Terminal 2 — with a REAL model (set one of these first):
@@ -28,8 +30,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -53,6 +57,18 @@ def _build_model(*, offline: bool, url: str, model_name: str | None) -> ModelCli
     return model
 
 
+def _http_client() -> httpx.AsyncClient:
+    """An MCP HTTP client carrying ``SENTINEL_API_TOKEN`` when it is set.
+
+    ``make serve`` requires a token, so a client without one is refused (401).
+    """
+    token = os.environ.get("SENTINEL_API_TOKEN")
+    headers = {"authorization": f"Bearer {token}"} if token else {}
+    return httpx.AsyncClient(
+        headers=headers, timeout=httpx.Timeout(30.0, read=300.0), follow_redirects=True
+    )
+
+
 async def _run(base: str, *, offline: bool, url: str, model_name: str | None) -> int:
     model = _build_model(offline=offline, url=url, model_name=model_name)
     # Give the model the URL in the task so a real model knows what to fetch; the
@@ -64,7 +80,9 @@ async def _run(base: str, *, offline: bool, url: str, model_name: str | None) ->
     mcp_url = base.rstrip("/") + "/mcp"
     print(f"connecting the agent to SENTINEL at {mcp_url} ...\n")
 
-    async with streamable_http_client(mcp_url) as (read, write, _session_id):
+    async with _http_client() as http, streamable_http_client(
+        mcp_url, http_client=http
+    ) as (read, write, _session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
             driver = LLMAgentDriver(model, task=task)

@@ -48,7 +48,7 @@ from sentinel.authorization.policy import PolicyLoadError
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 from sentinel.control.events import BroadcastEvent, EventCursorExpired
-from sentinel.control.limits import BodySizeLimit, RateLimit
+from sentinel.control.limits import AnonymousBrowserGuard, BodySizeLimit, RateLimit
 from sentinel.control.manager import RunManager, RunQuotaExceeded
 from sentinel.control.mcp_gateway import SentinelGateway
 from sentinel.demo.scenario import (
@@ -262,8 +262,8 @@ def require_auth(request: Request) -> None:
         )
     # A tenant credential is scoped to its tenant. A pure operator credential
     # (SENTINEL_ADMIN_TOKEN, which belongs to no tenant) is unscoped: the
-    # operator oversees every tenant. In a single-token deployment the one
-    # token is both, and stays scoped to the default tenant it resolves to.
+    # operator oversees every tenant. SENTINEL_API_TOKEN is a tenant credential
+    # (the default tenant's) and never the operator's.
     request.state.tenant = tenant
     request.state.admin = admin
     request.state.credential = presented
@@ -370,6 +370,8 @@ def create_app(
     # reads a byte, and both sit in front of every route AND the /mcp mount.
     app.add_middleware(BodySizeLimit)
     app.add_middleware(RateLimit)
+    # Outermost: a forged browser request is refused before it costs anything.
+    app.add_middleware(AnonymousBrowserGuard)
     app.state.manager = mgr
 
     @app.exception_handler(RunQuotaExceeded)

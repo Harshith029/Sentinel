@@ -164,6 +164,7 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Demo runs honour `SENTINEL_CATALOGUE_APPROVALS`, as `sentinel serve` does.
 - With `SENTINEL_REAL_WEB_FETCH=1`, a custom attack's page is served for its
   URL. The protected run fetched the live URL while its baseline used the
   custom page, so the two compared different content.

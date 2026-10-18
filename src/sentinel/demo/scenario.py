@@ -25,6 +25,7 @@ from mcp.shared.memory import create_connected_server_and_client_session as conn
 
 from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import load_default_policy
+from sentinel.catalogue import parse_approvals
 from sentinel.config import get_settings
 from sentinel.demo.driver import AgentDriver, ScriptedAgentDriver, Step, ToolInvocation
 from sentinel.demo.preflight import preflight
@@ -116,11 +117,14 @@ async def run_demo_session(
 
         # PREFLIGHT: health-check + cache schemas BEFORE the run (anti-flakiness),
         # and vet the catalogue for tool poisoning with the same Layer-1 shield.
+        # The operator's approvals too, as the gateway passes them: without them
+        # a demo run refused a definition `sentinel serve` would accept.
         cache = await preflight(
             router,
             required_tools=REQUIRED_TOOLS,
             shield=shield,
             strict=get_settings().catalogue_strict,
+            approved=parse_approvals(get_settings().catalogue_approvals),
         )
 
         if skip_sentinel:

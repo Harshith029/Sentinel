@@ -881,5 +881,5 @@ def _to_sse(event: BroadcastEvent) -> ServerSentEvent:
     return ServerSentEvent(
         id=str(event.event_id),
         event="span",
-        data=json.dumps(event.to_payload()),
+        data=event.json_text,
     )

@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
-from sentinel.authorization.ast import ConditionError, comparand_names
+from sentinel.authorization.ast import ConditionError, comparand_names, subject_names
 from sentinel.authorization.policy import CompiledPolicy, CompiledRule
 from sentinel.forensics.events import AuthorizationDecided, Decision, RuleEvaluation
 from sentinel.labels import RETRIEVED_CONTENT, Label, trust_rank
@@ -117,6 +117,16 @@ class AuthorizationEngine:
             for rule in rules:
                 if rule.condition is None:
                     continue
+                # Config is layered over arguments, so a config key named like a
+                # call field replaces that field for every rule. Nothing said so.
+                for name in sorted(subject_names(rule.condition) & policy.config.keys()):
+                    _LOG.warning(
+                        "policy rule %r reads %r from the policy's config, not from "
+                        "the %r call, because config declares that name",
+                        rule.id,
+                        name,
+                        tool,
+                    )
                 for name in comparand_names(rule.condition) - DERIVED_FIELDS - _COMPUTED:
                     names.add(name)
                     if name not in policy.config:

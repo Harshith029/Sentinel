@@ -164,6 +164,10 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- A declassified result's execution span names the schema that cleared it
+  (`declassified_by`); only the `SYSTEM` label was recorded.
+- Loading a policy warns when a config key has the same name as a call field
+  a rule reads, since config then replaces that field for every rule.
 - `sentinel check` prints the approval fingerprints for flag-only findings as
   it does for a strict refusal, and lists approved findings instead of
   reporting "no poisoning".

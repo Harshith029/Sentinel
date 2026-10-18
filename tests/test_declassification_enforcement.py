@@ -107,6 +107,8 @@ async def test_declared_schema_clears_taint_and_unblocks_the_action() -> None:
     executed = [s.payload for s in rep.ordered if s.event_type == "ToolExecuted"]
     price_span = next(e for e in executed if e.tool_name == "read_price")  # type: ignore[attr-defined]
     assert price_span.result_label == SYSTEM  # type: ignore[attr-defined]
+    # ...and names what cleared it (review PP-12: only the label was recorded).
+    assert price_span.declassified_by == "decimal_amount"  # type: ignore[attr-defined]
 
 
 async def test_schema_mismatch_leaves_the_value_tainted() -> None:
@@ -130,6 +132,7 @@ async def test_schema_mismatch_leaves_the_value_tainted() -> None:
     executed = [s.payload for s in rep.ordered if s.event_type == "ToolExecuted"]
     price_span = next(e for e in executed if e.tool_name == "read_price")  # type: ignore[attr-defined]
     assert price_span.result_label == RETRIEVED_CONTENT  # type: ignore[attr-defined]
+    assert price_span.declassified_by is None  # type: ignore[attr-defined]
 
 
 async def test_a_tool_without_a_declared_schema_never_clears_taint() -> None:

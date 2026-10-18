@@ -247,6 +247,22 @@ def comparand_names(predicate: Comparison | And | Or | Not) -> frozenset[str]:
     return frozenset(names)
 
 
+def subject_names(predicate: Comparison | And | Or | Not) -> frozenset[str]:
+    """Variables used as the LEFT-hand side of any comparison: the call's fields."""
+    names: set[str] = set()
+    pending: list[Predicate] = [predicate]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, Comparison):
+            if isinstance(node.left, Variable):
+                names.add(node.left.name)
+        elif isinstance(node, Not):
+            pending.append(node.inner)
+        else:
+            pending.extend((node.left, node.right))
+    return frozenset(names)
+
+
 def predicate_depth(predicate: Comparison | And | Or | Not) -> int:
     """Nesting depth of ``predicate``: 1 for a lone comparison.
 

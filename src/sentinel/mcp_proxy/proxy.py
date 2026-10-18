@@ -619,6 +619,7 @@ class SentinelProxy:
                     # SYSTEM here exactly when a value was declassified.
                     result_label=label,
                     result_summary=summarize_result(result),
+                    declassified_by=schema_name if cleared_from else None,
                 ),
                 trace_id=self._trace_id,
                 parent_span_id=proposed.span_id,

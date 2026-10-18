@@ -234,3 +234,17 @@ def test_an_undeclared_comparand_is_reported_when_the_policy_loads(
             )
         )
     assert "'allowed_domains'" in caplog.text and "denies every" in caplog.text
+
+
+def test_a_config_key_that_shadows_a_call_field_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Config replaced the call's `amount` for the rule without a word (AUTHZ-11)."""
+    with caplog.at_level(logging.WARNING, logger="sentinel.authorization.engine"):
+        AuthorizationEngine(
+            load_policy(
+                "policy_version: 1\nconfig: {amount: 0, max_amount: 10}\ntools:\n  pay:\n"
+                '    rules:\n      - id: cap\n        deny_if: "amount >= max_amount"\n'
+            )
+        )
+    assert "reads 'amount' from the policy's config" in caplog.text

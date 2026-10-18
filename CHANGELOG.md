@@ -82,6 +82,9 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- The in-memory forensic store keeps and returns private copies of spans. A
+  caller holding a returned span could rewrite the stored payload's
+  arguments; the SQLite and Cosmos stores were never affected.
 - An unauthenticated deployment answers only to loopback and the hosts in
   `SENTINEL_ALLOWED_HOSTS`, and refuses state-changing requests from another
   site's `Origin`. With no credential, a web page the operator had open could

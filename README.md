@@ -411,7 +411,7 @@ competitive/threat-landscape research behind the roadmap.
 MIT — see [LICENSE](./LICENSE).
 
 Built on the [Model Context Protocol](https://modelcontextprotocol.io) Python SDK,
-FastAPI, Starlette, `sse-starlette`, Uvicorn, Pydantic, OpenTelemetry, PyYAML, httpx,
+FastAPI, Starlette, `sse-starlette`, Uvicorn, Pydantic, PyYAML, httpx,
 pytest, ruff, mypy, gitleaks, and the Azure SDKs for Python. Thank you to their
 maintainers.
 

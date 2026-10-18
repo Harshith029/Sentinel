@@ -41,6 +41,15 @@ All notable changes to this project are documented here. Format follows
 - `SENTINEL_MCP_ALLOWED_HOST` for the demo tool servers, so they keep MCP's
   Host-header check when deployed behind an internal hostname.
 
+### Removed
+- The `azure-monitor-opentelemetry`, `opentelemetry-api` and
+  `opentelemetry-sdk` dependencies. Nothing used them once trace and span ids
+  came from `secrets`, and they pinned 28 packages in `versions.lock` (the
+  Azure Monitor exporter, fifteen OpenTelemetry instrumentation and support
+  packages, `msrest`, `psutil`, `wrapt` and others). A project that imported
+  OpenTelemetry only because SENTINEL installed it must now depend on it
+  directly.
+
 ### Security
 - `mcp` is upgraded to 1.30.0 (floor and lock) for CVE-2026-59951
   (GHSA-84m7-p3x7-pcfv): the SDK's streamable-HTTP transport let sessions

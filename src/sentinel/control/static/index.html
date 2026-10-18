@@ -434,19 +434,36 @@ async function launch(scenario){
   try { cutoff=(await (await fetch('/events?since=0')).json()).last_event_id; } catch(e){ cutoff=0; }
   lastSeen=cutoff;
   try {
-    const j = await (await fetch('/attack/'+scenario,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).json();
+    const resp = await fetch('/attack/'+scenario,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+    const j = await resp.json();
+    if(!resp.ok || !j.trace_id){ refuse('the server refused the run: '+detailOf(j, resp.status)); return; }
     currentTrace=j.trace_id; agentId=j.agent_id; $('agentid').textContent='agent='+agentId;
-    connectSSE(); loadExtractor(); fetchBaseline(scenario);
+    connectSSE(); loadExtractor(); fetchBaseline(scenario); watchRun(currentTrace);
   } catch(e){ launchError(); }
+}
+// A refused or failed run used to leave the spinner running forever: nothing
+// cleared state.launching unless a span arrived.
+function detailOf(j, status){ const d=j&&j.detail; if(!d) return 'HTTP '+status; return typeof d==='string'?d:(d.message||JSON.stringify(d)); }
+function refuse(msg){ state.launching=false; state.refused=msg; render(); }
+async function watchRun(trace){
+  for(let i=0;i<120;i++){
+    await new Promise(r=>setTimeout(r,1000));
+    if(trace!==currentTrace) return;
+    let r; try { r=await (await fetch('/runs/'+trace)).json(); } catch(e){ continue; }
+    if(r.status==='failed'){ if(!state.spans.length) refuse('the run failed: '+(r.error||'no detail')); return; }
+    if(r.status && r.status!=='running') return;
+  }
 }
 async function launchCustom(spec){
   reset(); state.scenario='custom'; state.launching=true; $('scen').textContent='scenario: custom'; render();
   try { cutoff=(await (await fetch('/events?since=0')).json()).last_event_id; } catch(e){ cutoff=0; }
   lastSeen=cutoff;
-  const j = await (await fetch('/runs/custom',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(spec)})).json();
-  if(j.detail){ $('ct-status').textContent='error: '+j.detail; return; }
+  let resp, j;
+  try { resp=await fetch('/runs/custom',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(spec)}); j=await resp.json(); }
+  catch(e){ launchError(); return; }
+  if(!resp.ok || !j.trace_id){ const why=detailOf(j, resp.status); $('ct-status').textContent='error: '+why; refuse('the server refused the run: '+why); return; }
   currentTrace=j.trace_id; agentId=j.agent_id; $('agentid').textContent='agent='+agentId;
-  connectSSE(); loadExtractor(); fetchBaselineCustom(spec); $('ct-status').textContent='launched '+currentTrace.slice(0,12)+'…';
+  connectSSE(); loadExtractor(); fetchBaselineCustom(spec); watchRun(currentTrace); $('ct-status').textContent='launched '+currentTrace.slice(0,12)+'…';
 }
 async function fetchBaseline(s){ try{ state.baseline=await (await fetch('/attack/'+s+'/baseline',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).json(); renderDiff(); }catch(e){} }
 async function fetchBaselineCustom(sp){ try{ state.baseline=await (await fetch('/runs/custom/baseline',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sp)})).json(); renderDiff(); }catch(e){} }
@@ -524,7 +541,9 @@ function renderVerdict(){
   const running=state.steps.some(s=>!s.decision&&!s.blocked)||spanQueue.length||drainTimer||state.launching;
   const done=state.steps.length&&state.steps.every(s=>s.decision||s.blocked);
   let cls, html, sig;
-  if(blk){ const d=blk.decision||{}; const q=state.quarantine?' agent quarantined.':''; cls='deny'; sig='deny|'+blk.tool+'|'+!!state.quarantine;
+  if(state.refused){ cls='deny'; sig='refused|'+state.refused;
+    html='<span class="badge">REFUSED</span><span class="txt">'+esc(state.refused)+'</span>';
+  } else if(blk){ const d=blk.decision||{}; const q=state.quarantine?' agent quarantined.':''; cls='deny'; sig='deny|'+blk.tool+'|'+!!state.quarantine;
     html='<span class="badge">✗ BLOCKED</span><span class="txt">SENTINEL refused <b>'+esc(blk.tool)+'</b> — lineage '+setOf(d.effective_provenance)+(d.matched_rule_id?(', rule <b>'+esc(d.matched_rule_id)+'</b>'):'')+'. without it the exfiltration would have <b>succeeded</b>.'+q+'</span><span class="step">step '+(state.steps.indexOf(blk)+1)+'/'+state.steps.length+'</span>';
   } else if(running){ const r=state.steps.find(s=>!s.decision&&!s.blocked); cls='run'; sig='run|'+(r?r.tool:'')+'|'+state.steps.length;
     html='<span class="badge">▶ RUNNING</span><span class="txt">intercepting <b>'+esc(r?r.tool:'…')+'</b> — every call is checked live.</span>';
@@ -656,7 +675,15 @@ function reset(){ if(es){es.close();es=null;} if(pollTimer){clearInterval(pollTi
   render(); setConn('idle'); }
 
 reset(); loadExtractor(); loadCapabilities(); loadDownstream();
-setTimeout(()=>{ if(autoplayed||currentTrace) return; autoplayed=true; launch('hero-obvious'); $('autorun').innerHTML='<span class="a">// auto-playing demo…</span>'; }, 1000);
+// Auto-play once, for a fresh dashboard only. It used to launch a run (and a
+// baseline) on every page load, for every visitor.
+setTimeout(async()=>{
+  if(autoplayed||currentTrace) return;
+  try { if(sessionStorage.getItem('sentinel-autoplayed')) return; } catch(e){}
+  try { const d=await (await fetch('/runs')).json(); if(d.runs && d.runs.length) return; } catch(e){ return; }
+  autoplayed=true; try { sessionStorage.setItem('sentinel-autoplayed','1'); } catch(e){}
+  launch('hero-obvious'); $('autorun').innerHTML='<span class="a">// auto-playing demo…</span>';
+}, 1000);
 </script>
 </body>
 </html>

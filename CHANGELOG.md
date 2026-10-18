@@ -164,6 +164,10 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- Dashboard: a refused launch (a 4xx such as an unknown scenario or a full
+  quota) or a run that fails before emitting anything shows REFUSED with the
+  reason; it spun forever. It auto-plays once, on a dashboard with no runs,
+  instead of launching a run and a baseline on every page load.
 - Security log lines (allow, block, quarantine, injection flag) name the
   tenant, as `tenant` in JSON and `[tenant ...]` in text.
 - `/capabilities` reports the manager's running mode; a manager built with

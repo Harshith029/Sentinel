@@ -295,6 +295,16 @@ class Settings(BaseModel):
         ),
     )
 
+    allowed_hosts: str | None = Field(
+        default=None,
+        description=(
+            "Comma-separated host names an UNAUTHENTICATED deployment answers to, "
+            "besides localhost. Requests for any other Host are refused, which is "
+            "what defeats DNS rebinding against a local anonymous instance. Ignored "
+            "once a credential is configured."
+        ),
+    )
+
     real_web_fetch: bool = Field(
         default=False,
         description=(
@@ -305,6 +315,13 @@ class Settings(BaseModel):
             "scripted demo stays reproducible offline."
         ),
     )
+
+    def allowed_host_names(self) -> frozenset[str]:
+        """``allowed_hosts`` parsed: lowercased, ports and blanks dropped."""
+        names = (part.strip().lower() for part in (self.allowed_hosts or "").split(","))
+        return frozenset(
+            name.rsplit(":", 1)[0] if name.count(":") == 1 else name for name in names if name
+        )
 
     def tool_server_urls(self) -> dict[str, str]:
         """Server-key → URL for any configured REMOTE downstream tool servers.
@@ -373,6 +390,7 @@ def _read_settings_from_env() -> Settings:
         ),
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
+        allowed_hosts=os.environ.get("SENTINEL_ALLOWED_HOSTS") or None,
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
         catalogue_approvals=os.environ.get("SENTINEL_CATALOGUE_APPROVALS") or None,
         catalogue_recheck_seconds=_parse_int_env(

@@ -48,7 +48,7 @@ from sentinel.authorization.policy import PolicyLoadError
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
 from sentinel.control.events import BroadcastEvent, EventCursorExpired
-from sentinel.control.limits import BodySizeLimit, RateLimit
+from sentinel.control.limits import AnonymousBrowserGuard, BodySizeLimit, RateLimit
 from sentinel.control.manager import RunManager, RunQuotaExceeded
 from sentinel.control.mcp_gateway import SentinelGateway
 from sentinel.demo.scenario import (
@@ -370,6 +370,8 @@ def create_app(
     # reads a byte, and both sit in front of every route AND the /mcp mount.
     app.add_middleware(BodySizeLimit)
     app.add_middleware(RateLimit)
+    # Outermost: a forged browser request is refused before it costs anything.
+    app.add_middleware(AnonymousBrowserGuard)
     app.state.manager = mgr
 
     @app.exception_handler(RunQuotaExceeded)

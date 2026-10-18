@@ -22,7 +22,11 @@ Or from a checkout: `make install`, then `make dashboard`.
 `SENTINEL_DASHBOARD=1` serves the dashboard and the demo endpoints behind its
 buttons; without it they answer 404, which is what a real deployment wants.
 Anonymous mode is fine here: the tools are in-memory mocks with no side effects,
-and the port is bound to loopback. Never use it in front of real tools.
+and the port is bound to loopback. Never use it in front of real tools. An
+unauthenticated SENTINEL answers only to `localhost`, `127.0.0.1` and `[::1]`, and
+refuses state-changing requests from other sites, so a web page cannot drive it
+through your browser. To reach an anonymous instance under another host name (a
+tunnel, the hosted sandbox), list it in `SENTINEL_ALLOWED_HOSTS`.
 
 ## 2. Self-host for real (free, on any machine)
 

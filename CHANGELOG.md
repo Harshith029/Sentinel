@@ -82,6 +82,10 @@ All notable changes to this project are documented here. Format follows
   directly.
 
 ### Security
+- An unauthenticated deployment answers only to loopback and the hosts in
+  `SENTINEL_ALLOWED_HOSTS`, and refuses state-changing requests from another
+  site's `Origin`. With no credential, a web page the operator had open could
+  submit forms to a local instance or, by DNS rebinding, drive `/mcp`.
 - Tool approval uses the same `tools/list` snapshot as routing. Preflight
   listed the servers a second time, so a tool could be approved from one
   server's definition and routed to another's.

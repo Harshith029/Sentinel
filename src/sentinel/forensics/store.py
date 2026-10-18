@@ -33,7 +33,6 @@ from sentinel.forensics.span import Span
 if TYPE_CHECKING:
     from azure.cosmos.aio import ContainerProxy
 
-    from sentinel.config import Settings
 
 _T = TypeVar("_T")
 
@@ -180,7 +179,8 @@ class CosmosForensicStore:
     Takes an already-constructed async ``ContainerProxy`` so the class is unit-
     testable against a fake that honors the real azure-cosmos async contract
     (``await upsert_item(body=...)``; ``query_items(...)`` returns an async
-    iterable). The :func:`create_cosmos_store` factory wires the real client.
+    iterable). The run manager builds the real client (needs the ``cosmos``
+    extra, for aiohttp).
     """
 
     def __init__(self, container: ContainerProxy) -> None:
@@ -218,31 +218,6 @@ class CosmosForensicStore:
             spans.append(_from_item(item))
         return _by_seq(spans)
 
-
-def create_cosmos_store(settings: Settings) -> CosmosForensicStore:
-    """Build a :class:`CosmosForensicStore` from settings (Azure mode only).
-
-    Lazy-imports the Azure SDKs so DEMO MODE never pays for them and the package
-    builds on machines without Azure installed. Auth is identity-based
-    (``DefaultAzureCredential`` → system-assigned managed identity in prod,
-    per §2); no keys in code. The caller owns shutdown via
-    :meth:`CosmosForensicStore`'s underlying client — wired by the proxy in a
-    later phase. Fails loudly if the endpoint is unset rather than guessing.
-    """
-    if not settings.azure_cosmos_endpoint:
-        raise ValueError(
-            "AZURE_COSMOS_ENDPOINT is not set; cannot build a Cosmos store. "
-            "(In DEMO MODE use InMemoryForensicStore instead.)"
-        )
-
-    from azure.cosmos.aio import CosmosClient
-    from azure.identity.aio import DefaultAzureCredential
-
-    credential = DefaultAzureCredential()
-    client = CosmosClient(url=settings.azure_cosmos_endpoint, credential=credential)
-    database = client.get_database_client(settings.azure_cosmos_database)
-    container = database.get_container_client(settings.azure_cosmos_container)
-    return CosmosForensicStore(container)
 
 
 class SqliteForensicStore:

@@ -196,3 +196,24 @@ async def test_a_store_passed_in_is_left_open_for_its_owner(tmp_path: Path) -> N
     await manager.aclose()
     assert await store.list_trace_ids() == []  # still usable: not ours to close
     store.close()
+
+
+async def test_restoring_the_run_index_does_not_load_every_trace() -> None:
+    """Restore read every span of every trace to guess a label it never found (CM-10)."""
+    run_id, _ = await _acme_run()
+    manager = RunManager()
+    store = manager._inner_store  # noqa: SLF001
+    loads: list[str] = []
+    real = store.get_spans
+
+    async def counting(trace_id: str):  # type: ignore[no-untyped-def]
+        loads.append(trace_id)
+        return await real(trace_id)
+
+    store.get_spans = counting  # type: ignore[method-assign]
+    try:
+        assert await manager.restore_persisted_runs() >= 1
+        assert loads == []
+        assert manager.get_run(run_id).scenario == "hero-obvious"  # type: ignore[union-attr]
+    finally:
+        await manager.aclose()

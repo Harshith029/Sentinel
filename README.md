@@ -78,7 +78,7 @@ protects you from.
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
 | **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and policies replaced through `POST /tenants/{t}/policy` are in memory. A restart forgets API policy reloads (put durable policy in `SENTINEL_POLICY_FILE` / `SENTINEL_TENANT_POLICIES`), and two replicas share none of it, which is why the Azure template runs one. |
-| **Cosmos persistence is partial** | With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
+| **Cosmos persistence is partial** | It needs `pip install 'sentinel-prox[cosmos]'` (for aiohttp). With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
 | **Some state is visible across tenants** | Event ids on `/events` are one global counter, so a tenant can infer how busy the deployment is. `/downstream` and `/capabilities` describe the whole deployment to any authenticated caller. |
 | **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees the call, so they leave no forensic record. |
 

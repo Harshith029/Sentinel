@@ -390,3 +390,30 @@ async def test_a_retired_session_is_told_to_reconnect_not_to_retry(
         assert "retired" in message and "new session" in message
         assert "Retry shortly" not in message
         assert "capacity" in gateway._no_proxy_message(_Session())  # noqa: SLF001
+
+
+def test_the_sdk_still_exposes_the_session_index_the_gateway_reads() -> None:
+    """GW-18: owner and reservation release read the SDK's private session index.
+
+    If an SDK upgrade drops it, ended sessions are never released and tenants
+    reach their cap for good. This fails first, in CI, instead.
+    """
+    from mcp.server.lowlevel import Server
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+    manager = StreamableHTTPSessionManager(app=Server("probe"))
+    assert isinstance(getattr(manager, "_server_instances", None), dict)
+
+
+async def test_a_missing_session_index_is_logged_not_silent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with _gateway(monkeypatch) as (_client, gateway, _store):
+        real = gateway._session_manager  # noqa: SLF001
+        gateway._session_manager = object()  # type: ignore[assignment]  # noqa: SLF001
+        try:
+            with caplog.at_level("ERROR", logger="sentinel.control.mcp_gateway"):
+                assert gateway._live_session_ids() is None  # noqa: SLF001
+        finally:
+            gateway._session_manager = real  # noqa: SLF001
+        assert "session index" in caplog.text

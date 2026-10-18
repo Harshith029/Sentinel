@@ -15,6 +15,15 @@ All notable changes to this project are documented here. Format follows
   gateway paths are explicit checks, which `python -O` does not strip).
 
 ### Fixed
+- Cosmos DB persistence could not start: its async Azure clients need aiohttp,
+  which is not installed, and setting `AZURE_COSMOS_ENDPOINT` failed at startup
+  with a bare import error. Install `sentinel-prox[cosmos]`; without it the
+  error now says so. An unused duplicate Cosmos factory was removed.
+- Restoring the run index after a restart no longer loads every span of every
+  trace to guess a scenario label from redacted input (it never matched).
+- The gateway logs an error if the MCP SDK stops exposing the session index it
+  reads to release ended sessions, instead of silently never releasing them;
+  a test pins that SDK attribute.
 - Replay reports a duplicated span id as a duplicate; it was reported as a
   cycle, which with one parent per span it cannot be.
 - SQLite stores each span's timestamp in an indexed column (existing databases

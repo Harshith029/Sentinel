@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import importlib.util
 import logging
 import os
 import time
@@ -48,7 +49,6 @@ from sentinel.forensics.events import (
     AgentQuarantined,
     AuthorizationDecided,
     InjectionScanned,
-    InputReceived,
     ToolBlocked,
 )
 from sentinel.forensics.replay import TraceReplay, replay
@@ -64,21 +64,6 @@ from sentinel.trust.config import load_default_trust_config
 from sentinel.trust.scorer import TrustScorer
 
 
-def _infer_scenario(user_input: str) -> str:
-    """Best-effort scenario classification for a restored run record.
-
-    Only used for display in the run index. Authoritative replay is from the
-    forensic spans; this just guesses a label from the user prompt because
-    the scenario name isn't itself stored as a span.
-    """
-    text = user_input.lower()
-    if "bulk-delete" in text or "permanently remove" in text:
-        return "privilege" if "permanently remove" in text else "trust-collapse"
-    if "pricing page" in text or "research" in text:
-        return "hero-obvious"
-    return "restored"
-
-
 def _build_cosmos_container(settings: Settings) -> Any:  # noqa: ANN401 - SDK container
     """Build the live async Cosmos container client (AZURE MODE).
 
@@ -87,11 +72,20 @@ def _build_cosmos_container(settings: Settings) -> Any:  # noqa: ANN401 - SDK co
     deploy time). Constructed lazily so the azure SDKs are imported only when
     Cosmos is actually configured. Not exercised offline (needs a live account).
     """
+    # The async Cosmos client and credential need aiohttp, which SENTINEL does
+    # not install by default. Without this check, setting AZURE_COSMOS_ENDPOINT
+    # failed at startup with a bare "aiohttp package is not installed".
+    if importlib.util.find_spec("aiohttp") is None:
+        raise RuntimeError(
+            "Cosmos DB persistence needs aiohttp: pip install 'sentinel-prox[cosmos]' "
+            "(or unset AZURE_COSMOS_ENDPOINT to use the default SQLite store)"
+        )
     from azure.cosmos.aio import CosmosClient  # noqa: PLC0415 - Azure-only path
     from azure.identity.aio import DefaultAzureCredential  # noqa: PLC0415
 
     endpoint = settings.azure_cosmos_endpoint
-    assert endpoint is not None  # precondition: only called when configured
+    if endpoint is None:  # only called when configured
+        raise RuntimeError("AZURE_COSMOS_ENDPOINT is not set")
     client = CosmosClient(endpoint, DefaultAzureCredential())
     database = client.get_database_client(settings.azure_cosmos_database)
     return database.get_container_client(settings.azure_cosmos_container)
@@ -588,17 +582,12 @@ class RunManager:
         for trace_id in trace_ids:
             if trace_id in self._runs:
                 continue
-            spans = await self._inner_store.get_spans(trace_id)
-            if not spans:
-                continue
+            # The scenario and agent come from the ownership row. They used to be
+            # guessed from each trace's user input, which is redacted before it
+            # is stored, so the guess never matched, and every span of every
+            # trace was loaded at startup to make it.
             scenario = "restored"
             agent_id = f"agent-{trace_id[:8]}"
-            for s in spans:
-                if isinstance(s.payload, InputReceived):
-                    # The user input doesn't tell us the scenario name, but the
-                    # control plane only uses scenario for display.
-                    scenario = _infer_scenario(s.payload.content)
-                    break
             # Ownership comes from what was recorded when the run started. A
             # trace with no record predates that (or was written by something
             # else) and is attributed to NOBODY rather than to the default

@@ -262,8 +262,8 @@ def require_auth(request: Request) -> None:
         )
     # A tenant credential is scoped to its tenant. A pure operator credential
     # (SENTINEL_ADMIN_TOKEN, which belongs to no tenant) is unscoped: the
-    # operator oversees every tenant. In a single-token deployment the one
-    # token is both, and stays scoped to the default tenant it resolves to.
+    # operator oversees every tenant. SENTINEL_API_TOKEN is a tenant credential
+    # (the default tenant's) and never the operator's.
     request.state.tenant = tenant
     request.state.admin = admin
     request.state.credential = presented

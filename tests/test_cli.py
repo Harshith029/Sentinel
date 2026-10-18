@@ -172,9 +172,13 @@ def _serve_in_memory(monkeypatch: pytest.MonkeyPatch, *tools: mcp_types.Tool) ->
 
         return server
 
-    async def fake_connect(servers: object, stack: AsyncExitStack) -> object:
+    async def fake_connect(
+        servers: object, stack: AsyncExitStack, *, operation_timeout_seconds: float
+    ) -> object:
         session = await stack.enter_async_context(connect_in_memory(make_server()))
-        return await downstream.build_topology({"srv": session})
+        return await downstream.build_topology(
+            {"srv": session}, operation_timeout_seconds=operation_timeout_seconds
+        )
 
     monkeypatch.setattr(downstream, "connect_downstream", fake_connect)
 

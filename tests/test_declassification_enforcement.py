@@ -14,6 +14,7 @@ The contract proved here:
 * a declassified value cannot LAUNDER a still-tainted sibling;
 * the forensic trail records that it happened.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -79,7 +80,6 @@ def _proxy(responses: dict[str, str]) -> tuple[SentinelProxy, InMemoryForensicSt
             scorer=TrustScorer(emitter, load_default_trust_config()),
             agent_id="declassify-test",
             trace_id=emitter.new_trace_id(),
-            authorization_config={},
         ),
         store,
     )
@@ -153,8 +153,8 @@ async def test_a_cleared_value_cannot_launder_a_tainted_sibling() -> None:
     proxy, _ = _proxy({"read_price": "42.50", "read_page": "malicious", "pay": "ok"})
     await proxy.start(user_input="read both, then pay")
 
-    await proxy.handle_call("read_price", {})   # cleared
-    await proxy.handle_call("read_page", {})    # still tainted
+    await proxy.handle_call("read_price", {})  # cleared
+    await proxy.handle_call("read_page", {})  # still tainted
     refused = await proxy.handle_call("pay", {"amount": "42.50"})
     assert refused.isError is True, "a cleared sibling laundered the tainted one"
 

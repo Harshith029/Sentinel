@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from hmac import compare_digest
-from typing import Final
+from typing import Final, cast
 
 from sentinel.authorization.registry import DEFAULT_TENANT
 from sentinel.config import get_settings
@@ -35,27 +35,74 @@ _LOG: Final[logging.Logger] = logging.getLogger("sentinel.authn")
 SESSION_COOKIE: Final[str] = "sentinel_session"
 
 
+def _credentials_match(presented: str, expected: str) -> bool:
+    """Constant-time credential comparison that is defined for all Unicode input.
+
+    ``hmac.compare_digest`` accepts ``str`` only when both strings are ASCII.
+    Request headers are attacker-controlled, so a non-ASCII bearer must simply
+    fail authentication—not turn the rate-limit middleware into an HTTP 500.
+    """
+    return compare_digest(
+        presented.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass")
+    )
+
+
 def tenant_credentials() -> dict[str, str]:
     """Tenant → bearer token, from ``SENTINEL_API_TOKENS``.
 
-    Malformed configuration yields NOTHING rather than a partial map. A
-    half-parsed credential table would authenticate some tenants and silently
-    lock out others, which is a confusing failure to debug and a dangerous one
-    to half-succeed at; callers treat an empty map as "no credentials
-    configured", which is fail-closed.
+    Malformed or ambiguous configuration yields NOTHING rather than a partial
+    map. A half-parsed credential table would authenticate some tenants and
+    silently lock out others. Its *presence* still puts the deployment in
+    multi-tenant mode, so it cannot fall back to a single-token operator.
     """
     raw = get_settings().api_tokens
     if not raw:
         return {}
+
+    def reject_duplicate_keys(pairs: list[tuple[object, object]]) -> dict[object, object]:
+        table: dict[object, object] = {}
+        for tenant, token in pairs:
+            if tenant in table:
+                raise ValueError(f"duplicate tenant {tenant!r}")
+            table[tenant] = token
+        return table
+
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        _LOG.error("SENTINEL_API_TOKENS is not valid JSON; no tenants authenticated")
+        parsed = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    except (json.JSONDecodeError, ValueError) as exc:
+        _LOG.error("SENTINEL_API_TOKENS is invalid; no tenants authenticated: %s", exc)
         return {}
     if not isinstance(parsed, dict):
         _LOG.error("SENTINEL_API_TOKENS must be a JSON object of tenant -> token")
         return {}
-    return {str(tenant): str(token) for tenant, token in parsed.items() if token}
+    if (
+        not parsed
+        or any(
+            not isinstance(tenant, str)
+            or not tenant.strip()
+            or not isinstance(token, str)
+            or not token
+            for tenant, token in parsed.items()
+        )
+    ):
+        _LOG.error("SENTINEL_API_TOKENS must map non-empty tenant names to string tokens")
+        return {}
+    tokens = dict(parsed)
+    if len(set(tokens.values())) != len(tokens):
+        _LOG.error("SENTINEL_API_TOKENS must not assign one token to multiple tenants")
+        return {}
+    return cast(dict[str, str], tokens)
+
+
+def _multi_tenant_configured() -> bool:
+    """Whether a multi-tenant table was supplied, valid or not.
+
+    A malformed table is a deployment error, not permission to downgrade into
+    the single-token mode. Authentication remains configured and every caller
+    is refused until the operator repairs the table.
+    """
+    raw = get_settings().api_tokens
+    return raw is not None and bool(raw.strip())
 
 
 def auth_configured() -> bool:
@@ -64,7 +111,7 @@ def auth_configured() -> bool:
     return (
         settings.api_token is not None
         or settings.admin_token is not None
-        or bool(tenant_credentials())
+        or _multi_tenant_configured()
     )
 
 
@@ -87,9 +134,9 @@ def is_admin(presented: str) -> bool:
         return False
     settings = get_settings()
     if settings.admin_token is not None:
-        return compare_digest(presented, settings.admin_token)
-    if settings.api_token is not None and not tenant_credentials():
-        return compare_digest(presented, settings.api_token)
+        return _credentials_match(presented, settings.admin_token)
+    if settings.api_token is not None and not _multi_tenant_configured():
+        return _credentials_match(presented, settings.api_token)
     return False
 
 
@@ -124,11 +171,18 @@ def resolve_tenant(presented: str) -> str | None:
     if not presented:
         return None
     matched: str | None = None
-    for tenant, token in tenant_credentials().items():
-        if compare_digest(presented, token):
+    tenants = tenant_credentials()
+    for tenant, token in tenants.items():
+        if _credentials_match(presented, token):
             matched = tenant
+    # SENTINEL_API_TOKEN authenticates the default tenant on its own AND
+    # alongside a valid per-tenant table (a supported combination). Only a
+    # table that is present but unusable disables it: that deployment is
+    # misconfigured and fails closed for every credential until it is fixed,
+    # rather than quietly falling back to the single token.
     single = get_settings().api_token
-    if single is not None and compare_digest(presented, single):
+    single_usable = not _multi_tenant_configured() or bool(tenants)
+    if single_usable and single is not None and _credentials_match(presented, single):
         matched = DEFAULT_TENANT
     return matched
 
@@ -139,10 +193,21 @@ def bearer_credential(headers: object) -> str:
     Takes the mapping rather than a request so both a Starlette ``Request`` and
     a raw ASGI scope can be handed to it.
     """
-    get = getattr(headers, "get", None)
-    if get is None:
-        return ""
-    raw = get("authorization", "") or ""
+    # ASGI permits repeated header fields. Do not let one part of the gateway
+    # read a different Authorization value than another: ambiguity is not a
+    # credential and must fail closed. Starlette's Headers exposes getlist;
+    # plain mappings (used by programmatic callers) retain their single value.
+    getlist = getattr(headers, "getlist", None)
+    if callable(getlist):
+        values = getlist("authorization")
+        if len(values) != 1:
+            return ""
+        raw = values[0] or ""
+    else:
+        get = getattr(headers, "get", None)
+        if get is None:
+            return ""
+        raw = get("authorization", "") or ""
     if not raw.lower().startswith("bearer "):
         return ""
     return str(raw[7:]).strip()

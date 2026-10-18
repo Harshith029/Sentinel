@@ -24,6 +24,7 @@ import uvicorn
 from fastapi import FastAPI
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import McpError
 from starlette.applications import Starlette
 
 from sentinel.config import reset_settings_cache
@@ -267,13 +268,13 @@ async def test_capacity_pressure_cannot_launder_provenance() -> None:
                 assert not page.isError
 
                 # A second client arrives while A is still open. Capacity is 1, so
-                # the gateway must REFUSE B — not evict A.
+                # the gateway must REFUSE B — not evict A. The refusal comes at
+                # initialize, as a protocol error the client can read: a session
+                # that is never created cannot hold transport resources either.
                 async with _mcp_client(server.mcp_url) as (read_b, write_b, _b):
                     async with ClientSession(read_b, write_b) as b:
-                        await b.initialize()
-                        refused = await b.call_tool("get_customer_record", {"id": 7})
-                        assert refused.isError
-                        assert "capacity" in result_text(refused).lower()
+                        with pytest.raises(McpError, match="session limit"):
+                            await b.initialize()
 
                 # A's taint survived: send_email to an ALLOWED domain is still
                 # blocked by block-untrusted-origin — A's proxy was never reset.

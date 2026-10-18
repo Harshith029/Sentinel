@@ -222,6 +222,15 @@ class Settings(BaseModel):
             "read, and a fetched page is attacker-sized."
         ),
     )
+    downstream_timeout_seconds: int = Field(
+        default=30,
+        description=(
+            "Deadline for one operation on a declared downstream MCP server: "
+            "connecting and initializing it, listing its tools, or one tool call. "
+            "A call that exceeds it returns an error to the agent and is recorded "
+            "like any other result. Raise it for tools that legitimately run longer."
+        ),
+    )
 
     policy_file: str | None = Field(
         default=None,
@@ -358,6 +367,9 @@ def _read_settings_from_env() -> Settings:
         enforce_quarantine=_parse_bool_env("SENTINEL_ENFORCE_QUARANTINE", default=False),
         max_result_bytes=_parse_int_env(
             "SENTINEL_MAX_RESULT_BYTES", default=1024 * 1024, minimum=1024
+        ),
+        downstream_timeout_seconds=_parse_int_env(
+            "SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS", default=30, minimum=1
         ),
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),

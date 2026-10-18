@@ -6,8 +6,10 @@
 //   * tool servers (web / email / records)       -> ingress.external = FALSE (no
 //     external ingress; reachable ONLY from inside the ACA environment, i.e.
 //     ONLY by SENTINEL). They have no public FQDN.
-// KEDA HTTP-concurrency scaler on the proxy. System-assigned managed identity +
-// Key Vault RBAC for secret resolution. Cosmos partitioned by trace_id.
+// Single proxy replica until sessions, event delivery, and run ownership use
+// shared state. A system-assigned managed identity and Key Vault RBAC are
+// provisioned for future secret resolution; the application currently reads
+// environment variables only. Cosmos is partitioned by trace_id.
 
 @description('Deployment location')
 param location string = resourceGroup().location
@@ -136,13 +138,10 @@ resource sentinel 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       scale: {
         minReplicas: 1
-        maxReplicas: 10
-        rules: [
-          {
-            name: 'http-concurrency' // KEDA HTTP-concurrency scaler (named trigger)
-            http: { metadata: { concurrentRequests: '50' } }
-          }
-        ]
+        // Gateway sessions, the live event bus, and the run index are
+        // process-local. Scaling this component before those are shared loses
+        // lineage and partitions tenant-visible history.
+        maxReplicas: 1
       }
     }
   }
@@ -183,6 +182,9 @@ resource tools 'Microsoft.App/containerApps@2024-03-01' = [for t in toolServers:
           env: [
             { name: 'SENTINEL_TOOL_SERVER', value: t }
             { name: 'PORT', value: '8000' }
+            // FastMCP's DNS-rebinding protection validates Host. The internal
+            // ACA service name is the only non-local Host this app accepts.
+            { name: 'SENTINEL_MCP_ALLOWED_HOST', value: '${prefix}-tools-${t}' }
           ]
         }
       ]

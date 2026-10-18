@@ -12,6 +12,9 @@ _POLICY = load_policy(
     textwrap.dedent(
         """
         policy_version: 5
+        config:
+          max_amount: 1000
+          allowed_domains: ["corp.example"]
         tools:
           pay:
             rules:
@@ -111,6 +114,8 @@ _COMPOUND_POLICY = load_policy(
     textwrap.dedent(
         """
         policy_version: 6
+        config:
+          allowed_domains: ["corp.example"]
         tools:
           send_email:
             rules:

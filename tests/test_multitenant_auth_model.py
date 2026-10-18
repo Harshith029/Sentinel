@@ -30,6 +30,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+import pytest
 
 from sentinel.config import reset_settings_cache
 from sentinel.control.app import SESSION_COOKIE, create_app
@@ -114,6 +115,87 @@ async def test_mcp_accepts_per_tenant_tokens_and_nothing_else() -> None:
         # The operator credential administers; it is not an agent credential.
         # Keeping the two apart is what stops an agent from administering.
         assert not _request_authorized(_scope(ADMIN))
+
+
+async def test_mcp_rejects_ambiguous_authorization_headers() -> None:
+    """The authentication and identity paths must never choose different values."""
+    async with _client(SENTINEL_API_TOKENS=TOKENS):
+        scope: dict[str, object] = {
+            "type": "http",
+            "headers": [
+                (b"authorization", b"Bearer " + ACME.encode()),
+                (b"authorization", b"Bearer " + GLOBEX.encode()),
+            ],
+        }
+        assert not _request_authorized(scope)  # type: ignore[arg-type]
+
+
+def test_a_non_ascii_bearer_token_is_refused_without_crashing(
+    monkeypatch,
+) -> None:
+    """Invalid header bytes must use the anonymous rate-limit bucket, not raise."""
+    from sentinel.control.limits import RateLimit
+
+    monkeypatch.setenv("SENTINEL_API_TOKENS", TOKENS)
+    reset_settings_cache()
+    try:
+        scope: dict[str, object] = {
+            "type": "http",
+            "headers": [(b"authorization", b"Bearer \xff")],
+            "client": ("127.0.0.1", 1234),
+        }
+        assert RateLimit._caller(scope) == "a:127.0.0.1"  # type: ignore[arg-type]
+    finally:
+        reset_settings_cache()
+
+
+@pytest.mark.parametrize(
+    "token_table",
+    [
+        '{"acme":',
+        '{"acme": "shared", "globex": "shared"}',
+        '{"acme": 7}',
+    ],
+)
+def test_invalid_multi_tenant_configuration_cannot_fall_back_to_single_token_admin(
+    monkeypatch: pytest.MonkeyPatch, token_table: str
+) -> None:
+    """A broken tenant table must deny all access, not promote API_TOKEN."""
+    from sentinel.authn import auth_configured, is_admin, resolve_tenant, tenant_credentials
+
+    monkeypatch.setenv("SENTINEL_API_TOKENS", token_table)
+    monkeypatch.setenv("SENTINEL_API_TOKEN", ADMIN)
+    reset_settings_cache()
+    try:
+        assert auth_configured() is True
+        assert tenant_credentials() == {}
+        assert resolve_tenant(ADMIN) is None
+        assert is_admin(ADMIN) is False
+    finally:
+        reset_settings_cache()
+
+
+def test_the_single_token_still_works_alongside_a_valid_tenant_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid table must not silently disable SENTINEL_API_TOKEN.
+
+    Using both is supported: the single token is the default tenant's. An
+    earlier version of the malformed-table fix ignored the single token whenever
+    any table was present, valid or not, which locked that tenant out.
+    """
+    from sentinel.authn import is_admin, resolve_tenant
+
+    monkeypatch.setenv("SENTINEL_API_TOKENS", json.dumps({"acme": "tok-acme"}))
+    monkeypatch.setenv("SENTINEL_API_TOKEN", "tok-default")
+    reset_settings_cache()
+    try:
+        assert resolve_tenant("tok-default") == "default"
+        assert resolve_tenant("tok-acme") == "acme"
+        # Still not the operator: with tenants configured, only an admin token is.
+        assert is_admin("tok-default") is False
+    finally:
+        reset_settings_cache()
 
 
 # --- 2. provisioned tenants can actually run ----------------------------------

@@ -14,8 +14,9 @@ a new endpoint, a database dump, or a backup.
 What survives redaction is deliberately chosen so the record stays forensically
 useful:
 
-* **Argument names** — the shape of the call (``to`` / ``subject`` / ``body``) is
-  what an investigator reasons about; the values are what must not escape.
+* **Opaque argument-field tokens** — the shape of the call (which field repeats
+  across spans) remains visible, without persisting attacker-controlled field
+  names verbatim.
 * **Type and length** — distinguishes an empty string from a 4 KB document.
 * **A short fingerprint** — a truncated SHA-256, so the *same* secret can be
   correlated across calls and traces without disclosing it. Fingerprints are
@@ -26,6 +27,7 @@ Decision-relevant metadata (tool name, decision, matched rule, provenance labels
 taint flag) is never redacted: that is the security signal, and blinding the
 operator would trade one failure for another.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -76,13 +78,32 @@ def redact_value(value: JsonValue) -> JsonValue:
     if isinstance(value, list):
         return [redact_value(item) for item in value]
     if isinstance(value, dict):
-        return {str(k): redact_value(v) for k, v in value.items()}
+        return redact_arguments(value)
     return "<redacted>"  # pragma: no cover - JsonValue admits nothing else
 
 
+def redact_argument_name(name: str) -> str:
+    """Represent a caller-controlled argument key without storing it verbatim."""
+    return f"<redacted:key:{fingerprint(name)}>"
+
+
 def redact_arguments(arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    """Keep the argument NAMES, redact every value."""
-    return {name: redact_value(value) for name, value in arguments.items()}
+    """Redact every caller-controlled argument key and value.
+
+    A short keyed fingerprint lets an investigator correlate the same field
+    within this process. A suffix preserves a one-to-one mapping even if two
+    distinct keys happen to share that short fingerprint.
+    """
+    redacted: dict[str, JsonValue] = {}
+    for name, value in arguments.items():
+        base = redact_argument_name(name)
+        safe_name = base
+        collision = 2
+        while safe_name in redacted:
+            safe_name = f"{base}:{collision}"
+            collision += 1
+        redacted[safe_name] = redact_value(value)
+    return redacted
 
 
 def redact_payload(payload: EventPayload) -> EventPayload:
@@ -95,9 +116,7 @@ def redact_payload(payload: EventPayload) -> EventPayload:
     if isinstance(payload, InputReceived):
         return payload.model_copy(update={"content": redact_text(payload.content)})
     if isinstance(payload, ToolCallProposed):
-        return payload.model_copy(
-            update={"arguments": redact_arguments(payload.arguments)}
-        )
+        return payload.model_copy(update={"arguments": redact_arguments(payload.arguments)})
     if isinstance(payload, ToolExecuted):
         return payload.model_copy(
             update={

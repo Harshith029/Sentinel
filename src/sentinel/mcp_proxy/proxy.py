@@ -33,17 +33,21 @@ write-ordering.
 The proxy is agent-agnostic by construction: it knows nothing about Foundry,
 Claude, or any specific client. Any MCP speaker is secured identically.
 """
+
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from email.utils import getaddresses
 from typing import Final
+from urllib.parse import urlsplit
 
 import mcp.types as mcp_types
 from mcp.server.lowlevel import Server
 
 from sentinel.authorization.engine import (
+    DERIVED_FIELDS,
     AuthorizationEngine,
     ToolCall,
     to_decision_payload,
@@ -68,6 +72,7 @@ from sentinel.shield import InputShield
 from sentinel.trust.scorer import TrustScorer
 
 PROXY_SERVER_NAME: Final[str] = "sentinel"
+_LOG: Final[logging.Logger] = logging.getLogger("sentinel.mcp_proxy.proxy")
 
 
 # Every argument that can name a message recipient. All of them are parsed:
@@ -77,8 +82,7 @@ _ADDRESS_FIELDS: Final[tuple[str, ...]] = ("to", "cc", "bcc", "recipient", "reci
 # allowed_domains` denies. Used when one domain cannot honestly be named.
 _MULTIPLE_DOMAINS: Final[str] = "<multiple-domains>"
 _UNPARSEABLE_ADDRESS: Final[str] = "<unparseable-address>"
-# Fields SENTINEL derives. The agent never gets to supply them.
-_DERIVED_FIELDS: Final[tuple[str, ...]] = ("recipient_domain", "recipient_domains")
+_UNPARSEABLE_URL: Final[str] = "<unparseable-url>"
 
 
 def _recipient_domains(value: object) -> list[str] | None:
@@ -103,11 +107,26 @@ def _recipient_domains(value: object) -> list[str] | None:
     return domains
 
 
+def _url_host(value: object) -> str:
+    """Return the canonical HTTP(S) host, or a value no allowlist can contain."""
+    if not isinstance(value, str):
+        return _UNPARSEABLE_URL
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+    except ValueError:
+        return _UNPARSEABLE_URL
+    if parsed.scheme.lower() not in {"http", "https"} or not host:
+        return _UNPARSEABLE_URL
+    return host.rstrip(".").lower()
+
+
 def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     """Normalize raw MCP arguments into the engine's evaluation namespace.
 
     Adds the derived fields policy references: ``recipient_domain`` (the one
-    domain every recipient shares) and ``recipient_domains`` (all of them).
+    domain every recipient shares), ``recipient_domains`` (all of them), and
+    ``url_host`` (the canonical HTTP(S) host of a URL tool argument).
 
     It used to take everything after the last ``@`` of ``to`` alone, so
     ``"attacker@evil.test,cfo@corp.example"`` normalized to ``corp.example``
@@ -118,11 +137,12 @@ def default_normalize(arguments: Mapping[str, object]) -> dict[str, object]:
     value no allowlist contains, so an allowlist rule denies it.
     """
     namespace = dict(arguments)
-    for field in _DERIVED_FIELDS:
+    for field in DERIVED_FIELDS:
         namespace.pop(field, None)
+    if "url" in namespace:
+        namespace["url_host"] = _url_host(namespace["url"])
     fields = [
-        namespace[name] for name in _ADDRESS_FIELDS
-        if namespace.get(name) not in (None, "", [], ())
+        namespace[name] for name in _ADDRESS_FIELDS if namespace.get(name) not in (None, "", [], ())
     ]
     if not fields:
         return namespace
@@ -193,7 +213,6 @@ class SentinelProxy:
         scorer: TrustScorer,
         agent_id: str,
         trace_id: str,
-        authorization_config: Mapping[str, object] | None = None,
         result_labels: Mapping[str, Label] | None = None,
         default_result_label: Label = RETRIEVED_CONTENT,
         input_shield: InputShield | None = None,
@@ -201,20 +220,23 @@ class SentinelProxy:
         max_result_bytes: int | None = None,
         catalogue_gate: Callable[[str], str | None] | None = None,
         tenant: str | None = None,
+        engine_provider: Callable[[], AuthorizationEngine] | None = None,
     ) -> None:
         self._downstream = downstream
         self._max_result_bytes = (
-            max_result_bytes if max_result_bytes is not None
-            else get_settings().max_result_bytes
+            max_result_bytes if max_result_bytes is not None else get_settings().max_result_bytes
         )
         self._emitter = emitter
         self._engine = engine
+        # A live MCP session must observe a tenant policy reload on its NEXT
+        # call. Demo runs omit this provider and intentionally keep one engine
+        # snapshot for their reproducible transcript.
+        self._engine_provider = engine_provider
         # Policy decides WHETHER a tool may declassify; this performs it.
         self._sanitizer = StructuredExtractor()
         self._scorer = scorer
         self._agent_id = agent_id
         self._trace_id = trace_id
-        self._authz_config = dict(authorization_config or {})
         self._result_labels = dict(result_labels or {})
         # External tool output is least-trusted by default (§4.1).
         self._default_result_label = default_result_label
@@ -246,6 +268,16 @@ class SentinelProxy:
     @property
     def trace_id(self) -> str:
         return self._trace_id
+
+    def _current_engine(self) -> AuthorizationEngine:
+        """Return one policy snapshot for the current intercepted call.
+
+        ``engine_provider`` is only used by the long-lived wire-session path.
+        Resolving it once per call keeps authorization, audit version and
+        declassification decisions internally consistent even if an operator
+        reloads policy while a downstream call is in flight.
+        """
+        return self._engine_provider() if self._engine_provider is not None else self._engine
 
     async def start(self, *, user_input: str, origin_label: Label = USER) -> Span:
         """Seed the session with the user's input as the trace root + provenance.
@@ -290,9 +322,7 @@ class SentinelProxy:
             return list(downstream_tools.tools)
 
         @server.call_tool()  # type: ignore[untyped-decorator]
-        async def _call_tool(
-            name: str, arguments: dict[str, object]
-        ) -> mcp_types.CallToolResult:
+        async def _call_tool(name: str, arguments: dict[str, object]) -> mcp_types.CallToolResult:
             return await self._intercept(name, arguments)
 
         return server
@@ -321,16 +351,22 @@ class SentinelProxy:
             #    and the refusal stays VISIBLE (Phase 3).
             if self._scorer.is_quarantined(self._agent_id, tenant=self._tenant):
                 await self._scorer.record_quarantined_block(
-                    self._agent_id, name, trace_id=self._trace_id,
-                    parent_span_id=self._root_span_id, tenant=self._tenant
+                    self._agent_id,
+                    name,
+                    trace_id=self._trace_id,
+                    parent_span_id=self._root_span_id,
+                    tenant=self._tenant,
                 )
                 log_blocked(
-                    name, reason="agent quarantined", rule="quarantine",
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason="agent quarantined",
+                    rule="quarantine",
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(
-                    f"SENTINEL: agent {self._agent_id!r} is quarantined; "
-                    f"tool {name!r} refused"
+                    f"SENTINEL: agent {self._agent_id!r} is quarantined; tool {name!r} refused"
                 )
 
             # 1. Record the proposal. It derives from everything the agent has
@@ -361,8 +397,12 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=refusal, rule="catalogue",
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason=refusal,
+                    rule="catalogue",
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {refusal}")
 
@@ -394,22 +434,26 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=reason, rule=None,
-                    trace_id=self._trace_id, agent_id=self._agent_id, provenance=(),
+                    name,
+                    reason=reason,
+                    rule=None,
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
+                    provenance=(),
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {reason}")
             provenance = lineage
 
             # 2. Authorize (Phase 2) and record the full decision trace.
+            engine = self._current_engine()
             call = ToolCall(
                 name=name,
                 arguments=default_normalize(arguments),
                 provenance=provenance,
-                config=self._authz_config,
             )
-            decision = self._engine.authorize(call)
+            decision = engine.authorize(call)
             await self._emitter.emit(
-                to_decision_payload(name, self._engine.policy_version, decision),
+                to_decision_payload(name, engine.policy_version, decision),
                 trace_id=self._trace_id,
                 parent_span_id=proposed.span_id,
             )
@@ -417,8 +461,12 @@ class SentinelProxy:
             # 3 + 5. Blocked: hard-signal trust penalty, ToolBlocked, clean error.
             if not decision.allowed:
                 await self._scorer.record_blocked_call(
-                    self._agent_id, name, reason=decision.reason,
-                    trace_id=self._trace_id, parent_span_id=proposed.span_id, tenant=self._tenant
+                    self._agent_id,
+                    name,
+                    reason=decision.reason,
+                    trace_id=self._trace_id,
+                    parent_span_id=proposed.span_id,
+                    tenant=self._tenant,
                 )
                 await self._emitter.emit(
                     ToolBlocked(
@@ -431,25 +479,41 @@ class SentinelProxy:
                     parent_span_id=proposed.span_id,
                 )
                 log_blocked(
-                    name, reason=decision.reason,
+                    name,
+                    reason=decision.reason,
                     rule=decision.matched_rule_id,
-                    trace_id=self._trace_id, agent_id=self._agent_id,
+                    trace_id=self._trace_id,
+                    agent_id=self._agent_id,
                     provenance=decision.effective_provenance,
                 )
                 return mcp_error(f"SENTINEL blocked {name!r}: {decision.reason}")
 
             # 3. Allowed: transition telemetry feeds the anomaly model.
             await self._scorer.record_tool_transition(
-                self._agent_id, name, trace_id=self._trace_id,
-                parent_span_id=proposed.span_id, tenant=self._tenant
+                self._agent_id,
+                name,
+                trace_id=self._trace_id,
+                parent_span_id=proposed.span_id,
+                tenant=self._tenant,
             )
 
             # 4. Forward across the second MCP hop and tag the RESULT's provenance.
             log_allowed(
-                name, trace_id=self._trace_id, agent_id=self._agent_id,
+                name,
+                trace_id=self._trace_id,
+                agent_id=self._agent_id,
                 provenance=decision.effective_provenance,
             )
-            result = await self._downstream.call_tool(name, dict(arguments))
+            try:
+                result = await self._downstream.call_tool(name, dict(arguments))
+            except Exception:  # noqa: BLE001 - a downstream is an untrusted boundary
+                # A transport/server failure is still an observed downstream
+                # outcome. Convert it to a tainted MCP error so the execution
+                # span and lineage cannot be skipped, and never hand an
+                # implementation exception (which may contain secrets) to the
+                # agent.
+                _LOG.exception("downstream tool %r failed", name)
+                result = mcp_error("SENTINEL: downstream tool failed; result withheld")
             # Bound what a downstream can hand back. A fetched page is
             # attacker-sized, and everything below reads the whole result — the
             # declassifier, the injection scanner, and finally the agent. An
@@ -477,11 +541,9 @@ class SentinelProxy:
             # never clear taint, and a declared schema that does not MATCH leaves
             # the result exactly as tainted as it was.
             cleared_from: str | None = None
-            schema_name = self._engine.declassifier_for(name)
+            schema_name = engine.declassifier_for(name)
             if schema_name is not None and _only_text(result):
-                source = ProvenanceNode(
-                    span_id=proposed.span_id, label=label, derived_from=()
-                )
+                source = ProvenanceNode(span_id=proposed.span_id, label=label, derived_from=())
                 sanitized = self._sanitizer.sanitize(
                     source, get_schema(schema_name), content=result_text(result)
                 )
@@ -492,9 +554,7 @@ class SentinelProxy:
                     # nothing else. Returning the original result let anything
                     # the schema never looked at ride along as trusted.
                     result = mcp_types.CallToolResult(
-                        content=[
-                            mcp_types.TextContent(type="text", text=str(sanitized.value))
-                        ],
+                        content=[mcp_types.TextContent(type="text", text=str(sanitized.value))],
                         isError=False,
                     )
 
@@ -544,13 +604,16 @@ class SentinelProxy:
                 )
                 if verdict.attack_detected:
                     log_injection_flagged(
-                        f"tool_result:{name}", trace_id=self._trace_id,
+                        f"tool_result:{name}",
+                        trace_id=self._trace_id,
                         shield=verdict.shield,
                     )
-                    await self._scorer.record_injection(
-                        self._agent_id,
-                        target=f"tool_result:{name}",
-                        trace_id=self._trace_id,
-                        parent_span_id=executed.span_id, tenant=self._tenant
-                    )
+                    if verdict.penalize_trust:
+                        await self._scorer.record_injection(
+                            self._agent_id,
+                            target=f"tool_result:{name}",
+                            trace_id=self._trace_id,
+                            parent_span_id=executed.span_id,
+                            tenant=self._tenant,
+                        )
             return result

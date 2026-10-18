@@ -10,6 +10,7 @@ Each of these was unbounded and demonstrated before it was fixed:
 * a downstream tool could hand back any amount of data, which the injection
   scanner and the agent would then read in full.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,7 @@ from sentinel.authorization.engine import AuthorizationEngine
 from sentinel.authorization.policy import load_policy
 from sentinel.config import reset_settings_cache
 from sentinel.control.app import create_app
-from sentinel.control.events import EventBus
+from sentinel.control.events import EventBus, EventCursorExpired
 from sentinel.control.manager import RunManager, RunRecord
 from sentinel.forensics.emitter import SpanEmitter
 from sentinel.forensics.replay import replay
@@ -80,7 +81,8 @@ async def _client(**env: str) -> AsyncIterator[tuple[httpx.AsyncClient, RunManag
 async def test_a_declared_oversized_body_is_refused_before_it_is_read() -> None:
     async with _client(SENTINEL_MAX_BODY_BYTES="4096") as (client, _, _app):
         response = await client.post(
-            "/runs/custom", content=b"x" * 10_000,
+            "/runs/custom",
+            content=b"x" * 10_000,
             headers={"content-type": "application/json"},
         )
         assert response.status_code == 413
@@ -162,8 +164,7 @@ async def test_made_up_credentials_do_not_each_get_a_fresh_budget() -> None:
         SENTINEL_API_TOKENS=_TENANTS,
     ) as (client, _, _app):
         guesses = [
-            (await client.get("/runs", headers={"Authorization": f"Bearer guess-{i}"}))
-            .status_code
+            (await client.get("/runs", headers={"Authorization": f"Bearer guess-{i}"})).status_code
             for i in range(6)
         ]
         assert guesses[:5] == [401] * 5
@@ -171,8 +172,7 @@ async def test_made_up_credentials_do_not_each_get_a_fresh_budget() -> None:
 
     async with _client(SENTINEL_RATE_LIMIT_PER_MINUTE="5") as (client, _, _app):
         anonymous = [
-            (await client.get("/runs", headers={"Authorization": f"Bearer any-{i}"}))
-            .status_code
+            (await client.get("/runs", headers={"Authorization": f"Bearer any-{i}"})).status_code
             for i in range(6)
         ]
         assert anonymous[5] == 429, "anonymous traffic escaped the limiter"
@@ -185,31 +185,37 @@ async def test_a_tenant_at_its_run_quota_is_refused_with_429() -> None:
     async with _client(SENTINEL_MAX_ACTIVE_RUNS="2") as (client, manager, _app):
         for i in range(2):  # two runs genuinely in flight for acme
             manager._runs[f"t{i}"] = RunRecord(  # noqa: SLF001
-                run_id=f"t{i}", trace_id=f"t{i}", agent_id="a",
-                scenario="hero-obvious", tenant="acme", status="running",
+                run_id=f"t{i}",
+                trace_id=f"t{i}",
+                agent_id="a",
+                scenario="hero-obvious",
+                tenant="acme",
+                status="running",
             )
-        refused = await client.post(
-            "/runs", json={"scenario": "hero-obvious", "tenant": "acme"}
-        )
+        refused = await client.post("/runs", json={"scenario": "hero-obvious", "tenant": "acme"})
         assert refused.status_code == 429
         assert refused.headers.get("retry-after")
 
         # The quota is per tenant: globex is unaffected by acme's load.
-        other = await client.post(
-            "/runs", json={"scenario": "hero-obvious", "tenant": "globex"}
-        )
+        other = await client.post("/runs", json={"scenario": "hero-obvious", "tenant": "globex"})
         assert other.status_code == 200
         for i in range(2):
             manager._runs[f"t{i}"].status = "completed"  # noqa: SLF001
 
 
 async def test_finished_runs_are_retained_up_to_the_limit_only() -> None:
-    async with _client(
-        SENTINEL_MAX_RETAINED_RUNS="3", SENTINEL_MAX_ACTIVE_RUNS="50"
-    ) as (client, manager, _app):
+    async with _client(SENTINEL_MAX_RETAINED_RUNS="3", SENTINEL_MAX_ACTIVE_RUNS="50") as (
+        client,
+        manager,
+        _app,
+    ):
         in_flight = RunRecord(
-            run_id="live", trace_id="live", agent_id="a",
-            scenario="live-mcp", tenant="default", status="running",
+            run_id="live",
+            trace_id="live",
+            agent_id="a",
+            scenario="live-mcp",
+            tenant="default",
+            status="running",
         )
         manager._runs["live"] = in_flight  # noqa: SLF001
         ids = []
@@ -265,7 +271,7 @@ async def test_live_stream_subscribers_are_capped_and_slots_come_back() -> None:
 
 
 def test_the_event_buffer_cut_matches_a_linear_scan() -> None:
-    """The binary search must return exactly what the old linear scan did."""
+    """Valid cursors use the same efficient cut as the old linear scan."""
 
     async def fill() -> EventBus:
         bus = EventBus(buffer_limit=50)
@@ -285,9 +291,17 @@ def test_the_event_buffer_cut_matches_a_linear_scan() -> None:
     bus = asyncio.run(fill())
     buffered = bus.events_since(0)
     assert [e.event_id for e in buffered] == sorted(e.event_id for e in buffered)
-    for cursor in (0, 1, 50, 80, 119, 120, 10_000):
+    earliest = buffered[0].event_id
+    for cursor in (0, earliest - 1, 80, 119, 120):
         expected = [e for e in buffered if e.event_id > cursor]
         assert bus.events_since(cursor) == expected
+
+    # A cursor before the retained window or from a different process must not
+    # receive a partial back-fill while being told it resumed successfully.
+    with pytest.raises(EventCursorExpired):
+        bus.events_since(1)
+    with pytest.raises(EventCursorExpired):
+        bus.events_since(10_000)
 
 
 # --- downstream results --------------------------------------------------------

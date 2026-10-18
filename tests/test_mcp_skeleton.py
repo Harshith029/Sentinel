@@ -5,6 +5,7 @@ two-hop topology:  agent client → SENTINEL proxy server → downstream tool se
 Asserting against real ``Tool`` / ``CallToolResult`` shapes is the whole point —
 Phase 2 provenance is then designed against the wire protocol, not a stand-in.
 """
+
 from __future__ import annotations
 
 from mcp.shared.memory import create_connected_server_and_client_session as connect
@@ -15,7 +16,7 @@ from sentinel.forensics.replay import replay
 from sentinel.forensics.store import InMemoryForensicStore
 from sentinel.labels import RETRIEVED_CONTENT
 from sentinel.mcp_proxy.skeleton import SentinelProxySkeleton, make_downstream_server
-from sentinel.redaction import redact_text
+from sentinel.redaction import redact_argument_name, redact_text
 
 
 async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
@@ -49,10 +50,10 @@ async def test_skeleton_round_trips_and_emits_correctly_shaped_spans() -> None:
     proposed, executed = rep.ordered
     assert isinstance(proposed.payload, ToolCallProposed)
     assert proposed.payload.tool_name == "noop_echo"
-    # Argument NAMES survive for forensic shape; values are redacted before the
-    # span is persisted, so a proposal can never leak caller data (F-01).
-    assert list(proposed.payload.arguments) == ["message"]
-    assert proposed.payload.arguments == {"message": redact_text("ping")}
+    # Field names and values are redacted before persistence. The field token is
+    # stable within this process, so repeated calls remain correlatable (F-01).
+    assert list(proposed.payload.arguments) == [redact_argument_name("message")]
+    assert proposed.payload.arguments == {redact_argument_name("message"): redact_text("ping")}
     assert "ping" not in str(proposed.payload.arguments)
     assert proposed.is_root is True
 

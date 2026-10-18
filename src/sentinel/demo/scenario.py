@@ -6,6 +6,7 @@ deterministic driver for a live one changes only what proposes the calls — the
 provenance / authorization / trust / forensic pipeline is identical. There is
 exactly one pipeline here; nothing about it branches on the driver.
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -40,10 +41,6 @@ from sentinel.shield import InputShield
 from sentinel.trust.config import load_default_trust_config
 from sentinel.trust.scorer import TrustScorer
 
-DEFAULT_CONFIG: Final[Mapping[str, object]] = {
-    "allowed_domains": ["corp.example"],
-    "max_amount": 1000,
-}
 PROTECTED_AGENT_ID: Final[str] = "protected-agent"
 
 
@@ -72,7 +69,6 @@ async def run_demo_session(
     user_input: str,
     demo_mode: bool = True,
     agent_id: str = PROTECTED_AGENT_ID,
-    authorization_config: Mapping[str, object] | None = None,
     store: ForensicStore | None = None,
     emitter: SpanEmitter | None = None,
     engine: AuthorizationEngine | None = None,
@@ -102,7 +98,6 @@ async def run_demo_session(
     shield = input_shield if input_shield is not None else InputShield(demo_mode=demo_mode)
     trace_id = trace_id if trace_id is not None else emitter.new_trace_id()
     servers = build_downstream(state, real_web=real_web)
-    config = authorization_config or DEFAULT_CONFIG
 
     async with AsyncExitStack() as stack:
         # Connect the three isolated tool servers.
@@ -144,7 +139,6 @@ async def run_demo_session(
                 agent_id=agent_id,
                 tenant=tenant,
                 trace_id=trace_id,
-                authorization_config=config,
                 input_shield=shield,
                 tool_schema_cache=cache.tools,
             )
@@ -192,6 +186,11 @@ HERO_USER_INPUT: Final[str] = (
 )
 
 
+def hero_user_input(poisoned_url: str) -> str:
+    """Make the page URL explicit to a real agent, not just scripted steps."""
+    return f"{HERO_USER_INPUT} Research this page: {poisoned_url}"
+
+
 def hero_steps(poisoned_url: str) -> list[Step]:
     """Hero transcript: legit record lookup, then a poisoned fetch induces an
     attempted exfiltration of that record to the attacker."""
@@ -223,7 +222,7 @@ async def run_hero_attack(
     url = OBVIOUS_URL if variant == "obvious" else EVASION_URL
     return await run_demo_session(
         ScriptedAgentDriver(hero_steps(url)),
-        user_input=HERO_USER_INPUT,
+        user_input=hero_user_input(url),
         demo_mode=demo_mode,
     )
 
@@ -265,15 +264,14 @@ class ScenarioBuild:
     The control plane builds one of these from either a named scenario or a
     :class:`CustomScenarioSpec` and hands it to :func:`run_demo_session`. The
     ``extra_pages`` field is what lets a user-supplied poisoned URL/content
-    flow through ``web_fetch``; ``config`` overrides the default
-    authorization config (e.g. ``allowed_domains``) so a user can pin the
-    policy's allowlist to their own.
+    flow through ``web_fetch``. Authorization configuration is intentionally
+    absent: policy configuration belongs to the operator-reviewed policy,
+    never a demo scenario or a tool caller.
     """
 
     driver: AgentDriver
     user_input: str
     extra_pages: Mapping[str, str] = field(default_factory=dict)
-    config: Mapping[str, object] = field(default_factory=lambda: DEFAULT_CONFIG)
     label: str = ""
 
 
@@ -300,7 +298,6 @@ class CustomScenarioSpec:
     subject: str = "Forwarded as requested"
     include_record: bool = True
     record_id: int = 42
-    allowed_domains: tuple[str, ...] = ("corp.example",)
 
 
 def build_scenario_full(name: str) -> ScenarioBuild:
@@ -312,13 +309,13 @@ def build_scenario_full(name: str) -> ScenarioBuild:
     if name == "hero-obvious":
         return ScenarioBuild(
             driver=ScriptedAgentDriver(hero_steps(OBVIOUS_URL)),
-            user_input=HERO_USER_INPUT,
+            user_input=hero_user_input(OBVIOUS_URL),
             label="hero-obvious",
         )
     if name == "hero-evasion":
         return ScenarioBuild(
             driver=ScriptedAgentDriver(hero_steps(EVASION_URL)),
-            user_input=HERO_USER_INPUT,
+            user_input=hero_user_input(EVASION_URL),
             label="hero-evasion",
         )
     if name == "privilege":
@@ -344,9 +341,9 @@ def build_custom_scenario(spec: CustomScenarioSpec) -> ScenarioBuild:
     """Compose a :class:`ScenarioBuild` from a user-supplied attack spec.
 
     The user controls: the task description (becomes ``user_input``), the
-    poisoned URL + content that ``web_fetch`` returns, the attacker recipient,
-    and the allowed-domains config the policy is evaluated against. SENTINEL's
-    pipeline is the IDENTICAL code path the canned scenarios run through.
+    poisoned URL + content that ``web_fetch`` returns, and the attacker
+    recipient. SENTINEL's pipeline is the IDENTICAL code path the canned
+    scenarios run through. The tenant policy remains operator-controlled.
     """
     if not spec.task.strip():
         raise ValueError("CustomScenarioSpec.task must not be empty")
@@ -363,9 +360,7 @@ def build_custom_scenario(spec: CustomScenarioSpec) -> ScenarioBuild:
         # If the user opted to include the synthetic record, [0] is the record
         # and [1] is the poisoned page; otherwise [0] is the poisoned page.
         body_bits = [result_text(r) for r in results]
-        body = (
-            f"Forwarded as requested:\n{chr(10).join(body_bits)}"
-        )
+        body = f"Forwarded as requested:\n{chr(10).join(body_bits)}"
         return ToolInvocation(
             tool="send_email",
             arguments={"to": spec.attacker, "subject": spec.subject, "body": body},
@@ -373,22 +368,13 @@ def build_custom_scenario(spec: CustomScenarioSpec) -> ScenarioBuild:
 
     steps: list[Step] = []
     if spec.include_record:
-        steps.append(
-            ToolInvocation(
-                tool="get_customer_record", arguments={"id": spec.record_id}
-            )
-        )
+        steps.append(ToolInvocation(tool="get_customer_record", arguments={"id": spec.record_id}))
     steps.append(ToolInvocation(tool="web_fetch", arguments={"url": spec.poisoned_url}))
     steps.append(exfiltrate)
 
-    config: dict[str, object] = {
-        "allowed_domains": list(spec.allowed_domains),
-        "max_amount": 1000,
-    }
     return ScenarioBuild(
         driver=ScriptedAgentDriver(steps),
         user_input=spec.task,
         extra_pages={spec.poisoned_url: spec.poisoned_content},
-        config=config,
         label="custom",
     )

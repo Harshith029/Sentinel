@@ -164,6 +164,11 @@ All notable changes to this project are documented here. Format follows
   names one with `?tenant=`.
 
 ### Fixed
+- With `SENTINEL_REAL_WEB_FETCH=1`, a custom attack's page is served for its
+  URL. The protected run fetched the live URL while its baseline used the
+  custom page, so the two compared different content.
+- `examples/run_live_agent.py` exits 4 when nothing was blocked; it exited 0,
+  so a script could not tell a demonstration from a non-event.
 - Dashboard: a refused launch (a 4xx such as an unknown scenario or a full
   quota) or a run that fails before emitting anything shows REFUSED with the
   reason; it spun forever. It auto-plays once, on a dashboard with no runs,

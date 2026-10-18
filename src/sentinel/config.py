@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +39,15 @@ def _parse_int_env(name: str, *, default: int, minimum: int = 0) -> int:
     if value < minimum:
         raise ValueError(f"Environment variable {name!r} must be >= {minimum}, got {value}.")
     return value
+
+
+def _parse_agent_driver() -> Literal["auto", "scripted", "llm"]:
+    raw = (os.environ.get("SENTINEL_AGENT_DRIVER") or "auto").strip().lower()
+    if raw not in ("auto", "scripted", "llm"):
+        raise ValueError(
+            f"Environment variable 'SENTINEL_AGENT_DRIVER'={raw!r} must be auto, scripted or llm."
+        )
+    return raw  # type: ignore[return-value]
 
 
 def _parse_bool_env(name: str, *, default: bool) -> bool:
@@ -295,6 +304,15 @@ class Settings(BaseModel):
         ),
     )
 
+    agent_driver: Literal["auto", "scripted", "llm"] = Field(
+        default="auto",
+        description=(
+            "Which agent drives demo runs: 'auto' uses a live model when credentials "
+            "are present and the scripted transcript otherwise; 'scripted' always "
+            "uses the transcript; 'llm' requires a model and fails without one."
+        ),
+    )
+
     allowed_hosts: str | None = Field(
         default=None,
         description=(
@@ -391,6 +409,7 @@ def _read_settings_from_env() -> Settings:
         allow_anonymous=_parse_bool_env("SENTINEL_ALLOW_ANONYMOUS", default=False),
         real_web_fetch=_parse_bool_env("SENTINEL_REAL_WEB_FETCH", default=False),
         allowed_hosts=os.environ.get("SENTINEL_ALLOWED_HOSTS") or None,
+        agent_driver=_parse_agent_driver(),
         catalogue_strict=_parse_bool_env("SENTINEL_CATALOGUE_STRICT", default=True),
         catalogue_approvals=os.environ.get("SENTINEL_CATALOGUE_APPROVALS") or None,
         catalogue_recheck_seconds=_parse_int_env(

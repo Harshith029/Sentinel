@@ -61,3 +61,30 @@ async def test_llm_path_blocks_induced_exfiltration_offline() -> None:
     blocked = [s.payload for s in res.replay.ordered if s.event_type == "ToolBlocked"]
     assert any(b.tool_name == "send_email" for b in blocked)  # type: ignore[attr-defined]
     assert res.outbox == []
+
+
+def test_the_agent_driver_can_be_pinned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Azure OpenAI configured for the classifier also switched demo runs to an LLM."""
+    from sentinel.config import Settings
+    from sentinel.demo.llm_driver import LiveAgentUnavailable, default_agent_driver
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    fallback = _scripted()
+
+    def settings(**kwargs: object) -> Settings:
+        return Settings(demo_mode=False, **kwargs)  # type: ignore[arg-type]
+
+    azure = {"azure_openai_endpoint": "https://oai.example", "azure_openai_deployment": "d"}
+    pinned = default_agent_driver(
+        task="t", scripted_fallback=fallback, settings=settings(agent_driver="scripted", **azure)
+    )
+    assert pinned is fallback
+
+    with pytest.raises(LiveAgentUnavailable):
+        default_agent_driver(
+            task="t", scripted_fallback=fallback, settings=settings(agent_driver="llm")
+        )
+
+    auto = default_agent_driver(task="t", scripted_fallback=fallback, settings=settings())
+    assert auto is fallback  # no credentials: the transcript, as before

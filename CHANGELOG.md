@@ -63,6 +63,9 @@ All notable changes to this project are documented here. Format follows
   reload applies to them at once.
 
 ### Added
+- `SENTINEL_AGENT_DRIVER` (`auto`, `scripted`, `llm`) chooses what drives demo
+  runs. Configuring Azure OpenAI for the classifier also switched every demo
+  run to a live model, with no way to keep the scripted transcript.
 - `trusted_output: true` on a policy tool labels its results `SYSTEM` instead of
   `RETRIEVED_CONTENT`, for tools whose output nobody outside can write to.
 - `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` (default 30, also

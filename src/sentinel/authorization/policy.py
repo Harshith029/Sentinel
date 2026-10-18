@@ -122,6 +122,10 @@ class _ToolDoc(BaseModel):
 
     rules: list[_RuleDoc]
     declassify: _DeclassifyDoc | None = None
+    # The operator vouches for this tool's output: nobody outside can write to
+    # what it returns (an internal records service, say). Its results are
+    # labelled SYSTEM instead of RETRIEVED_CONTENT, so they do not taint.
+    trusted_output: bool = False
 
 
 class _PolicyDoc(BaseModel):
@@ -161,6 +165,8 @@ class CompiledPolicy:
     # tool name -> declassification schema name. Absent means this tool's output
     # can never clear taint, which is the default for every tool.
     declassifiers: dict[str, str] = field(default_factory=dict)
+    # Tools whose output the operator declared trusted (see _ToolDoc).
+    trusted_outputs: frozenset[str] = frozenset()
 
     def declassifier_for(self, tool_name: str) -> str | None:
         """The schema a tool's output may be declassified by, if policy allows it."""
@@ -202,6 +208,9 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
         tools=tools,
         declassifiers=declassifiers,
         config=dict(doc.config),
+        trusted_outputs=frozenset(
+            name for name, tool_doc in doc.tools.items() if tool_doc.trusted_output
+        ),
     )
 
 

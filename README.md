@@ -77,7 +77,7 @@ protects you from.
 | Limitation | What it means for you |
 |---|---|
 | **Taint is per MCP session** | Lineage covers the calls made in one MCP session. A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried from one call to the next, so a page read in one call does not taint an email sent in the next. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects. |
-| **Every tool result is untrusted** | All tool output is labelled retrieved content, including your own internal systems. A benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Only per-tool declassification (a value that validates against a strict schema) clears taint. |
+| **Every tool result is untrusted** (by default) | All tool output is labelled retrieved content unless the policy marks the tool `trusted_output: true`, which you should do only for a tool whose output nobody outside can write to (your own records service, say). Otherwise a benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Per-tool declassification (a value that validates against a strict schema) also clears taint. |
 | **Only guarded tools are guarded** | A tool without policy rules can carry tainted data out. The bundled policy treats `web_fetch` as an outbound capability and constrains its hostname through `allowed_fetch_hosts`; add equivalent rules for every outbound tool you introduce. Rules are deny-only and there is no notion of a general outbound "sink" yet. |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
@@ -362,10 +362,12 @@ it as a public sandbox, not as an example of a secured deployment: everything in
 is synthetic and anyone can drive it. A real deployment must set
 `SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
 attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
-anyway. Read the block for what it is: the session is already tainted by the
-customer-record lookup before the page is fetched (every tool result is untrusted), and
-the attacker's domain is outside the bundled allowlist, so the email would be refused
-without the poisoned page too. All demo data is synthetic — the record is a labelled fake
+anyway. The taint comes from the page: the bundled policy marks the records service's
+output as trusted (`trusted_output`), so the record lookup alone taints nothing, and
+without the page the agent never attempts the email. The attacker's domain is also
+outside the bundled allowlist, a second, independent reason for the same refusal; the
+tests show that an email to an allowed address is refused after the page and allowed
+without it. All demo data is synthetic — the record is a labelled fake
 (SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
 writes to an in-memory sink. Nothing is ever sent.
 

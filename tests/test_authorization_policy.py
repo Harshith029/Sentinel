@@ -16,7 +16,7 @@ from sentinel.authorization.policy import (
 
 def test_default_policy_loads_and_compiles() -> None:
     policy = load_default_policy()
-    assert policy.policy_version == 5
+    assert policy.policy_version == 6
     assert set(policy.tools) == {
         "web_fetch",
         "send_email",
@@ -176,3 +176,16 @@ def test_duplicate_rule_ids_within_a_tool_are_refused() -> None:
             "      - {id: same, deny_always: true}\n"
             "      - {id: same, deny_if: 'a == 1'}\n"
         )
+
+
+def test_trusted_output_is_opt_in_per_tool() -> None:
+    policy = load_policy(
+        "policy_version: 1\ntools:\n"
+        "  records: {trusted_output: true, rules: []}\n"
+        "  web: {rules: []}\n"
+    )
+    engine = AuthorizationEngine(policy)
+    assert engine.trusted_output("records") is True
+    assert engine.trusted_output("web") is False
+    assert engine.trusted_output("unknown") is False
+    assert AuthorizationEngine(load_default_policy()).trusted_output("get_customer_record")

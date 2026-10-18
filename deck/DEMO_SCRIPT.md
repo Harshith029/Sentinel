@@ -14,9 +14,11 @@ trust 100→70, and the before/after exfiltration contrast.
 >   OpenTelemetry's id *format*; SENTINEL does not export OpenTelemetry traces.
 > - Provenance is kept as a running union per session, not by a graph walk on
 >   each call.
-> - In the hero scenario the `send_email` is already tainted by the customer-record
->   lookup (every tool result is untrusted), and the attacker's domain is outside
->   the bundled allowlist. The block does not depend on the poisoned page.
+> - As submitted, the hero `send_email` was already tainted by the customer-record
+>   lookup, so the block did not depend on the poisoned page. Since 2026-10-18 the
+>   bundled policy trusts the records service's output and the scripted agent only
+>   acts on the page's instruction, so the page is the taint source. The attacker's
+>   domain is also outside the allowlist, an independent second reason.
 > - Test counts are from submission time.
 > - The record lookup's origin badge shows `{USER}`, not `{USER, AGENT}`, and the
 >   next call, the page fetch, already carries `RETRIEVED_CONTENT` from the record.

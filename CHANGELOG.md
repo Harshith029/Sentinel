@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed (breaking)
+- The bundled policy (version 6) trusts `get_customer_record`'s output, and
+  the hero demo's scripted agent emails only where the fetched page tells it
+  to. The hero block now depends on the poisoned page: before, the record
+  lookup alone tainted the session and the agent always sent the email.
 - Declassification schemas are strict. `iso_date` takes `YYYY-MM-DD` only
   (`date.fromisoformat` also took `20261018` and ISO week dates), and
   `decimal_amount` takes plain ASCII notation up to 18 digits each side of
@@ -59,6 +63,8 @@ All notable changes to this project are documented here. Format follows
   reload applies to them at once.
 
 ### Added
+- `trusted_output: true` on a policy tool labels its results `SYSTEM` instead of
+  `RETRIEVED_CONTENT`, for tools whose output nobody outside can write to.
 - `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` (default 30, also
   `downstream_timeout_seconds` in `sentinel.yaml`): a deadline for each
   downstream operation. Before, a downstream server that accepted a connection

@@ -23,4 +23,13 @@ so a later review can disagree with the reasoning rather than rediscover the ite
 | PP-16 | Calls the MCP SDK rejects for schema reasons are not recorded. | They never reach SENTINEL. Recording them would mean turning off the SDK's validation and doing it inside the proxy; listed in *Known limitations*. |
 | COSMOS-1 | The Cosmos path has no ownership, restore or retention. | A larger piece of work on a paid path; listed in *Known limitations*. Cosmos can now at least start (it needs the `cosmos` extra). |
 | TCD-04, OWN-6 | Real-HTTP tests are order-dependent and can hang. | The open teardown defect in `docs/mcp-streamable-http-teardown.md`, tracked by a strict xfail and the quarantined CI job. |
+| RED-1 (rest) | Redaction keeps tool names and deny reasons in the clear. | Argument names and values are redacted. Tool names and reasons are what an investigator reads first, and they come from the catalogue and the policy, not from the caller's data. A caller-invented tool name is still logged with control characters escaped. |
+| AUTHZ-15 (rest) | No static check of predicate variables or config types. | Loading now warns about comparands the config does not declare and config keys that shadow call fields, refuses duplicate rule ids, and a scalar where a collection is expected denies at evaluation. A full type checker for config values is not worth its complexity here. |
+| DCC-23 (rest) | `verify_catalogue` and `DownstreamTopology.server_of`/`tool_names` are unused in production. | Small, tested, public helpers for anyone building on the package; the truly unused `build_web_server` was removed. |
 | TCD-26 | The codebase's history starts with a large root commit. | A fact about the repository's history; nothing to change in the code. |
+
+## Not done
+
+| ID | What | Status |
+|---|---|---|
+| GW-12 | The browser session cookie is the raw bearer token; there is no server-side session, expiry or revocation. | Open. The cookie is `HttpOnly` and `SameSite=Strict`, and the dashboard is off unless `SENTINEL_DASHBOARD=1`, but a server-side session store remains to be built. |

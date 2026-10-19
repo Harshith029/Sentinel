@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-10-19
+
+**Upgrade from 0.2.2.** No configuration changes. If you use Cosmos DB,
+install `sentinel-prox[cosmos]`: without the extra, Cosmos persistence
+could not start in 0.2.2 either. The SQLite forensic store adds an indexed
+timestamp column, and fills it in, the first time 0.2.3 opens an existing
+database. Back up `sentinel.db` before upgrading, and to roll back, restore
+that backup rather than running 0.2.2 on the migrated file: spans 0.2.2
+writes get no value in the new column, and upgrading again does not fill
+it in.
+
 ### Added
 - A documentation site, built from `website/` with VitePress and published to
   GitHub Pages: quick start, how it works, policy guide, configuration,
@@ -33,6 +44,10 @@ All notable changes to this project are documented here. Format follows
 - The hackathon pitch decks, submission documents and video script (`deck/`).
   They remain in the git history. The large-file check is back to its default
   limit, which the decks had needed raised.
+- Two unused helpers: `sentinel.forensics.store.create_cosmos_store` (a
+  duplicate of the Cosmos factory the service actually uses) and
+  `sentinel.toolservers.web_fetch.build_web_server`. Code that imported
+  either needs to build the store or server itself.
 
 ### Security
 - The Cosmos store writes spans with `create_item`, which fails atomically if

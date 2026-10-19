@@ -11,7 +11,11 @@ All notable changes to this project are documented here. Format follows
   GitHub Pages: quick start, how it works, policy guide, configuration,
   authentication, logs and forensics, deployment, limits, backends,
   limitations and FAQ. CI builds it on every change and fails on a dead link
-  or a vulnerable dependency.
+  or a vulnerable dependency. Its landing page is animated (an attack-flow
+  replay synced to a step list, a typing decision log, a before/after outbox)
+  and holds still for visitors who ask for reduced motion.
+- `assets/flow.svg`, an animated diagram of SENTINEL refusing an exfiltration
+  attempt, used at the top of the README and on the site.
 - `SECURITY.md` (supported versions, private reporting, scope),
   `CODE_OF_CONDUCT.md`, issue forms for bugs, features and documentation, and a
   pull request template with the security-invariant checklist.
@@ -26,6 +30,9 @@ All notable changes to this project are documented here. Format follows
   anonymous mode on the public internet, which is not how SENTINEL should be
   seen running. The demo runs locally instead (`SENTINEL_ALLOW_ANONYMOUS=1
   sentinel serve --dashboard`).
+- The hackathon pitch decks, submission documents and video script (`deck/`).
+  They remain in the git history. The large-file check is back to its default
+  limit, which the decks had needed raised.
 
 ### Security
 - The Cosmos store writes spans with `create_item`, which fails atomically if

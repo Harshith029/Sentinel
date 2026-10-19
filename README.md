@@ -1,223 +1,159 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="680">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/banner.png" alt="SENTINEL — provenance-aware security for AI agents" width="680">
 
-[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=PYPI)](https://pypi.org/project/sentinel-prox/)
-[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?style=for-the-badge&labelColor=0B1220&color=3B82F6&label=PYTHON)](https://pypi.org/project/sentinel-prox/)
-[![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/SENTINEL/ci.yml?style=for-the-badge&labelColor=0B1220&color=22D3EE&label=CI)](https://github.com/Harshith029/SENTINEL/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/LICENSE-MIT-3B82F6?style=for-the-badge&labelColor=0B1220)](./LICENSE)
-[![Live demo](https://img.shields.io/badge/DEMO-LIVE-6366F1?style=for-the-badge&labelColor=0B1220)](https://sentinel-i63x.onrender.com)
+**Stop prompt-injection attacks at the action layer, where the damage happens.**
 
-[![mypy](https://img.shields.io/badge/MYPY-STRICT-3B82F6?style=for-the-badge&labelColor=0B1220)](http://mypy-lang.org/)
-[![ruff](https://img.shields.io/badge/LINT-RUFF-3B82F6?style=for-the-badge&labelColor=0B1220)](https://github.com/astral-sh/ruff)
-[![no eval](https://img.shields.io/badge/CODEBASE-NO%20EVAL-22D3EE?style=for-the-badge&labelColor=0B1220)](./src/sentinel/authorization/ast.py)
+[![PyPI](https://img.shields.io/pypi/v/sentinel-prox?style=flat-square&labelColor=0B1220&color=22D3EE&label=pypi)](https://pypi.org/project/sentinel-prox/)
+[![Python](https://img.shields.io/pypi/pyversions/sentinel-prox?style=flat-square&labelColor=0B1220&color=3B82F6&label=python)](https://pypi.org/project/sentinel-prox/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Harshith029/Sentinel/ci.yml?branch=main&style=flat-square&labelColor=0B1220&label=ci)](https://github.com/Harshith029/Sentinel/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-website-6366F1?style=flat-square&labelColor=0B1220)](https://harshith029.github.io/Sentinel/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-3B82F6?style=flat-square&labelColor=0B1220)](https://github.com/Harshith029/Sentinel/blob/main/LICENSE)
 
-**Stop prompt-injection attacks at the action layer — where the damage happens.**
+[**Website**](https://harshith029.github.io/Sentinel/) ·
+[Quick start](https://harshith029.github.io/Sentinel/guide/quick-start) ·
+[Writing policy](https://harshith029.github.io/Sentinel/guide/policy) ·
+[Limitations](https://harshith029.github.io/Sentinel/guide/limitations) ·
+[FAQ](https://harshith029.github.io/Sentinel/faq) ·
+[Changelog](https://github.com/Harshith029/Sentinel/blob/main/CHANGELOG.md)
 
 </div>
 
-SENTINEL sits between your agent and your MCP tool servers, tracks which tool results
-each action could have been influenced by, and refuses the actions you guard when that
-lineage includes untrusted content — **even when the attack slipped past your content
-filter**. Read *Known limitations* before relying on it: the lineage is per MCP session,
-and only the tools you write rules for are guarded.
-
-<div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/dashboard.png" alt="SENTINEL blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
-<br>
-<sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
-Layer-1 filter <b>misses</b> the obfuscated injection — the action is refused anyway,
-because its lineage includes untrusted tool output.</i></sub>
-</div>
-
-```bash
-pip install "sentinel-prox>=0.2.2"   # never 0.1.x: those releases are insecure
-sentinel init             # write sentinel.yaml
-sentinel check            # run serve's startup checks without serving; non-zero if serve would fail
-sentinel scaffold > policy.yaml
-sentinel serve            # your agent points at http://127.0.0.1:8765/mcp
-```
+SENTINEL is a security proxy for AI agents that use the
+[Model Context Protocol](https://modelcontextprotocol.io) (MCP). It sits between
+your agent and your MCP tool servers, tracks which tool results each action could
+have been influenced by, and refuses the actions you guard when that lineage
+includes untrusted content, **even when the attack got past your content filter**.
 
 Your agent needs **no code changes**: point its MCP endpoint at SENTINEL instead of
-directly at your tool servers. Interception is guaranteed by topology, not by asking
-the agent to cooperate.
+at your tool servers. Interception comes from the network topology, not from
+asking the agent to cooperate.
 
----
+<div align="center">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/dashboard.png" alt="SENTINEL blocking an exfiltration attempt: the content filter missed the injection, but the action was refused because its lineage was tainted" width="820">
+<br>
+<sub><i>A poisoned page induces the agent to email a customer record to an attacker. The
+Layer-1 filter <b>misses</b> the obfuscated injection; the action is refused anyway,
+because its lineage includes untrusted tool output. (Bundled demo, synthetic data.)</i></sub>
+</div>
 
-## Status and known limitations
+> **Important:** install **0.2.2 or later**. The 0.1.x releases are insecure (an open `/mcp`
+> endpoint, overridable policy config, unredacted forensics). SENTINEL is beta:
+> read [Status and known limitations](#status-and-known-limitations) before you
+> rely on it.
 
-Read this before deploying anything.
+## Contents
 
-| Area | State |
-|---|---|
-| PyPI distribution | `sentinel-prox` 0.2.2 and later carry the fixes in the CHANGELOG. 0.1.x is insecure (open `/mcp`, overridable policy config, unredacted forensics); do not install it. For the exact tested dependency set, install from a checkout with `-c versions.lock` |
-| Provenance tracking + deterministic default-deny enforcement | Working, tested |
-| Forensic spans, replay, audit trail | Working; payloads redacted before persistence. Each run's tenant is recorded, so history stays with its tenant across restarts. Traces are deleted after `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90). Not encrypted at rest by SENTINEL (see *Forensic data*) |
-| Catalogue integrity (poisoning, cross-server shadowing, rug pulls) | Working, tested. Checked at connect, on tool listing and every `SENTINEL_CATALOGUE_RECHECK_SECONDS`; findings appear in `GET /downstream` and the logs, not in the forensic store. Re-approving a changed catalogue means restarting. The poisoning scan is a heuristic that also flags ordinary descriptions; approve a reviewed definition with `catalogue_approvals` (the fingerprint `sentinel check` prints) rather than turning strict mode off |
-| Authentication | Every endpoint gated; fails closed when unconfigured |
-| Policy config (`allowed_domains`, limits) | Declared per tenant in the policy document |
-| Declassification (`StructuredExtractor`) | Wired into enforcement; opt-in per tool via policy |
-| Stable agent identity across reconnect | Derived from the authenticated credential; trust and an enforced quarantine survive reconnect (per process, and only when authenticated) |
-| Multi-tenant isolation | Per-tenant credentials (`SENTINEL_API_TOKENS`); runs, events, SSE and MCP sessions scoped to the credential's tenant; per-tenant policy via `SENTINEL_TENANT_POLICIES` |
-| Operator separation | Only `SENTINEL_ADMIN_TOKEN` can change policy or clear a quarantine; agent credentials (`SENTINEL_API_TOKEN`, `SENTINEL_API_TOKENS`) never can. Without an admin token nobody administers, and `sentinel check` and `sentinel serve` say so |
-| Resource bounds | Request body, request rate, runs in flight, retained runs, live-stream subscribers, event page and tool-result size are all capped (see *Resource limits*). Counters are per process: replicas do not share them |
-| Self-hosting (Docker / `deploy/compose.yaml`) | Verified locally; CI builds and starts the image on every push |
-| Azure deployment (Bicep) | Optional. **Never deployed**; CI only proves the template compiles |
-| Downstream reconnect within one process | **Blocked** by an unresolved transport defect |
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [What it protects against](#what-it-protects-against)
+- [Status and known limitations](#status-and-known-limitations)
+- [Writing policy](#writing-policy)
+- [Try the demo](#try-the-demo)
+- [Documentation](#documentation)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License and credits](#license-and-credits)
 
-### Known limitations
+## Quick start
 
-These are open, verified, and not yet fixed. Each one changes what SENTINEL
-protects you from.
+Requires Python 3.11+ and MCP servers that speak the streamable HTTP transport.
 
-| Limitation | What it means for you |
-|---|---|
-| **Taint is per MCP session** | Lineage covers the calls made in one MCP session. A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried from one call to the next, so a page read in one call does not taint an email sent in the next. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects. |
-| **Every tool result is untrusted** (by default) | All tool output is labelled retrieved content unless the policy marks the tool `trusted_output: true`, which you should do only for a tool whose output nobody outside can write to (your own records service, say). Otherwise a benign flow such as "look up the customer, then email them" is denied if the email tool has a taint rule. Per-tool declassification (a value that validates against a strict schema) also clears taint. |
-| **Only guarded tools are guarded** | A tool without policy rules can carry tainted data out. The bundled policy treats `web_fetch` as an outbound capability and constrains its hostname through `allowed_fetch_hosts`; add equivalent rules for every outbound tool you introduce. Rules are deny-only and there is no notion of a general outbound "sink" yet. |
-| **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
-| **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
-| **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and policies replaced through `POST /tenants/{t}/policy` are in memory. A restart forgets API policy reloads (put durable policy in `SENTINEL_POLICY_FILE` / `SENTINEL_TENANT_POLICIES`), and two replicas share none of it, which is why the Azure template runs one. |
-| **Cosmos persistence is partial** | It needs `pip install 'sentinel-prox[cosmos]'` (for aiohttp). With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
-| **Some state is visible across tenants** | Event ids on `/events` are one global counter, so a tenant can infer how busy the deployment is. `/downstream` and `/capabilities` describe the whole deployment to any authenticated caller. |
-| **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees the call, so they leave no forensic record. |
+```bash
+pip install "sentinel-prox>=0.2.2"
+sentinel init                    # write sentinel.yaml; list your servers under `servers:`
+export SENTINEL_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+sentinel check                   # connect, vet each catalogue; non-zero if serve would fail
+sentinel scaffold > policy.yaml  # every discovered tool, denied, with a suggested rule
+sentinel serve                   # agents connect to http://127.0.0.1:8765/mcp
+```
 
-`SENTINEL_API_TOKEN` must be set for any deployment reachable from a network.
-With neither it nor `SENTINEL_ALLOW_ANONYMOUS=1` set, the service refuses to
-serve rather than serving openly.
+Your agent then uses `http://127.0.0.1:8765/mcp` with
+`Authorization: Bearer $SENTINEL_API_TOKEN`. Put your tool servers on a network
+that **only** SENTINEL can reach, so nothing can go around it.
 
+SENTINEL is fail-closed: with no credential configured, every data route answers
+`503` rather than serving openly. The full walkthrough, including a client example,
+is in the [quick start guide](https://harshith029.github.io/Sentinel/guide/quick-start).
 
-## The problem
+## How it works
 
-AI agents don't just answer questions any more — they send email, query business
-systems, and read the open web. That makes **indirect prompt injection** an action
-problem, not a text problem: an attacker hides an instruction inside content the
-agent will read, and it executes with the agent's full privileges.
-*"Summarize this pricing page"* quietly becomes *"email this customer's SSN to the
-attacker."*
+<div align="center">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through SENTINEL, which traces origins, authorizes, contains, and records" width="760">
+</div>
 
-Content filters scan the words. Microsoft's own Prompt Shields documentation says it
-"may not catch all attack vectors" and recommends additional validation layers.
-**The gap: security is applied to the words, while the damage is done by the actions.**
+1. **Trace.** Everything the agent sees carries a trust label
+   (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`). An action's provenance is the
+   **set** of labels over its whole transitive ancestry, never just the most
+   recent step. It is tainted if and only if `RETRIEVED_CONTENT` is in that set.
+2. **Authorize.** Your policy compiles to a typed condition tree; there is no
+   `eval` anywhere in the codebase. Rules are deny-only with deny-overrides, and
+   **unknown tools are denied by default**.
+3. **Contain.** A trust score drops on denied calls and other signals, and can
+   quarantine the agent.
+4. **Record.** Every decision is an immutable, replayable forensic span,
+   exportable as JSONL for a SIEM. Tool arguments are redacted before storage and
+   never logged.
 
-SENTINEL closes it by judging an action on **where its data came from**, not on how
-the request was phrased.
+Taint clears exactly one way: **declassification**, declared per tool, when the
+tool's output validates against a strict, closed schema. A tool whose output no
+outsider can write to can instead be marked `trusted_output: true`.
+[More on how it works.](https://harshith029.github.io/Sentinel/guide/how-it-works)
 
 ## What it protects against
 
 | Attack | How SENTINEL stops it |
 |---|---|
-| **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied — regardless of phrasing, so obfuscation doesn't help |
-| **Data exfiltration** | A `send_email` built from a retrieved page is refused before it executes |
-| **Tool poisoning** | Every agent-visible part of a tool definition (description, title, annotations, input and output schemas, metadata) is scanned at connect; a poisoned catalogue is refused |
-| **Cross-server shadowing** | Two servers claiming one tool name fails closed — SENTINEL won't guess which is authoritative |
-| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked on tool listing (at most every 5 s) and on a schedule. Approval is trust on first use: what a server presents when SENTINEL connects is what gets pinned, so review it with `sentinel check` before going live. A tool that changes after approval is refused at call time; so is any tool that was not in the approved catalogue |
-| **Privilege escalation** | Unknown tools are default-denied until you write a rule |
-| **Repeated abuse** | A trust score degrades on blocked calls and quarantines the agent |
-
-Every decision becomes an immutable, replayable forensic record, exportable as
-SIEM-ready JSONL.
+| **Indirect prompt injection** | Actions whose lineage includes untrusted content are denied, whatever the wording, so obfuscation does not help |
+| **Data exfiltration** | A `send_email` built from a retrieved page is refused before it runs |
+| **Tool poisoning** | Every agent-visible part of a tool definition is scanned at connect; a poisoned catalogue is refused |
+| **Cross-server shadowing** | Two servers claiming one tool name fails closed |
+| **Rug pulls** | The catalogue is fingerprinted at approval and re-checked; a tool that changed, or was never approved, is refused at call time |
+| **Privilege escalation** | Unknown tools are denied until you write a rule |
+| **Repeated abuse** | A trust score degrades and can quarantine the agent |
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/outbox-diff.png" alt="The same attack with and without SENTINEL: without it the SSN and API key reach the attacker; with it the email is never sent" width="820">
+<img src="https://raw.githubusercontent.com/Harshith029/Sentinel/main/assets/outbox-diff.png" alt="The same attack with and without SENTINEL: without it the SSN and API key reach the attacker; with it the email is never sent" width="820">
 <br>
 <sub><i>The same attack, run twice. Without SENTINEL the customer's SSN and API key reach
 the attacker's inbox; with it, the email is never sent.</i></sub>
 </div>
 
-## How it works
+## Status and known limitations
 
-<div align="center">
-<img src="https://raw.githubusercontent.com/Harshith029/SENTINEL/main/assets/architecture.png" alt="Architecture: the agent reaches its tools only through SENTINEL, which traces origins, authorizes, contains, and records" width="760">
-</div>
+Read this before deploying anything. Each limitation changes what SENTINEL
+protects you from.
 
-```
- your agent  ──MCP──▶  SENTINEL  ──MCP──▶  your MCP servers
-                          │
-       1. trace      label the origin of everything the agent has seen
-       2. authorize  policy decides each call using that lineage (deny-overrides)
-       3. contain    trust score + automatic quarantine
-       4. record     immutable spans → replay + SOC export
-```
+| Limitation | What it means for you |
+|---|---|
+| **Taint is per MCP session** | A client that opens a new session for every tool call (LangChain's `MultiServerMCPClient` does by default) gets **no** taint carried between calls. A long-lived session has the opposite problem: after its first untrusted result, every guarded action in it is denied until it reconnects |
+| **Every tool result is untrusted by default** | A benign "look up the customer, then email them" is denied if the email tool has a taint rule, unless the lookup tool is marked `trusted_output` or its output is declassified |
+| **Only guarded tools are guarded** | A tool without rules can carry tainted data out. Add rules for every outbound tool; there is no general notion of an outbound "sink" yet |
+| **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it |
+| **Downstream servers: streamable HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio |
+| **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and API policy reloads are in memory. Two replicas share none of it |
+| **Cosmos persistence is partial** | Needs `pip install "sentinel-prox[cosmos]"`; run ownership, the run index after a restart and retention purging exist only for SQLite |
+| **Some state is visible across tenants** | `/events` ids are one global counter; `/downstream` and `/capabilities` describe the whole deployment |
+| **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees them |
 
-Provenance is a **set of trust labels** (`SYSTEM > USER > AGENT > RETRIEVED_CONTENT`)
-unioned over an action's transitive `derived_from` ancestry, never the label of the
-most recent step. The proxy keeps that union incrementally as the session runs; a test
-checks it against a full walk of the provenance graph on random sessions. An action is
-tainted iff `RETRIEVED_CONTENT` is in that set.
+Working and tested: provenance tracking, default-deny enforcement, catalogue
+integrity, authentication (fail-closed), per-tenant isolation and policy,
+operator separation (only `SENTINEL_ADMIN_TOKEN` administers), resource bounds,
+forensic replay with redaction and retention, and the Docker image, which CI
+builds and starts on every push. The optional Azure Bicep template has **never
+been deployed**; CI only proves it compiles. Downstream reconnect within one
+process is blocked by an unresolved transport defect.
+[Full status.](https://harshith029.github.io/Sentinel/guide/limitations)
 
-Taint clears exactly one way: **declassification**, declared per tool in policy.
+Outside the threat model: provenance is per message and tool result, not per
+token inside the model's reasoning; SENTINEL stops the unauthorized *action*, not
+the persuasion; and the proxy and policy store are trusted components.
 
-```yaml
-tools:
-  read_price:
-    declassify:
-      schema: decimal_amount   # output crosses the boundary only if it validates
-    rules: []
-```
+## Writing policy
 
-`StructuredExtractor` then validates that tool's output against the named schema.
-On a match the value starts fresh at SYSTEM trust with no inherited ancestry; on
-a mismatch it stays exactly as tainted as it was. Opt-in per tool, so a tool with
-no `declassify` block can never clear taint, and the schema registry is closed —
-policy names a reviewed schema or the policy fails to load. A cleared value
-cannot launder a tainted sibling, because recombination re-taints.
-
-Policy compiles to a **typed condition AST** and is evaluated by tree-walk;
-there is no `eval` anywhere in the codebase. Rules are deny-only with
-deny-overrides, and **unknown tools are default-denied**.
-
-## Configuration
-
-`sentinel.yaml` (created by `sentinel init`):
-
-```yaml
-servers:                      # YOUR MCP servers — SENTINEL ships no tools
-  - name: github
-    url: https://mcp.example/gh
-policy: ./policy.yaml         # your rules; generate with `sentinel scaffold`
-host: 127.0.0.1
-port: 8765
-dashboard: false              # the bundled UI is a DEMO, opt-in only
-catalogue_strict: true        # refuse catalogues containing injection markers
-```
-
-### Seeing enforcement
-
-Every decision is logged where you are actually looking — blocks at `WARNING`,
-allowed calls at `INFO`, each carrying the `trace_id` that ties the line back to
-the full forensic record:
-
-```
-23:16:40 INFO    ALLOW  get_customer_record  [trace 2ad33998e093]
-23:16:40 INFO    ALLOW  web_fetch  [trace 2ad33998e093]
-23:16:40 WARNING BLOCK  send_email  rule=block-untrusted-origin  [trace 2ad33998e093]
-```
-
-`sentinel serve --log-format json` emits one JSON object per line for an
-aggregator, and `--log-level WARNING` narrows it to refusals and quarantines.
-
-**Tool arguments are never logged.** The payloads SENTINEL inspects are the very
-secrets it exists to protect, so writing them to a log would move the secret from
-a blocked call into a plaintext file that ships off-box — performing the
-exfiltration that was just prevented. The decision is logged; the data stays in the
-access-controlled forensic store. There is a test asserting the synthetic SSN and
-API key never appear in log output.
-
-Precedence is **CLI flag > environment variable > config file > default**, so a
-container can override a checked-in file. The file takes only these keys, and an
-unknown key is an error: `servers`, `policy`, `catalogue_strict`,
-`catalogue_approvals`, `real_web_fetch`, `api_token` and
-`downstream_timeout_seconds` (each also an environment variable:
-`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, ...), plus `host`, `port`,
-`dashboard`, `log_level` and `log_format` (also `sentinel serve` flags). Every other
-setting is environment-only; see [`.env.example`](./.env.example).
-
-### Writing policy
-
-Rules are **deny-only**: a call is allowed when no deny rule matches. `sentinel
-scaffold` emits every discovered tool explicitly denied, with its description and a
-recommended starting rule, so you edit rather than invent.
+Rules are **deny-only**: a call is allowed when no deny rule matches.
+`sentinel scaffold` emits every discovered tool explicitly denied, with its
+description and a recommended starting rule, so you edit rather than invent.
 
 ```yaml
 policy_version: 1
@@ -236,200 +172,91 @@ tools:
         deny_always: true
 ```
 
-Predicates support `== != < >= in "not in"`, `and`/`or`/`not`, set literals
-(`{USER}`), `true`/`false`, tool arguments, and config values. There is no null, and a
-predicate may nest at most 64 levels; use a set for long lists of alternatives.
-Numbers must be finite, a numeric string compares as a number, and a boolean never
-equals a number. In a comparison the left side describes the call and the right
-side is what you allow: a variable on the right (`allowed_domains`, `max_amount`) is
-read from `config` only, never from the call's arguments. If you forget to declare
-it, the rule denies every call rather than letting the agent supply its own
-allowlist, and SENTINEL logs a warning naming the rule when the policy loads. The
-fields SENTINEL derives from a call (`recipient_domain`, `recipient_domains`,
-`url_host`) may appear on either side, so `"evil.test" in recipient_domains` works.
-
-## Deployment
-
-Self-hosting is free and needs no cloud account:
-
-```bash
-python -c "import secrets; print('SENTINEL_API_TOKEN=' + secrets.token_urlsafe(32))" > .env
-docker compose -f deploy/compose.yaml --env-file .env up -d --build
-```
-
-This keeps forensic history on a volume, refuses to start without the token, and
-listens on loopback only. [`deploy/DEPLOY.md`](./deploy/DEPLOY.md) covers the local
-demo, reaching SENTINEL from other machines (free options, and which ones we have
-tested), platforms that set `PORT`, and the optional, untested Azure template.
-
-Put your tool servers on an internal network reachable **only** by SENTINEL — that
-topology is what makes interception unbypassable.
-
-Authentication is required: with no credential configured SENTINEL refuses to serve.
-Set `SENTINEL_API_TOKEN`, or `SENTINEL_API_TOKENS` for per-tenant credentials, for your
-agents, and `SENTINEL_ADMIN_TOKEN` for the operator if you need to replace policies or
-clear quarantines through the API (see [`.env.example`](./.env.example)).
-
-### Resource limits
-
-Every per-request and per-tenant resource is capped, so one caller cannot exhaust
-the service. The defaults sit well above normal use and only affect abuse.
-
-| Setting | Default | Over the limit |
-|---|---|---|
-| `SENTINEL_MAX_BODY_BYTES` | 4 MiB | `413`. Chunked bodies are counted as they stream |
-| `SENTINEL_RATE_LIMIT_PER_MINUTE` | 600 | `429` + `Retry-After`. `0` disables |
-| `SENTINEL_MAX_ACTIVE_RUNS` | 8 per tenant | `429` + `Retry-After` |
-| `SENTINEL_MAX_RETAINED_RUNS` | 1000 | Oldest *finished* run leaves the run index; its spans stay in the forensic store |
-| `SENTINEL_MAX_SSE_SUBSCRIBERS` | 100 per tenant | `503`; use `/events` polling |
-| `SENTINEL_MAX_RESULT_BYTES` | 1 MiB | The tool result is withheld and the agent gets an error. The call is still recorded |
-| `SENTINEL_DOWNSTREAM_TIMEOUT_SECONDS` | 30 | Per downstream operation (connect + initialize, tool listing, one tool call). A timed-out call returns an error to the agent and is recorded like any other result. Raise it for tools that run longer |
-| MCP sessions on `/mcp` | 512 per tenant (fixed) | `initialize` is answered with a JSON-RPC error; open sessions are never evicted to make room |
-
-`GET /events` returns at most 1000 events per call, with `next_since` to resume.
-
-The rate limit is keyed by **tenant** for a valid credential and by **client
-address** for everything else, including invalid credentials and anonymous
-traffic. Inventing a new token for each request therefore does not buy a new
-budget. Behind a reverse proxy, the client address is the proxy's unless uvicorn
-trusts it: set `FORWARDED_ALLOW_IPS` to the proxy's address or CIDR. Do not set
-it to `*` on a host clients can reach directly, because uvicorn then takes the
-client-supplied `X-Forwarded-For` at face value. Until you configure it, all
-unauthenticated callers share one budget.
-
-These counters live in process memory. Two replicas give a tenant twice the
-budget; enforce a global limit at the load balancer if you need one.
-
-### Forensic data
-
-The default store is SQLite at `${SENTINEL_DATA_DIR:-./var}/sentinel.db`.
-
-- **Retention.** A trace is deleted, whole, once its newest span is older than
-  `SENTINEL_FORENSIC_RETENTION_DAYS` (default 90; `0` keeps everything). The
-  purge runs the first time runs are listed or started after startup, then at
-  most once a day while runs are being started, so an idle service purges
-  nothing. Runs in flight are never deleted. Set the window to what your audit
-  obligations require.
-- **Ownership.** Each run's tenant is recorded when it starts, so after a
-  restart every tenant sees its own history and no one else's. History written
-  by a version before that has no recorded owner; it is shown only to the
-  operator (`SENTINEL_ADMIN_TOKEN`) rather than guessed at.
-- **Encryption at rest.** SENTINEL does not encrypt the database. Tool
-  arguments and results are redacted before they are written, but tool names,
-  decisions and timings are stored in the clear. Put `SENTINEL_DATA_DIR` on an
-  encrypted volume.
-- **Backup.** A clean shutdown checkpoints the write-ahead log, so the `.db`
-  file of a stopped service is complete on its own. While it runs, copy it with
-  SQLite's online backup (`sqlite3 sentinel.db ".backup copy.db"`), not a
-  file copy: the newest writes can still be in `sentinel.db-wal`.
-- **Cosmos DB.** Retention there is the container's time-to-live (`defaultTtl`),
-  set on the container; SENTINEL does not purge Cosmos itself.
-
-### Running at zero cost
-
-Nothing in SENTINEL requires a paid service. Enforcement — provenance tracking and
-the authorization engine — runs locally and is identical everywhere. The paid
-integrations improve detection, labelling and telemetry; they are upgrades, not
-prerequisites, and `GET /capabilities` reports which backend each capability is
-actually running on.
-
-| Capability | Free default | Optional paid upgrade |
-|---|---|---|
-| Enforcement (provenance + policy) | Built in | — |
-| Layer-1 injection shield | Local heuristic detector (`SENTINEL_SHIELD=local`) | Azure AI Content Safety |
-| Attack classifier (SOC labels) | Rule-based | Azure OpenAI |
-| Forensic persistence | SQLite on local disk | Azure Cosmos DB |
-| Agent model | Ollama locally, or any OpenAI-compatible endpoint via `OPENAI_BASE_URL` | OpenAI / Azure OpenAI |
-| Hosting | Render free tier (`render.yaml`), or any Docker host | Azure Container Apps |
-
-The Layer-1 shield only *flags*; it never blocks. The authorization engine refuses a
-tainted action whether or not anything flagged the text that tainted it, so a
-simpler free detector does not weaken enforcement.
-
-An Azure Container Apps blueprint is in [`deploy/`](./deploy). It is optional and has
-**not** been deployed or smoke-tested; see *Status and known limitations*.
+Predicates support `== != < >= in "not in"`, `and`/`or`/`not`, set literals, and
+`true`/`false`. A variable on the right of a comparison is read from `config`
+only, never from the call's arguments, so an agent cannot supply its own
+allowlist. The [policy guide](https://harshith029.github.io/Sentinel/guide/policy)
+covers derived fields, trusted output, declassification and per-tenant policy.
 
 ## Try the demo
 
-A bundled demo shows the whole pipeline on a scripted attack — useful for seeing what
-a block looks like, but **not** the product surface:
+A bundled demo runs the whole pipeline on a scripted attack with synthetic data.
+It shows what a refusal looks like; it is **not** the product surface.
 
 ```bash
-sentinel serve --dashboard     # → http://localhost:8765
+SENTINEL_ALLOW_ANONYMOUS=1 sentinel serve --dashboard   # then open http://localhost:8765
 ```
 
-Hosted: **https://sentinel-i63x.onrender.com** (free tier — first load may take ~50 s
-to wake). It runs in **anonymous demo mode with authentication disabled**, so treat
-it as a public sandbox, not as an example of a secured deployment: everything in it
-is synthetic and anyone can drive it. A real deployment must set
-`SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
-attacker; the Layer-1 filter misses the obfuscated variant (written to slip past its
-local patterns, so the miss is staged) and authorization blocks it
-anyway. The taint comes from the page: the bundled policy marks the records service's
-output as trusted (`trusted_output`), so the record lookup alone taints nothing, and
-without the page the agent never attempts the email. The attacker's domain is also
-outside the bundled allowlist, a second, independent reason for the same refusal; the
-tests show that an email to an allowed address is refused after the page and allowed
-without it. All demo data is synthetic — the record is a labelled fake
-(SSN `000-00-0000`, a non-functional `sk-synthetic-DO-NOT-USE` key) and `send_email`
-writes to an in-memory sink. Nothing is ever sent.
+Anonymous mode is only for this local demo, whose tools are in-memory mocks.
+Never use it in front of real tools. Without it (or a token) the dashboard loads
+but every data route answers `503`. The demo can also run against a real or a
+free local model; see [Try the demo](https://harshith029.github.io/Sentinel/guide/demo).
 
-### With a real model
+## Documentation
 
-The default agent is a real LLM whenever a credential is present — set
-`OPENAI_API_KEY`, or `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_DEPLOYMENT`. With no
-credential it falls back to a deterministic scripted transcript so CI stays key-free.
-For a free local model, point `OPENAI_BASE_URL` at any OpenAI-compatible endpoint:
+| Guide | What it covers |
+|---|---|
+| [What is SENTINEL?](https://harshith029.github.io/Sentinel/guide/introduction) | The problem, the approach, and the boundary |
+| [Quick start](https://harshith029.github.io/Sentinel/guide/quick-start) | Install, configure, connect an agent |
+| [How it works](https://harshith029.github.io/Sentinel/guide/how-it-works) | Provenance, policy, declassification, catalogue integrity, quarantine |
+| [Writing policy](https://harshith029.github.io/Sentinel/guide/policy) | The policy language and patterns |
+| [Configuration](https://harshith029.github.io/Sentinel/guide/configuration) | `sentinel.yaml`, environment variables, commands |
+| [Authentication](https://harshith029.github.io/Sentinel/guide/authentication) | Agent tokens, tenants, the operator token, anonymous mode |
+| [Logs and forensics](https://harshith029.github.io/Sentinel/guide/forensics) | Decision logs, replay, SIEM export, retention, backup |
+| [Deployment](https://harshith029.github.io/Sentinel/guide/deployment) | Docker Compose, network topology, reverse proxies, Azure |
+| [Resource limits](https://harshith029.github.io/Sentinel/guide/limits) | Every cap and what happens over it |
+| [Free and paid backends](https://harshith029.github.io/Sentinel/guide/backends) | Running at zero cost, and the optional Azure upgrades |
 
-```bash
-ollama serve && ollama pull llama3.2
-export OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.2
-```
+Every setting is also documented in
+[`.env.example`](https://github.com/Harshith029/Sentinel/blob/main/.env.example), and
+the [examples](https://github.com/Harshith029/Sentinel/tree/main/examples) connect a
+real MCP client and a live model.
 
-## What SENTINEL does *not* protect against
+## FAQ
 
-Stating the boundary precisely is what separates a security product from a demo.
+**Does it need Azure or any paid service?** No. Enforcement, the local injection
+detector, the rule-based classifier and the SQLite forensic store are free and
+local. Azure Content Safety, Azure OpenAI and Cosmos DB are optional upgrades.
 
-- Provenance is tracked at **message / tool-result granularity**, not token-level
-  inside model reasoning. Taint spreads conservatively unless a sanitizer clears it.
-- It secures the **action layer**, not the model's cognition. It does not stop a model
-  being *persuaded* — it stops the resulting unauthorized **action**.
-- The proxy and the policy store are **trusted** components.
-- One trace is handled by one proxy instance; horizontal scaling is *across* traces.
-- **Conservative tainting is intentional.** The escape hatch is declassification,
-  declared per tool in policy, and it is deliberately narrow: syntactic schema
-  validation only. Taint saturation is the correct bias for action-layer
-  security, so clearing it must be something an operator opts into for a
-  specific tool and a specific shape of value.
-- **Sanitization is syntactic, not semantic.** A schema-valid `{"price": 999999}` is
-  well-formed but still subject to argument-level rules such as an amount cap.
+**Is it a prompt-injection filter?** Not mainly. Its Layer-1 detector only flags.
+What refuses an attack is the authorization engine, which judges each action by
+where its data came from, so an injection no filter catches is still refused.
 
-## Development
+**Does it log my data?** No tool arguments are ever logged, and arguments and
+results are redacted before they reach the forensic store.
+
+**Why is it called `sentinel-prox` on PyPI?** `sentinel` and the obvious variants
+were taken. The import package and the command are both `sentinel`.
+
+[More questions.](https://harshith029.github.io/Sentinel/faq)
+
+## Contributing
+
+Contributions are welcome. SENTINEL is a security proxy, so the bar for a change
+is "does it preserve the guarantees" more than "does it work".
+[CONTRIBUTING.md](https://github.com/Harshith029/Sentinel/blob/main/CONTRIBUTING.md)
+lists the security invariants a change must preserve and how to run the checks:
 
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
-.venv/bin/python -m pytest        # every test must pass
+.venv/bin/python -m pytest
 .venv/bin/python -m ruff check src tests
 .venv/bin/python -m mypy src      # strict
 ```
 
-Install `-c versions.lock` so local matches CI and the container — a floating
-dependency is how a production deploy once broke. Requires Python 3.11+.
+Please follow the
+[code of conduct](https://github.com/Harshith029/Sentinel/blob/main/CODE_OF_CONDUCT.md).
+To report a vulnerability, **do not open an issue**: follow the
+[security policy](https://github.com/Harshith029/Sentinel/blob/main/SECURITY.md).
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the security invariants a change must
-preserve, and [CHANGELOG.md](./CHANGELOG.md) for release notes. Design notes live in
-[`docs/`](./docs): the scoping analysis for proxying arbitrary MCP servers, and the
-competitive/threat-landscape research behind the roadmap.
+## License and credits
 
-## License & credits
-
-MIT — see [LICENSE](./LICENSE).
+MIT. See [LICENSE](https://github.com/Harshith029/Sentinel/blob/main/LICENSE).
 
 Built on the [Model Context Protocol](https://modelcontextprotocol.io) Python SDK,
-FastAPI, Starlette, `sse-starlette`, Uvicorn, Pydantic, PyYAML, httpx,
-pytest, ruff, mypy, gitleaks, and the Azure SDKs for Python. Thank you to their
-maintainers.
+FastAPI, Starlette, `sse-starlette`, Uvicorn, Pydantic, PyYAML, httpx, pytest, ruff,
+mypy, gitleaks, and the Azure SDKs for Python. Thank you to their maintainers.
 
 **AI tools used in development:** Claude Code (Anthropic) and GitHub Copilot.
 SENTINEL also *integrates* Azure OpenAI (attack classification) and Azure AI Content

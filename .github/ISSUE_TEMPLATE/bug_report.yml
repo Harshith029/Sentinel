@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in SENTINEL does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Is it a security vulnerability?** (an action let through that policy should refuse, an authentication or tenant-isolation bypass, leaked redacted data) Then please do not file it here: [report it privately](https://github.com/Harshith029/Sentinel/security/advisories/new) instead.
+
+        Never paste real tokens, keys, customer data or unredacted tool payloads. Use synthetic values.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest config, policy and calls that show the problem.
+      placeholder: |
+        1. sentinel.yaml with ...
+        2. policy.yaml with ...
+        3. The agent calls ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Relevant lines from `sentinel serve` or `sentinel check`, with secrets removed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: SENTINEL version
+      description: Output of `pip show sentinel-prox`, or the commit you run from.
+      placeholder: "0.2.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run it?
+      options:
+        - pip install
+        - Docker / deploy/compose.yaml
+        - From a checkout
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and your MCP client and servers.
+      placeholder: "Ubuntu 24.04, Python 3.12, MCP Python SDK client"

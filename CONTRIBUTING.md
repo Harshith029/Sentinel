@@ -3,11 +3,14 @@
 Thanks for your interest. SENTINEL is a security proxy, so the bar for changes is
 "does this preserve the guarantees" more than "does it work".
 
+Everyone taking part is expected to follow the [code of conduct](./CODE_OF_CONDUCT.md).
+Found a vulnerability? Do not open an issue or a PR; follow [SECURITY.md](./SECURITY.md).
+
 ## Setup
 
 ```bash
-git clone https://github.com/Harshith029/SENTINEL.git
-cd SENTINEL
+git clone https://github.com/Harshith029/Sentinel.git
+cd Sentinel
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]" -c versions.lock   # Windows: .venv\Scripts\python.exe
 .venv/bin/pre-commit install
@@ -81,6 +84,24 @@ not a passing test suite.
   reasoning is the part a future reader can't reconstruct.
 - Keep `ruff` and `mypy --strict` clean.
 
+## The documentation site
+
+The site at <https://harshith029.github.io/Sentinel/> is built from `website/` with
+[VitePress](https://vitepress.dev). It needs Node.js 20 or later:
+
+```bash
+cd website
+npm ci
+npm run dev      # live preview at http://localhost:5173/Sentinel/
+npm run build    # what CI runs; fails on a dead internal link
+```
+
+Pages are Markdown under `website/guide/`; the sidebar is in
+`website/.vitepress/config.mts`. Images come from `assets/`, shared with the README,
+and are copied in at build time. A change to behaviour should update the matching
+page in the same PR. `.github/workflows/docs.yml` builds every PR that touches the
+site and publishes `main` to GitHub Pages.
+
 ## Publishing a release (maintainers)
 
 Releases are automated by `.github/workflows/release.yml`, which runs lint, types and
@@ -113,10 +134,5 @@ TestPyPI first if unsure. Push tags individually; never `git push --tags`.
 ## Reporting a vulnerability
 
 Please **do not** open a public issue for a security vulnerability in SENTINEL
-itself. Open a GitHub security advisory on the repository, or contact the maintainer
-privately, and allow time for a fix before disclosure.
-
-Note the deliberate threat-model boundary in the README: message-level (not
-token-level) provenance, action-layer (not cognition) enforcement, and a trusted proxy
-and policy store. Reports outside that boundary are still welcome as discussion, but
-they aren't vulnerabilities in the implementation.
+itself. [SECURITY.md](./SECURITY.md) explains how to report one privately, what to
+include, and what is in scope.

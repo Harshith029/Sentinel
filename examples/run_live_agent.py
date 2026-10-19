@@ -21,7 +21,8 @@ Run it::
     # ...or with NO credentials, using the offline susceptible stand-in model:
     python examples/run_live_agent.py --offline
 
-Watch http://localhost:8765 — the run appears live as a `live-mcp` trace.
+The session is recorded as a `live-mcp` run; find it in the dashboard's history
+tab (http://localhost:8765). The live view follows dashboard-launched runs only.
 
 Exit status: 0 when SENTINEL blocked at least one action, 4 when nothing was
 blocked, 3 when no live model is available, 2 when the run failed.

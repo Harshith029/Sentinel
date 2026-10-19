@@ -83,6 +83,8 @@ Demo = "https://sentinel-i63x.onrender.com"
 sentinel = "sentinel.cli:main"
 
 [project.optional-dependencies]
+# Cosmos DB persistence uses the async Azure clients, which need aiohttp.
+cosmos = ["aiohttp>=3.9,<4"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

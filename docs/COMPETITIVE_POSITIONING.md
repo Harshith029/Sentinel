@@ -64,8 +64,11 @@ solved with provable security**, vs 84% undefended.
 
 **Our defensible edge vs CaMeL: deployability.** CaMeL requires rearchitecting the agent into
 a dual-LLM interpreter pattern — a research architecture, hard to retrofit onto an existing
-product. SENTINEL gets the same class of guarantee by *topology*, with an unmodified agent.
-That is the commercially important difference, and it is real.
+product. SENTINEL gets a coarser guarantee of the same kind by *topology*, with an unmodified
+agent: taint is tracked per MCP session and per tool result, not per value inside
+the agent's program, so it blocks more benign flows than CaMeL would and cannot
+follow data across sessions. Deployability is the commercially important
+difference, and it is real; equivalence of guarantees is not claimed.
 
 **Their edge over us: evidence.** They have a number. We have a demo. See §4.
 

@@ -72,3 +72,21 @@ def test_an_explicit_azure_shield_is_not_downgraded_by_demo_mode() -> None:
         azure_content_safety_key="k",
     )
     assert InputShield.from_settings(auto).backend == "local"
+
+
+def test_cosmos_without_aiohttp_fails_with_the_fix_named(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """It failed at startup with a bare "aiohttp package is not installed"."""
+    import importlib.util
+
+    import pytest
+
+    from sentinel.control.manager import _build_cosmos_container
+
+    real_find_spec = importlib.util.find_spec
+
+    def no_aiohttp(name: str, *args: object) -> object:
+        return None if name == "aiohttp" else real_find_spec(name, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(importlib.util, "find_spec", no_aiohttp)
+    with pytest.raises(RuntimeError, match=r"sentinel-prox\[cosmos\]"):
+        _build_cosmos_container(Settings(demo_mode=False, azure_cosmos_endpoint="https://x.example"))

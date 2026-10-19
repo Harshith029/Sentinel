@@ -9,6 +9,11 @@ keeps the union incrementally.
 The equivalence test rebuilds, with :class:`ProvenanceGraph`, exactly the graph
 the proxy used to build, and checks the proxy's provenance against the walk for
 every call of random sessions, including declassified results.
+
+What it proves: the running union is computed correctly for that derivation rule
+(each call derives from everything the session observed before it). It rebuilds
+the graph with that same rule, so it cannot show the rule itself is the right
+one; that is a design decision, recorded in docs/design-notes.md.
 """
 
 from __future__ import annotations

@@ -440,3 +440,34 @@ async def test_a_finished_run_releases_its_sequence_counter() -> None:
         assert record.trace_id not in manager._emitter._next_seq  # noqa: SLF001
     finally:
         await manager.aclose()
+
+
+async def test_an_event_is_serialized_once_however_many_subscribers_stream_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each live subscriber serialized every event itself (CM-18)."""
+    from sentinel.control.app import _to_sse
+    from sentinel.forensics.span import Span
+
+    bus = EventBus()
+    manager = RunManager(store=InMemoryForensicStore())
+    try:
+        record = manager.start_scenario("privilege")
+        await manager.join(record.trace_id)
+        span = (await manager.replay(record.trace_id)).ordered[0]
+    finally:
+        await manager.aclose()
+    await bus.publish(span)
+    (event,) = bus.events_since(0)
+
+    dumps: list[int] = []
+    real = Span.model_dump
+
+    def counting(self: Span, *a: object, **k: object) -> object:
+        dumps.append(1)
+        return real(self, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Span, "model_dump", counting)
+    for _ in range(5):  # five subscribers
+        _to_sse(event)
+    assert len(dumps) == 1

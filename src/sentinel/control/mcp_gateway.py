@@ -432,6 +432,7 @@ class SentinelGateway:
         self._transport_sessions: dict[str, _ReservedTransportSession] = {}
         self._pending_transport_sessions: dict[str, int] = {}
         self._transport_session_lock = asyncio.Lock()
+        self._warned_no_session_index = False
         self._front = self._build_front_server()
         # stateless=False: keep one ServerSession per MCP session so a session's
         # provenance frontier persists across its successive tool calls.
@@ -548,7 +549,8 @@ class SentinelGateway:
             await self._connect_remote_downstream(urls)
         else:
             await self._connect_inmemory_downstream()
-        assert self._router is not None  # every connect path sets it
+        if self._router is None:  # every connect path sets it; never serve without one
+            raise RuntimeError("no downstream router after connect")
         # Preflight (health-check + cache schemas) so list_tools can't flake, AND
         # vet the catalogue itself: a poisoned tool DESCRIPTION subverts the agent
         # before anything is retrieved, so provenance alone cannot catch it. By
@@ -791,16 +793,36 @@ class SentinelGateway:
         # Forget sessions the transport no longer has. Only ever drops ids the
         # SDK has already discarded, so no live session loses its owner (which
         # would lock its creator out, since an unowned id is refused).
-        live = getattr(self._session_manager, "_server_instances", None)
-        if isinstance(live, dict):
+        live = self._live_session_ids()
+        if live is not None:
             for session in [s for s in self._session_owners if s not in live]:
                 del self._session_owners[session]
                 self._transport_sessions.pop(session, None)
 
+    def _live_session_ids(self) -> frozenset[str] | None:
+        """The session ids the SDK still holds, or None if it cannot be read.
+
+        The SDK exposes no public way to ask, so this reads the private
+        ``_server_instances``. Without it, ended sessions are never released:
+        the owner table grows and each tenant hits its session cap for good.
+        tests/test_mcp_session_ownership.py pins the attribute, so an SDK that
+        drops it fails CI; at runtime the loss is logged rather than silent.
+        """
+        live = getattr(self._session_manager, "_server_instances", None)
+        if isinstance(live, dict):
+            return frozenset(live)
+        if not self._warned_no_session_index:
+            self._warned_no_session_index = True
+            _LOG.error(
+                "the MCP SDK no longer exposes its session index; ended sessions "
+                "cannot be released, so tenants will reach their session cap"
+            )
+        return None
+
     def _prune_transport_sessions(self) -> None:
         """Drop reservations only after the SDK has ended the transport session."""
-        live = getattr(self._session_manager, "_server_instances", None)
-        if not isinstance(live, dict):
+        live = self._live_session_ids()
+        if live is None:
             return
         for session_id in [sid for sid in self._transport_sessions if sid not in live]:
             self._transport_sessions.pop(session_id, None)

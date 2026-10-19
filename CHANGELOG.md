@@ -6,6 +6,49 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- The Cosmos store writes spans with `create_item`, which fails atomically if
+  the id exists. It read first and then upserted, so two writers of one span
+  id could both see it absent and the second silently replaced the first.
+- The authorization engine denies a rule with no condition instead of failing
+  an `assert` outside its fail-closed path (and the asserts on the policy and
+  gateway paths are explicit checks, which `python -O` does not strip).
+
+### Fixed
+- Documentation: what "durably emitted" means per store; the trust penalties
+  that actually apply; that the evasion page is written against the local
+  shield; which keys `sentinel.yaml` accepts; that the non-bypassability test
+  covers the proxy's own path, not network topology; a positioning claim of
+  "the same class of guarantee" as CaMeL. `docs/design-notes.md` lists the
+  catalogue findings kept as they are, and why.
+- The rule-based attack classifier labels any server's tools by the verbs in
+  their names (`delete_*`, `refundCharge`, `sendSlackMessage`...); it knew only
+  the demo's tools, so an operator's own blocks were mostly "unclassified".
+- The before/after baseline uses the same driver (scripted or live model) and
+  web mode as the protected run; it was always the scripted transcript.
+- The dashboard's kill chain and verdict come from the run's data. They named
+  `web_fetch`, `block-untrusted-origin` and "the exfiltration" whatever the
+  run did. Its trust gauge uses the configured quarantine threshold (now in
+  `/capabilities` and the trust endpoint) instead of a hard-coded 40.
+- The examples no longer say an external `/mcp` run appears in the live view;
+  it is listed in the history tab.
+- Cosmos DB persistence could not start: its async Azure clients need aiohttp,
+  which is not installed, and setting `AZURE_COSMOS_ENDPOINT` failed at startup
+  with a bare import error. Install `sentinel-prox[cosmos]`; without it the
+  error now says so. An unused duplicate Cosmos factory was removed.
+- Restoring the run index after a restart no longer loads every span of every
+  trace to guess a scenario label from redacted input (it never matched).
+- The gateway logs an error if the MCP SDK stops exposing the session index it
+  reads to release ended sessions, instead of silently never releasing them;
+  a test pins that SDK attribute.
+- Replay reports a duplicated span id as a duplicate; it was reported as a
+  cycle, which with one parent per span it cannot be.
+- SQLite stores each span's timestamp in an indexed column (existing databases
+  are migrated in place), so listing traces and retention purges no longer
+  parse every span's JSON while holding the store lock.
+- The test suite's fake Cosmos container refuses queries other than the one it
+  can answer; it ignored the SQL entirely.
+
 ## [0.2.2] — 2026-10-19
 
 **Upgrade from 0.2.1 or earlier.** Read *Changed (breaking)* first: catalogue

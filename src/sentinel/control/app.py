@@ -179,16 +179,6 @@ class _BoundedEventSource(EventSourceResponse):
             self._on_close()
 
 
-def _expected_token() -> str | None:
-    """The bearer token every endpoint expects (None when auth is disabled).
-
-    Resolved fresh per request rather than cached, so changing
-    ``SENTINEL_API_TOKEN`` and restarting takes effect. Deliberately tiny: the
-    auth posture is a single chokepoint.
-    """
-    return get_settings().api_token
-
-
 def _anonymous_allowed() -> bool:
     """Whether running with no authentication has been explicitly requested."""
     return get_settings().allow_anonymous
@@ -448,10 +438,10 @@ def create_app(
     def _owned_agent(agent_id: str, request: Request) -> None:
         """Refuse an agent that has never acted in the caller's tenant.
 
-        Trust scores are keyed by agent, not by tenant, so without this one
-        tenant could read — or RESET — another's quarantine. Reset is the
-        sharper end: clearing a quarantine you do not own re-enables an agent
-        someone else's policy stopped. 404 for the same reason as runs.
+        Trust is kept per (tenant, agent), so another tenant's agent of the
+        same id is a different score already. This check adds that a scoped
+        caller cannot probe agent ids its tenant never ran: 404, for the same
+        reason as runs.
         """
         tenant = _scope(request)
         if tenant is None:
@@ -891,5 +881,5 @@ def _to_sse(event: BroadcastEvent) -> ServerSentEvent:
     return ServerSentEvent(
         id=str(event.event_id),
         event="span",
-        data=json.dumps(event.to_payload()),
+        data=event.json_text,
     )

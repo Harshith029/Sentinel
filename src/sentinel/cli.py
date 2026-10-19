@@ -13,7 +13,8 @@ Commands::
 
 Configuration precedence is the usual one: **CLI flag > environment variable >
 config file > default**, so a container can override a checked-in file without
-editing it.
+editing it. The file accepts only the keys in ``_CONFIG_KEYS``; every other
+setting is read from the environment alone.
 
 The config file (default ``sentinel.yaml``)::
 

@@ -35,12 +35,9 @@ import ipaddress
 import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 import httpx
-
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
 
 _USER_AGENT: Final[str] = "SENTINEL-web-fetch/1.0 (+https://github.com/Harshith029/SENTINEL)"
 _TEXTUAL_HINTS: Final[tuple[str, ...]] = (
@@ -277,23 +274,3 @@ async def _fetch(
     finally:
         if owns_client:
             await client.aclose()
-
-
-def build_web_server() -> FastMCP:
-    """A FastMCP ``web`` server whose ``web_fetch`` performs a REAL fetch.
-
-    Drop-in replacement for the demo's mock ``web`` server: same tool name and
-    signature, so it sits behind the proxy unchanged. Imported lazily so the
-    package has no hard dependency on ``mcp.server.fastmcp`` at import time.
-    """
-    from mcp.server.fastmcp import FastMCP
-
-    web = FastMCP("web")
-
-    @web.tool()
-    async def web_fetch(url: str) -> str:
-        """Fetch a web page over HTTP(S) and return its text (guarded)."""
-        result = await fetch_url(url)
-        return result.as_tool_output()
-
-    return web

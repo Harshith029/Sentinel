@@ -196,7 +196,8 @@ def _compile(doc: _PolicyDoc) -> CompiledPolicy:
             if rule.deny_always:
                 compiled.append(CompiledRule(id=rule.id, deny_always=True, condition=None))
             else:
-                assert rule.deny_if is not None  # guaranteed by _RuleDoc validator
+                if rule.deny_if is None:  # _RuleDoc's validator guarantees this
+                    raise PolicyLoadError(f"tool {tool_name!r} rule {rule.id!r}: no effect")
                 try:
                     condition = parse_condition(rule.deny_if)
                 except PolicyParseError as exc:

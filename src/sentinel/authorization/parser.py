@@ -103,7 +103,8 @@ def _tokenize(text: str) -> list[_Token]:
             )
         pos = match.end()
         kind = match.lastgroup
-        assert kind is not None
+        if kind is None:  # every alternative in _TOKEN_RE is named
+            raise PolicyParseError(f"unnamed token at position {pos} in {text!r}")
         if kind == "WS":
             continue
         value = match.group()

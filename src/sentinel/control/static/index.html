@@ -410,6 +410,7 @@ ul.bnd b{color:var(--txt)}
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+// Replaced by the server's value from /capabilities (see loadCapabilities).
 const TRUST = {threshold:40};
 const trunc = (s,n) => { s = String(s??''); return s.length>n ? s.slice(0,n)+'…' : s; };
 
@@ -545,7 +546,7 @@ function renderVerdict(){
   if(state.refused){ cls='deny'; sig='refused|'+state.refused;
     html='<span class="badge">REFUSED</span><span class="txt">'+esc(state.refused)+'</span>';
   } else if(blk){ const d=blk.decision||{}; const q=state.quarantine?' agent quarantined.':''; cls='deny'; sig='deny|'+blk.tool+'|'+!!state.quarantine;
-    html='<span class="badge">✗ BLOCKED</span><span class="txt">SENTINEL refused <b>'+esc(blk.tool)+'</b> — lineage '+setOf(d.effective_provenance)+(d.matched_rule_id?(', rule <b>'+esc(d.matched_rule_id)+'</b>'):'')+'. without it the exfiltration would have <b>succeeded</b>.'+q+'</span><span class="step">step '+(state.steps.indexOf(blk)+1)+'/'+state.steps.length+'</span>';
+    html='<span class="badge">✗ BLOCKED</span><span class="txt">SENTINEL refused <b>'+esc(blk.tool)+'</b> — lineage '+setOf(d.effective_provenance)+(d.matched_rule_id?(', rule <b>'+esc(d.matched_rule_id)+'</b>'):'')+'. without SENTINEL in the path this call would have <b>run</b>.'+q+'</span><span class="step">step '+(state.steps.indexOf(blk)+1)+'/'+state.steps.length+'</span>';
   } else if(running){ const r=state.steps.find(s=>!s.decision&&!s.blocked); cls='run'; sig='run|'+(r?r.tool:'')+'|'+state.steps.length;
     html='<span class="badge">▶ RUNNING</span><span class="txt">intercepting <b>'+esc(r?r.tool:'…')+'</b> — every call is checked live.</span>';
   } else if(done){ cls='ok'; sig='ok|'+state.steps.length; html='<span class="badge">✓ ALLOWED</span><span class="txt">all proposed actions cleared policy. the log shows why.</span>';
@@ -591,12 +592,15 @@ function renderDecision(){
 function renderChain(){
   const c=$('chain'); const blk=state.steps.find(x=>x.blocked);
   if(!blk&&!state.quarantine){ if(!state.steps.length) c.innerHTML='<span class="faint">launch an attack to populate the kill chain.</span>'; return; }
-  const tainted=state.steps.find(x=>x.tainted); const drop=state.trust.filter(t=>t.delta<0);
-  const rule=(blk&&blk.decision&&blk.decision.matched_rule_id)||'block-untrusted-origin';
+  // From the recorded steps, not a script: these rows used to name web_fetch and
+  // block-untrusted-origin whatever the run did (review DEMO-09).
+  const ti=state.steps.findIndex(x=>x.tainted); const tainted=ti>=0?state.steps[ti]:null;
+  const source=ti>0?state.steps[ti-1]:null; const drop=state.trust.filter(t=>t.delta<0);
+  const rule=blk&&blk.decision&&blk.decision.matched_rule_id;
   const rows=[
-    ['poisoned retrieval','web_fetch returns a page hiding an instruction','amb'],
-    ['taint acquired','lineage = '+setOf(tainted?tainted.origin:['…']),'amb'],
-    ['action blocked','rule '+esc(rule),'red'],
+    source?['untrusted input',esc(source.tool)+' returned content later calls derive from','amb']:['untrusted input','none in this run','off'],
+    tainted?['taint acquired','lineage = '+setOf(tainted.origin),'amb']:['taint acquired','lineage stayed clean','off'],
+    blk?['action blocked',esc(blk.tool)+(rule?(' · rule '+esc(rule)):' · '+esc((blk.blocked&&blk.blocked.blocked_by)||'refused')),'red']:['action blocked','none','off'],
     ['trust drops', drop.length?(drop.length+' penalt'+(drop.length>1?'ies':'y')+' · floor '+Math.round(state.score)):'—','red'],
     ['quarantine', state.quarantine?('score '+state.quarantine.score_at_quarantine.toFixed(1)+' < threshold, lane disabled'):(state.quarantineAdvisory?('score '+state.quarantineAdvisory.score_at_quarantine.toFixed(1)+' < threshold, not enforced'):'not reached'), state.quarantine?'red':(state.quarantineAdvisory?'amb':'off')],
   ];
@@ -628,7 +632,7 @@ $('socbtn').onclick=async()=>{ if(!currentTrace){ $('soc').textContent='run a sc
   // markup injection sink when a future redaction rule changes.
   $('soc').textContent=d.alerts.map(a=>JSON.stringify(a)).join('\n')||'no spans yet'; $('socdl').style.display=''; $('socdl').href='/runs/'+currentTrace+'/audit?format=jsonl'; };
 async function loadCapabilities(){
-  try{ const d=await (await fetch('/capabilities')).json(); $('modetag').textContent=d.mode.toLowerCase(); $('modetag').className='tag '+(d.demo_mode?'demo':'azure');
+  try{ const d=await (await fetch('/capabilities')).json(); if(d.trust&&typeof d.trust.quarantine_threshold==='number') TRUST.threshold=d.trust.quarantine_threshold; $('modetag').textContent=d.mode.toLowerCase(); $('modetag').className='tag '+(d.demo_mode?'demo':'azure');
     $('capabilities').innerHTML='<div class="dim" style="margin-bottom:9px"><b style="color:var(--txt)">'+esc(d.mode)+'</b> · '+esc(d.tagline)+'</div>'+d.capabilities.map(c=>'<div class="cap '+(c.degraded?'deg':'live')+'"><div class="n"><span class="d"></span>'+esc(c.name)+'</div><div class="vals"><div class="row"><span class="lab">free</span><span class="'+(c.degraded?'on deg':'')+'">'+esc(c.demo)+'</span></div><div class="row"><span class="lab">upgrade</span><span class="'+(c.degraded?'':'on az')+'">'+esc(c.azure)+'</span></div></div></div>').join('');
   }catch(e){}
 }

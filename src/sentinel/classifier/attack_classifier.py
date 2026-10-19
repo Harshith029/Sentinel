@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -62,6 +63,23 @@ class AttackLabel:
     classifier: str  # which backend produced it
 
 
+_PRIVILEGED_VERBS: Final[frozenset[str]] = frozenset(
+    {"delete", "remove", "drop", "destroy", "purge", "wipe", "truncate", "revoke", "grant",
+     "transfer", "pay", "refund", "charge", "withdraw", "exec", "execute", "shell", "sudo",
+     "admin", "kill", "terminate"}
+)
+_OUTBOUND_VERBS: Final[frozenset[str]] = frozenset(
+    {"send", "email", "mail", "post", "publish", "upload", "share", "forward", "notify",
+     "message", "tweet", "webhook", "export", "sync", "push"}
+)
+
+
+def _name_words(tool_name: str) -> frozenset[str]:
+    """``sendSlackMessage`` / ``delete-record`` / ``repo.push`` -> their lowercase words."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", tool_name)
+    return frozenset(w for w in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if w)
+
+
 def _rule_label(attempt: BlockedAttempt) -> AttackLabel:
     """Deterministic labelling (DEMO MODE) — classify by the ACTION attempted.
 
@@ -87,6 +105,22 @@ def _rule_label(attempt: BlockedAttempt) -> AttackLabel:
         return AttackLabel(
             "exfiltration",
             "attempted to pull sensitive data on an untrusted (tainted) lineage",
+            _CLASSIFIER_RULES,
+        )
+    # Any other server's tools, by the verbs in their names. The rules above
+    # know only the demo's tools, so an operator's own blocks were mostly
+    # "unclassified" (review CLS-2).
+    words = _name_words(tool)
+    if words & _PRIVILEGED_VERBS:
+        return AttackLabel(
+            "privilege_escalation",
+            "attempted a destructive or privileged action",
+            _CLASSIFIER_RULES,
+        )
+    if words & _OUTBOUND_VERBS and (attempt.is_tainted or attempt.blocked_by == "authorization"):
+        return AttackLabel(
+            "exfiltration",
+            "attempted to send data out through an outbound tool",
             _CLASSIFIER_RULES,
         )
     if attempt.injection_detected or attempt.is_tainted:

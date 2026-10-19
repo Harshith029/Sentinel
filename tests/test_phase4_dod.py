@@ -178,6 +178,13 @@ async def test_blocked_tool_returns_clean_mcp_error() -> None:
 
 
 async def test_no_tool_executes_without_a_sentinel_span() -> None:
+    """Every downstream execution in this harness has a ToolExecuted span.
+
+    What this proves is that the proxy never forwards a call without running it
+    through its own pipeline. It does not prove the agent cannot reach the tools
+    another way: that is deployment topology (tool servers reachable only by
+    SENTINEL), which no in-process test can show.
+    """
     async with proxy_session(user_input="mixed run") as h:
         # one allowed, two blocked (delete_record always; send_email tainted + bad domain)
         await h.agent.call_tool("web_fetch", {"url": "https://corp.example/a"})

@@ -35,8 +35,11 @@ Concurrency: each agent has its own :class:`asyncio.Lock`, held across the whole
 read → emit → commit sequence. The ``await emit`` sits BETWEEN reading the old
 score and committing the new one, so without the lock concurrent updates to one
 agent would race (lost updates); the lock serializes them. The in-memory score
-is committed only AFTER the TrustUpdated span is durably emitted, so the score
-and the forensic log never diverge. Different agents use different locks and run
+is committed only AFTER the store has accepted the TrustUpdated span, so the
+score and the forensic log do not diverge in a running process. ("Accepted" is
+what each store makes it: SQLite in WAL mode with synchronous=NORMAL survives a
+process crash but can lose the last commits to a power cut; the in-memory store
+keeps nothing across a restart.) Different agents use different locks and run
 concurrently.
 
 This is anomaly telemetry + containment, NOT primary prevention — Authorization
@@ -167,6 +170,10 @@ class TrustScorer:
     @property
     def enforces_quarantine(self) -> bool:
         return self._enforce
+
+    @property
+    def quarantine_threshold(self) -> float:
+        return self._config.quarantine_threshold
 
     # --- read-only views (do not create state) -------------------------------
 

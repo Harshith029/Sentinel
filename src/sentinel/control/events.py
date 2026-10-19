@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import bisect
+import functools
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Final
@@ -42,6 +44,14 @@ class BroadcastEvent:
 
     def to_payload(self) -> dict[str, Any]:
         return {"event_id": self.event_id, "span": self.span.model_dump(mode="json")}
+
+    @functools.cached_property
+    def json_text(self) -> str:
+        """The event as JSON, serialized once however many subscribers stream it.
+
+        Every live subscriber used to serialize every event itself.
+        """
+        return json.dumps(self.to_payload())
 
 
 class EventCursorExpired(ValueError):

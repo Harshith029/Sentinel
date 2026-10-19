@@ -6,7 +6,7 @@ string matching. Supported operators are EXACTLY the six the spec lists::
     ==  !=  <  >=  in  "not in"
 
 (Note: ``<=`` and ``>`` are deliberately NOT supported; the parser rejects them
-at load time.) Operands are typed literals (label / string / number / set) or
+at load time.) Operands are typed literals (label / string / number / bool / set) or
 variables resolved from an evaluation namespace (typed tool args + provenance +
 config). Set membership and set equality are first-class so provenance
 predicates like ``RETRIEVED_CONTENT in effective_provenance`` and

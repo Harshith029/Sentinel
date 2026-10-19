@@ -78,7 +78,7 @@ protects you from.
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. By default that crossing is logged, not acted on. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it, for every agent that shares a credential. |
 | **Downstream servers: HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio. |
 | **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and policies replaced through `POST /tenants/{t}/policy` are in memory. A restart forgets API policy reloads (put durable policy in `SENTINEL_POLICY_FILE` / `SENTINEL_TENANT_POLICIES`), and two replicas share none of it, which is why the Azure template runs one. |
-| **Cosmos persistence is partial** | With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
+| **Cosmos persistence is partial** | It needs `pip install 'sentinel-prox[cosmos]'` (for aiohttp). With Cosmos DB, spans are stored and replayable, but run ownership, the run index after a restart, and retention purging exist only for the default SQLite store. |
 | **Some state is visible across tenants** | Event ids on `/events` are one global counter, so a tenant can infer how busy the deployment is. `/downstream` and `/capabilities` describe the whole deployment to any authenticated caller. |
 | **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees the call, so they leave no forensic record. |
 
@@ -205,8 +205,13 @@ access-controlled forensic store. There is a test asserting the synthetic SSN an
 API key never appear in log output.
 
 Precedence is **CLI flag > environment variable > config file > default**, so a
-container can override a checked-in file. Every key has an env equivalent
-(`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, …) — see [`.env.example`](./.env.example).
+container can override a checked-in file. The file takes only these keys, and an
+unknown key is an error: `servers`, `policy`, `catalogue_strict`,
+`catalogue_approvals`, `real_web_fetch`, `api_token` and
+`downstream_timeout_seconds` (each also an environment variable:
+`SENTINEL_MCP_SERVERS`, `SENTINEL_POLICY_FILE`, ...), plus `host`, `port`,
+`dashboard`, `log_level` and `log_format` (also `sentinel serve` flags). Every other
+setting is environment-only; see [`.env.example`](./.env.example).
 
 ### Writing policy
 
@@ -358,7 +363,8 @@ to wake). It runs in **anonymous demo mode with authentication disabled**, so tr
 it as a public sandbox, not as an example of a secured deployment: everything in it
 is synthetic and anyone can drive it. A real deployment must set
 `SENTINEL_API_TOKEN`. A poisoned page induces the agent to email a synthetic customer record to an
-attacker; the Layer-1 filter misses the obfuscated variant and authorization blocks it
+attacker; the Layer-1 filter misses the obfuscated variant (written to slip past its
+local patterns, so the miss is staged) and authorization blocks it
 anyway. The taint comes from the page: the bundled policy marks the records service's
 output as trusted (`trusted_output`), so the record lookup alone taints nothing, and
 without the page the agent never attempts the email. The attacker's domain is also

@@ -235,7 +235,10 @@ class AuthorizationEngine:
     ) -> tuple[bool, str | None]:
         if rule.deny_always:
             return True, "deny_always"
-        assert rule.condition is not None  # guaranteed by the compiler
+        if rule.condition is None:
+            # The compiler never produces this. An assert here sat outside the
+            # fail-closed try below (a crash, not a deny) and vanished under -O.
+            return True, "rule has no condition (fail-closed deny)"
         try:
             return rule.condition.evaluate(namespace), None
         except Exception as exc:  # noqa: BLE001 - any failure to evaluate is a deny

@@ -44,5 +44,6 @@ EXPOSE 8765
 # runs locally. Gate /mcp with SENTINEL_API_TOKEN on any public deploy.
 # Run through the CLI (the product interface), so a mounted /app/sentinel.yaml is
 # honoured exactly as it is locally: `docker run -v $(pwd)/sentinel.yaml:/app/sentinel.yaml`.
-# Without one it serves with defaults, which is what the hosted demo does.
+# Without one it serves with defaults (and, with no credential configured,
+# refuses every data route).
 CMD ["sentinel", "serve", "--host", "0.0.0.0"]

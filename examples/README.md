@@ -30,9 +30,7 @@ what you think; the wiring is a few config lines.
 
 ## 2. Where the pipeline currently terminates
 
-As of v1.x:
-
-- **MCP-over-HTTP transport for the proxy server itself now ships** (Phase 9).
+- **MCP over HTTP for the proxy server itself.**
   Run `make serve` and SENTINEL exposes its MCP server at `http://localhost:8765/mcp`.
   Any external MCP client connects there and is secured by the same pipeline —
   proven over a real socket in `tests/test_phase9_mcp_gateway.py`. This is the
@@ -164,23 +162,14 @@ Authorization: Bearer <token>
   (`POST /tenants/*/policy`) or clear a quarantine (`POST /agents/*/reset`).
   Without it nobody can. Keep it away from agents.
 
-## 7. What's coming next (named honestly)
+## 7. Beyond the examples
 
-- ~~Streamable-HTTP MCP transport for the proxy server~~ — **shipped (Phase 9).**
-  `make serve` exposes it at `/mcp`; `examples/connect_over_http.py` drives it.
-  The `MCPTool` Foundry helper in `src/sentinel/demo/foundry.py` registers this
-  endpoint as its `server_url`.
-- ~~A live-LLM agent driver~~ — **shipped as a loop (Phase 10).**
-  `sentinel.demo.llm_driver.LLMAgentDriver` runs a real tool-use loop; the model
-  decides the actions, SENTINEL is the backstop. `examples/run_live_agent.py` drives
-  it over `/mcp` with a real model (`OPENAI_API_KEY` / Azure OpenAI) or the offline
-  stand-in (`--offline`). What's left is calling an actual hosted model (the path is
-  wired + fail-loud) and a multi-step planner for extra realism.
-- **Remote downstream tool servers** — *shipped*: set
-  `SENTINEL_TOOLS_{WEB,EMAIL,RECORDS}_URL` and the gateway connects to your tool
-  servers over MCP-over-HTTP instead of the mocks. A fully data-driven
-  `tools.yaml` registry (arbitrary tools, not the fixed three) is the next step.
-- **More sanitizers** — beyond `DecimalAmountSchema` / `IsoDateSchema`. The
-  protocol admits them; only one ships today.
-
-Tracked in the README roadmap.
+- **Your own servers.** The examples above drive the bundled demo tools. To put
+  SENTINEL in front of arbitrary MCP servers, declare them in `sentinel.yaml` (or
+  `SENTINEL_MCP_SERVERS`) and follow the
+  [quick start](https://harshith029.github.io/Sentinel/guide/quick-start).
+- **Foundry.** The `MCPTool` helper in `src/sentinel/demo/foundry.py` registers the
+  `/mcp` endpoint as a Foundry agent's `server_url`. It is correct against the
+  installed SDK but has not been run against a real Foundry project.
+- **What is not done yet** is listed, with its consequences, under
+  [Status and limitations](https://harshith029.github.io/Sentinel/guide/limitations).

@@ -1,0 +1,21 @@
+{
+  "name": "sentinel-website",
+  "private": true,
+  "description": "The SENTINEL project site and documentation (VitePress).",
+  "type": "module",
+  "scripts": {
+    "predev": "node copy-assets.mjs",
+    "dev": "vitepress dev",
+    "prebuild": "node copy-assets.mjs",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "6.4.4"
+    }
+  }
+}

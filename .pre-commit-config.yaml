@@ -33,6 +33,5 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
-        # 2MB: the hackathon submission deck (deck/SENTINEL_Submission.pptx,
-        # ~1.3MB with embedded dashboard screenshots) lives in the repo.
-        args: ["--maxkb=2048"]
+        # The hook's default limit (500 KB). The largest tracked files are the
+        # README screenshots in assets/, at about 260 KB.

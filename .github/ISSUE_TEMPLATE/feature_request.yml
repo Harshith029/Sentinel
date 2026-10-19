@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a capability or an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [known limitations](https://harshith029.github.io/Sentinel/guide/limitations) first: some gaps are already tracked there.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: The situation you are in and what SENTINEL does not let you do today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      description: The behaviour, configuration or policy syntax you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact
+      description: Could this weaken a guarantee (default-deny, fail-closed, provenance as a set over the whole ancestry, tenant isolation)? How would it stay safe?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

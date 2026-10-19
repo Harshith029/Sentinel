@@ -65,6 +65,12 @@ sdk_verification_dump.json
 # but belt-and-braces: never let it slip into a commit.
 _phase0_planted_secret_DELETE_ME.txt
 
+# Project site (website/): dependencies, build output, and the images copied
+# in from assets/ before each build.
+website/node_modules/
+website/public/
+website/.vitepress/cache/
+website/.vitepress/dist/
+
 # Scratch dependency dump from a dependency audit; never part of the repo.
 .audit-deps/
-deck/snapshots/

@@ -26,7 +26,7 @@ and the port is bound to loopback. Never use it in front of real tools. An
 unauthenticated SENTINEL answers only to `localhost`, `127.0.0.1` and `[::1]`, and
 refuses state-changing requests from other sites, so a web page cannot drive it
 through your browser. To reach an anonymous instance under another host name (a
-tunnel, the hosted sandbox), list it in `SENTINEL_ALLOWED_HOSTS`.
+tunnel, say), list it in `SENTINEL_ALLOWED_HOSTS`.
 
 ## 2. Self-host for real (free, on any machine)
 
@@ -67,7 +67,6 @@ Keep the tool servers reachable only by SENTINEL, and give SENTINEL a way in:
 |---|---|---|---|
 | Tailscale (private network) | Free personal plan | Agents on other machines reach SENTINEL over the tailnet; nothing public. Tailscale Funnel can publish it over HTTPS if you must. | No |
 | Oracle Cloud Always Free VM | Free; card needed at sign-up for verification | An always-on ARM VM with a persistent disk; run the compose file on it. | No |
-| Render free web service | Free, no card | [`render.yaml`](../render.yaml) deploys the **public demo** (anonymous, mock tools). Sleeps when idle and loses its disk on redeploy: a demo, not a place to keep forensic history. | Deployed previously; not re-checked for this change |
 
 Whatever sits in front must pass streaming responses (Server-Sent Events) through
 unbuffered: MCP's streamable HTTP transport uses them.

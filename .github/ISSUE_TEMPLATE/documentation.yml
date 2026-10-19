@@ -1,0 +1,23 @@
+name: Documentation
+description: Something in the docs, README or examples is wrong, missing or unclear.
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Where?
+      description: The page URL or file path.
+      placeholder: "https://harshith029.github.io/Sentinel/guide/policy"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+      description: Quote the text if it is inaccurate, and say what actually happens.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change

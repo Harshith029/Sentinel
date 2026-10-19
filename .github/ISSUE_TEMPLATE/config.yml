@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Harshith029/Sentinel/security/advisories/new
+    about: Please report vulnerabilities privately, never in a public issue.
+  - name: Documentation
+    url: https://harshith029.github.io/Sentinel/
+    about: Guides, configuration, policy reference and FAQ.

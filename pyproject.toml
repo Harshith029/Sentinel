@@ -73,10 +73,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Harshith029/SENTINEL"
-Repository = "https://github.com/Harshith029/SENTINEL"
-Issues = "https://github.com/Harshith029/SENTINEL/issues"
-Demo = "https://sentinel-i63x.onrender.com"
+Homepage = "https://harshith029.github.io/Sentinel/"
+Documentation = "https://harshith029.github.io/Sentinel/guide/introduction"
+Repository = "https://github.com/Harshith029/Sentinel"
+Issues = "https://github.com/Harshith029/Sentinel/issues"
+Changelog = "https://github.com/Harshith029/Sentinel/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # The product surface: `sentinel init|check|scaffold|serve`.

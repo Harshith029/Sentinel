@@ -1,0 +1,78 @@
+/* SENTINEL brand: the cyan and blue of the logo and banner, on deep navy. */
+
+:root {
+  --vp-c-brand-1: #0e7490;
+  --vp-c-brand-2: #0891b2;
+  --vp-c-brand-3: #06b6d4;
+  --vp-c-brand-soft: rgba(6, 182, 212, 0.14);
+
+  /* Buttons get their own, darker fill: white on the brand cyan is too faint. */
+  --vp-button-brand-bg: #0e7490;
+  --vp-button-brand-hover-bg: #155e75;
+  --vp-button-brand-active-bg: #164e63;
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-active-text: #ffffff;
+
+  /* Surfaces for the home page's cards, panels and grid. */
+  --s-border: rgba(15, 23, 42, 0.1);
+  --s-surface: rgba(255, 255, 255, 0.7);
+  --s-surface-solid: #ffffff;
+  --s-grid: rgba(15, 23, 42, 0.06);
+  --s-orb-opacity: 0.16;
+}
+
+.dark {
+  --vp-c-bg: #0b1220;
+  --vp-c-bg-alt: #080e1a;
+  --vp-c-bg-elv: #111a2c;
+  --vp-c-bg-soft: #111a2c;
+
+  --vp-c-brand-1: #22d3ee;
+  --vp-c-brand-2: #38bdf8;
+  --vp-c-brand-3: #0891b2;
+  --vp-c-brand-soft: rgba(34, 211, 238, 0.16);
+
+  --vp-button-brand-bg: #22d3ee;
+  --vp-button-brand-hover-bg: #67e8f9;
+  --vp-button-brand-active-bg: #a5f3fc;
+  --vp-button-brand-text: #0b1220;
+  --vp-button-brand-hover-text: #0b1220;
+  --vp-button-brand-active-text: #0b1220;
+
+  --s-border: rgba(148, 163, 184, 0.14);
+  --s-surface: rgba(15, 26, 46, 0.6);
+  --s-surface-solid: #0e1828;
+  --s-grid: rgba(148, 163, 184, 0.07);
+  --s-orb-opacity: 0.22;
+}
+
+/* Docs pages: figures and the occasional screenshot. */
+.shot {
+  margin: 0;
+}
+
+.shot img {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--vp-c-divider);
+}
+
+.shot figcaption {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--vp-c-text-2);
+}
+
+/* v-reveal (theme/reveal.ts). Specific enough to beat a component's own
+   scoped transition while it runs; the classes are removed afterwards. */
+:root .reveal-pending.reveal-pending {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.8s cubic-bezier(0.2, 0.7, 0.2, 1), transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+:root .reveal-pending.reveal-in {
+  opacity: 1;
+  transform: none;
+}

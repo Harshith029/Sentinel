@@ -74,4 +74,3 @@ website/.vitepress/dist/
 
 # Scratch dependency dump from a dependency audit; never part of the repo.
 .audit-deps/
-deck/snapshots/

@@ -86,7 +86,7 @@ jobs:
           /tmp/wheel-env/bin/sentinel --help
 
   container:
-    # The image render.yaml and deploy/ ship. Checks it builds, starts, is
+    # The image deploy/ ships. Checks it builds, starts, is
     # fail-closed with no credential, and does not run as root.
     name: container (build + smoke)
     runs-on: ubuntu-latest

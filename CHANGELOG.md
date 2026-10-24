@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- Every policy reload is recorded: a `PolicyChanged` span (applied, ignored,
+  rejected or failed, with the versions and the SHA-256 of the submitted text)
+  in a `policy-change` run owned by that tenant, exported to the SIEM at
+  severity `medium`, and a `POLICY` line in the security log. Earlier versions
+  cannot replay these runs, since they do not know the event type.
+
+### Security
+- `versions.lock` moves past newly published advisories: certifi 2026.10.19
+  (PYSEC-2026-4320), and for the pre-commit tooling filelock 4.2.1 (three CVEs)
+  and virtualenv 21.14.10 (eleven CVEs against the old pin, and one more that
+  21.14.9 still had). virtualenv's new requirements bring packaging 26.3 and
+  distlib 0.4.3. certifi is the one that ships: the container image installs
+  from the lock. `pip install sentinel-prox` is not pinned to the lock, so a
+  fresh install already picks up the fixed certifi.
+
 ### Fixed
 - A policy replaced through `POST /tenants/{tenant}/policy` survives a restart.
   It lived only in memory, so a restart silently put the configured file back,
@@ -18,13 +34,13 @@ All notable changes to this project are documented here. Format follows
   can escape the directory or collide with another on a case-insensitive file
   system. A saved policy that cannot be read or no longer loads stops
   `sentinel serve` and `sentinel check` with an error naming the file.
-
-### Added
-- Every policy reload is recorded: a `PolicyChanged` span (applied, ignored,
-  rejected or failed, with the versions and the SHA-256 of the submitted text)
-  in a `policy-change` run owned by that tenant, exported to the SIEM at
-  severity `medium`, and a `POLICY` line in the security log. Earlier versions
-  cannot replay these runs, since they do not know the event type.
+- Retention could keep a trace forever. The SQLite store filled in span
+  timestamps only while adding the `ts` column, but 0.2.2 can still write to a
+  migrated database and leaves `ts` empty, so after a rollback and a second
+  upgrade those traces were never purged. Missing timestamps are now filled in
+  every time the store opens. A partial index of just those spans keeps that
+  check from scanning the table. With this, the rollback caveat in the 0.2.3
+  upgrade note no longer applies once you upgrade again.
 
 ## [0.2.3] — 2026-10-19
 

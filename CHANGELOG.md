@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-10-24
+
+**Upgrade from 0.2.3.** No configuration changes. Policies replaced through
+the API are now saved under `${SENTINEL_DATA_DIR}/policies/`: back that
+directory up along with `sentinel.db` (with `deploy/compose.yaml` it is already
+on the data volume). To roll back to 0.2.3: it ignores the saved policies, so
+each tenant returns to its configured policy, and it lists `policy-change`
+runs but cannot replay them.
+
 ### Added
 - Every policy reload is recorded: a `PolicyChanged` span (applied, ignored,
   rejected or failed, with the versions and the SHA-256 of the submitted text)

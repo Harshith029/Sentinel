@@ -267,9 +267,18 @@ class SqliteForensicStore:
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(spans)")}
         if "ts" not in columns:
             self._conn.execute("ALTER TABLE spans ADD COLUMN ts TEXT")
-            self._conn.execute(
-                "UPDATE spans SET ts = json_extract(body, '$.timestamp') WHERE ts IS NULL"
-            )
+        # The backfill runs on every open, not only when adding the column:
+        # 0.2.2 can still write to a migrated database (it names its columns)
+        # and leaves ts empty, so after a rollback and an upgrade again those
+        # spans had no timestamp, and retention never deleted their traces.
+        # The partial index holds only spans missing ts, which every insert
+        # here sets, so it stays empty and this check costs nothing at startup.
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS spans_missing_ts ON spans(span_id) WHERE ts IS NULL"
+        )
+        self._conn.execute(
+            "UPDATE spans SET ts = json_extract(body, '$.timestamp') WHERE ts IS NULL"
+        )
         self._conn.execute("CREATE INDEX IF NOT EXISTS spans_by_trace_ts ON spans(trace_id, ts)")
         # Who each trace belongs to. Not forensic evidence (spans are), but
         # without it a restart cannot tell whose history is whose: every

@@ -195,6 +195,27 @@ class ToolBlocked(_FrozenPayload):
     matched_rule_id: str | None = None
 
 
+PolicyOutcome = Literal["applied", "ignored", "rejected", "failed"]
+
+
+class PolicyChanged(_FrozenPayload):
+    """The operator submitted a tenant's policy, and what became of it.
+
+    Every attempt is recorded: ``applied`` (newer, saved, now active),
+    ``ignored`` (not newer than the active version), ``rejected`` (did not
+    load) and ``failed`` (loaded, but could not be saved, so not applied). The
+    policy is identified by the SHA-256 of the submitted text, not copied in.
+    """
+
+    event_type: Literal["PolicyChanged"] = "PolicyChanged"
+    tenant: str
+    outcome: PolicyOutcome
+    version: int | None  # the submitted version; None when it did not load
+    previous_version: int | None
+    policy_sha256: str
+    detail: str
+
+
 # The closed discriminated union. Pydantic uses the `event_type` literal to pick
 # the right model on parse — so a stored span round-trips back to its exact
 # payload class, and an unknown event_type fails loudly instead of degrading to
@@ -207,7 +228,8 @@ EventPayload = Annotated[
     | TrustUpdated
     | AgentQuarantined
     | ToolExecuted
-    | ToolBlocked,
+    | ToolBlocked
+    | PolicyChanged,
     Field(discriminator="event_type"),
 ]
 
@@ -222,5 +244,6 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "AgentQuarantined",
         "ToolExecuted",
         "ToolBlocked",
+        "PolicyChanged",
     }
 )

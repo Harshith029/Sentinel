@@ -243,6 +243,31 @@ def log_quarantined(
     )
 
 
+def log_policy_change(
+    tenant: str,
+    *,
+    outcome: str,
+    version: int | None,
+    previous: int | None,
+    trace_id: str,
+) -> None:
+    """The operator submitted a tenant's policy: applied, ignored, rejected or failed."""
+    security_logger().warning(
+        "POLICY  %s  v%s -> v%s",
+        outcome.upper(),
+        previous,
+        version,
+        extra={
+            "event": "policy_change",
+            "outcome": outcome,
+            "version": version,
+            "previous_version": previous,
+            "trace_id": _safe_log_value(trace_id),
+            **_tenant_field(tenant),
+        },
+    )
+
+
 def log_injection_flagged(
     target: str, *, trace_id: str, shield: str, tenant: str | None = None
 ) -> None:

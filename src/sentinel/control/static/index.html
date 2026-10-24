@@ -521,6 +521,7 @@ function logLine(span){
   else if(t==='TrustUpdated'){ lvl='TRUST'; cls='trust'; const d=p.delta>0?'+'+p.delta.toFixed(0):p.delta.toFixed(0); msg=esc(cleanReason(p.reason))+'   score '+p.previous_score.toFixed(0)+'→'+p.new_score.toFixed(0)+' ('+d+')'; }
   else if(t==='AgentQuarantined'&&p.enforced===false){ lvl='TRUST'; msg='trust below threshold — score '+p.score_at_quarantine.toFixed(1)+'; quarantine not enforced, calls continue'; }
   else if(t==='AgentQuarantined'){ lvl='QUAR'; cls='block'; msg='agent quarantined — score '+p.score_at_quarantine.toFixed(1)+' < threshold, lane disabled'; }
+  else if(t==='PolicyChanged'){ lvl='POLICY'; cls=p.outcome==='applied'?'allow':(p.outcome==='ignored'?'dim':'deny'); msg='tenant '+esc(p.tenant)+'  '+esc(p.outcome)+'  v'+(p.previous_version===null?'-':p.previous_version)+' → v'+(p.version===null?'-':p.version)+'  '+esc(trunc(p.detail,80)); }
   else { lvl=t.slice(0,6).toUpperCase(); msg=''; }
   return '<div class="ln '+cls+'"><span class="seq">'+seq+'</span><span class="lvl">'+lvl+'</span><span class="msg">'+msg+'</span></div>';
 }

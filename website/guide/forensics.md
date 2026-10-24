@@ -45,6 +45,10 @@ credential you can:
 Spans are immutable: re-emitting an identical span is a no-op, and a differing
 one is rejected.
 
+Each policy reload through the API is a run too (scenario `policy-change`),
+holding one `PolicyChanged` span: the outcome, the versions, and the SHA-256
+of the submitted policy. Its audit export is graded `medium`.
+
 ## The forensic store
 
 The default store is SQLite at `${SENTINEL_DATA_DIR:-./var}/sentinel.db`.
@@ -74,6 +78,9 @@ still be in `sentinel.db-wal`:
 ```bash
 sqlite3 sentinel.db ".backup copy.db"
 ```
+
+Back up `${SENTINEL_DATA_DIR}/policies/` with it: it holds the policies
+replaced through the API, which a restart restores from there.
 
 ## Cosmos DB (optional)
 

@@ -170,10 +170,10 @@ def test_an_argument_cannot_supply_an_undeclared_comparand() -> None:
     assert "fail-closed" in decision.reason
 
 
-def test_live_proxy_observes_a_higher_version_after_reload() -> None:
+async def test_live_proxy_observes_a_higher_version_after_reload() -> None:
     """A long-lived MCP proxy should not retain an obsolete policy snapshot."""
     manager = RunManager(store=InMemoryForensicStore())
-    manager.reload_policy("acme", "policy_version: 1\ntools: {web_fetch: {rules: []}}\n")
+    await manager.reload_policy("acme", "policy_version: 1\ntools: {web_fetch: {rules: []}}\n")
     proxy = manager.new_live_proxy(
         downstream=object(),  # type: ignore[arg-type] - no downstream call in this unit test
         cache=(),
@@ -182,7 +182,7 @@ def test_live_proxy_observes_a_higher_version_after_reload() -> None:
     )
     assert proxy._current_engine().authorize(ToolCall(name="web_fetch")).decision == "ALLOW"  # noqa: SLF001
 
-    manager.reload_policy(
+    await manager.reload_policy(
         "acme",
         """\
 policy_version: 2

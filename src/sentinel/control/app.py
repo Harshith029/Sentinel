@@ -635,11 +635,16 @@ def create_app(
 
     @app.post("/tenants/{tenant}/policy", dependencies=[Depends(require_admin)])
     async def reload_tenant_policy(tenant: str, body: PolicyReloadRequest) -> dict[str, Any]:
-        """Hot-reload a tenant's policy on version bump (rejects malformed)."""
+        """Replace a tenant's policy on version bump; saved, so it survives a restart."""
         try:
-            result = mgr.reload_policy(tenant, body.policy)
+            result = await mgr.reload_policy(tenant, body.policy)
         except PolicyLoadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="the policy could not be saved, so it was not applied; see the server log",
+            ) from exc
         return {
             "tenant": result.tenant,
             "reloaded": result.reloaded,

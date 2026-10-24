@@ -64,7 +64,10 @@ class PolicyRegistry:
         Raises ``PolicyLoadError`` (from :func:`load_policy`) on malformed input,
         BEFORE touching the active policy — a bad push cannot take a tenant down.
         """
-        candidate = load_policy(text)
+        return self.apply_if_newer(tenant, load_policy(text))
+
+    def apply_if_newer(self, tenant: str, candidate: CompiledPolicy) -> ReloadResult:
+        """Swap in an already-compiled ``candidate`` for ``tenant`` if it is newer."""
         current = self._policies.get(tenant)
         if current is None:
             self._policies[tenant] = candidate

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import importlib.util
+import json
 import logging
 import os
 import time
@@ -30,7 +32,12 @@ import mcp.types as mcp_types
 
 from sentinel.authn import tenant_credentials, tenant_policy_paths
 from sentinel.authorization.engine import AuthorizationEngine
-from sentinel.authorization.policy import CompiledPolicy, load_default_policy, load_policy
+from sentinel.authorization.policy import (
+    CompiledPolicy,
+    PolicyLoadError,
+    load_default_policy,
+    load_policy,
+)
 from sentinel.authorization.registry import DEFAULT_TENANT, PolicyRegistry, ReloadResult
 from sentinel.classifier import AttackClassifier
 from sentinel.classifier.attack_classifier import BlockedAttempt
@@ -49,6 +56,8 @@ from sentinel.forensics.events import (
     AgentQuarantined,
     AuthorizationDecided,
     InjectionScanned,
+    PolicyChanged,
+    PolicyOutcome,
     ToolBlocked,
 )
 from sentinel.forensics.replay import TraceReplay, replay
@@ -59,6 +68,7 @@ from sentinel.forensics.store import (
 )
 from sentinel.mcp_proxy.proxy import SentinelProxy
 from sentinel.mcp_proxy.router import DownstreamConnection
+from sentinel.observability import log_policy_change
 from sentinel.shield import InputShield
 from sentinel.trust.config import load_default_trust_config
 from sentinel.trust.scorer import TrustScorer
@@ -104,6 +114,101 @@ def _load_policy_file(path_text: str, *, what: str) -> CompiledPolicy:
 _LOG = logging.getLogger("sentinel.control.manager")
 
 
+def _data_dir() -> Path:
+    return Path(os.environ.get("SENTINEL_DATA_DIR", "var"))
+
+
+def saved_policy_dir() -> Path:
+    """Where policies applied through ``POST /tenants/{tenant}/policy`` are kept."""
+    return _data_dir() / "policies"
+
+
+def _saved_policy_path(tenant: str) -> Path:
+    # Named by a digest of the tenant rather than the tenant itself: any tenant
+    # name is valid, none can reach outside the directory, and "acme" and
+    # "ACME" cannot share a file on a case-insensitive file system.
+    digest = hashlib.sha256(tenant.encode("utf-8")).hexdigest()
+    return saved_policy_dir() / f"{digest}.json"
+
+
+def _save_policy(tenant: str, text: str, version: int) -> None:
+    """Write ``tenant``'s policy so a restart keeps it: the old file or the new.
+
+    Staged, flushed to disk, then renamed over the old copy, so a crash leaves
+    one complete file or the other, never half of one.
+    """
+    path = _saved_policy_path(tenant)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_name(f".{path.name}.tmp")
+    record = {
+        "tenant": tenant,
+        "policy_version": version,
+        "saved_at": datetime.now(UTC).isoformat(),
+        "policy": text,
+    }
+    with staging.open("w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(staging, path)
+    if hasattr(os, "O_DIRECTORY"):  # POSIX: make the rename itself durable
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _overlay_saved_policies(registry: PolicyRegistry) -> None:
+    """Apply the policies saved by earlier API reloads, where newer than configured.
+
+    A reload used to live only in memory, so a restart silently put the
+    configured file back. The rule that decides a reload decides here too: the
+    higher ``policy_version`` wins, so an operator who bumps the configured file
+    past a saved copy gets the file.
+
+    A saved policy that cannot be read or no longer loads stops startup, as a
+    broken configured file does: it is the operator's latest policy, and
+    quietly enforcing an older one instead would be the worse surprise.
+    """
+    directory = saved_policy_dir()
+    if not directory.is_dir():
+        return
+    for path in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            tenant, text = record["tenant"], record["policy"]
+            if not isinstance(tenant, str) or not isinstance(text, str):
+                raise TypeError("'tenant' and 'policy' must be strings")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError(
+                f"saved policy {path} cannot be read ({exc}); repair or delete it"
+            ) from exc
+        if path.name != _saved_policy_path(tenant).name:
+            raise ValueError(
+                f"saved policy {path} is for tenant {tenant!r} but is not named for it; "
+                "repair or delete it"
+            )
+        try:
+            saved = load_policy(text)
+        except PolicyLoadError as exc:
+            raise ValueError(
+                f"saved policy for tenant {tenant!r} ({path}) does not load: {exc}; "
+                "repair or delete it"
+            ) from exc
+        current = registry.get(tenant)
+        if current is None or saved.policy_version > current.policy_version:
+            registry.register(tenant, saved)
+            _LOG.warning(
+                "tenant %r: enforcing the policy saved by an API reload (v%d) %s",
+                tenant,
+                saved.policy_version,
+                "(no policy is configured for it)"
+                if current is None
+                else f"instead of the configured v{current.policy_version}",
+            )
+
+
 def build_policy_registry(settings: Settings) -> PolicyRegistry:
     """Give every provisioned tenant a policy, and nobody else.
 
@@ -116,6 +221,8 @@ def build_policy_registry(settings: Settings) -> PolicyRegistry:
       that authenticated callers and then could not execute a single action.
     * A tenant with neither a credential nor a file has no policy and is
       refused. That fail-closed behaviour is unchanged.
+    * A policy saved by an API reload replaces any of these that it is newer
+      than (see :func:`_overlay_saved_policies`).
 
     Failing loudly on a bad path is deliberate: silently running the example
     policy while the operator believes theirs is active would be a security
@@ -137,6 +244,7 @@ def build_policy_registry(settings: Settings) -> PolicyRegistry:
     for tenant in tenant_credentials():
         if tenant not in explicit and registry.get(tenant) is None:
             registry.register(tenant, deployment)
+    _overlay_saved_policies(registry)
     return registry
 
 
@@ -243,6 +351,10 @@ class RunManager:
         # Persistent history is a startup import, not an index refill on every
         # GET /runs. Re-adding every evicted trace defeated max_retained_runs.
         self._persisted_runs_restored = False
+        # One policy reload at a time. Two interleaved reloads could otherwise
+        # save one version and activate another, and a restart would then
+        # bring back the policy that lost.
+        self._policy_lock = asyncio.Lock()
 
     @property
     def bus(self) -> EventBus:
@@ -684,9 +796,99 @@ class RunManager:
             for t in self._registry.tenants()
         ]
 
-    def reload_policy(self, tenant: str, policy_text: str) -> ReloadResult:
-        """Hot-reload a tenant's policy on version bump (raises on malformed)."""
-        return self._registry.reload_if_newer(tenant, policy_text)
+    async def reload_policy(self, tenant: str, policy_text: str) -> ReloadResult:
+        """Replace ``tenant``'s policy if the submitted one is newer; save it; record it.
+
+        A reload used to live only in memory, so a restart silently put the
+        configured file back, and nothing recorded that the policy had changed.
+        Now an applied policy is saved under the data directory BEFORE it takes
+        effect, so a failed save changes nothing, and every attempt becomes a
+        ``PolicyChanged`` record in the tenant's history: applied, ignored (not
+        newer), rejected (did not load) or failed (could not be saved).
+
+        Raises :class:`PolicyLoadError` for a policy that does not load and
+        :class:`OSError` for one that could not be saved, after recording either.
+        """
+        digest = hashlib.sha256(policy_text.encode("utf-8")).hexdigest()
+        async with self._policy_lock:
+            previous = self._registry.version(tenant)
+            try:
+                candidate = load_policy(policy_text)
+            except PolicyLoadError as exc:
+                await self._record_policy_change(
+                    tenant, "rejected", None, previous, digest, str(exc)
+                )
+                raise
+            if previous is None or candidate.policy_version > previous:
+                try:
+                    await asyncio.to_thread(
+                        _save_policy, tenant, policy_text, candidate.policy_version
+                    )
+                except OSError as exc:
+                    _LOG.error("could not save the policy for tenant %r: %s", tenant, exc)
+                    await self._record_policy_change(
+                        tenant, "failed", candidate.policy_version, previous, digest,
+                        f"could not be saved, so it was not applied: {exc}",
+                    )
+                    raise
+            result = self._registry.apply_if_newer(tenant, candidate)
+            await self._record_policy_change(
+                tenant,
+                "applied" if result.reloaded else "ignored",
+                candidate.policy_version,
+                previous,
+                digest,
+                result.detail,
+            )
+        return result
+
+    async def _record_policy_change(
+        self,
+        tenant: str,
+        outcome: PolicyOutcome,
+        version: int | None,
+        previous: int | None,
+        digest: str,
+        detail: str,
+    ) -> None:
+        """One trace per attempt, in the history of the tenant whose policy it is.
+
+        Best effort once the decision is made: an applied policy is already in
+        force, so failing the request because the record could not be written
+        would misreport what happened. The security log line is written either way.
+        """
+        trace_id = self._emitter.new_trace_id()
+        record = RunRecord(
+            run_id=trace_id,
+            trace_id=trace_id,
+            agent_id="operator",
+            scenario="policy-change",
+            tenant=tenant,
+            status="completed",
+        )
+        self._runs[trace_id] = record
+        self._persist_owner(record)
+        try:
+            await self._emitter.emit(
+                PolicyChanged(
+                    tenant=tenant,
+                    outcome=outcome,
+                    version=version,
+                    previous_version=previous,
+                    policy_sha256=digest,
+                    # A load error can quote the submitted text; keep it short.
+                    detail=detail[:300],
+                ),
+                trace_id=trace_id,
+            )
+        except Exception:  # noqa: BLE001 - see the docstring; logged, not swallowed
+            _LOG.exception("could not record a policy change for tenant %r", tenant)
+        finally:
+            self._emitter.forget(trace_id)
+            self._prune_finished_runs()
+        log_policy_change(
+            tenant, outcome=outcome, version=version, previous=previous, trace_id=trace_id
+        )
 
     # --- SOC audit (the classifier's ONE consumer) -----------------------------
 
@@ -716,6 +918,9 @@ class RunManager:
                 severity = "high"
             elif isinstance(p, AgentQuarantined):
                 severity = "critical"
+            elif isinstance(p, PolicyChanged):
+                # A change to what is enforced, or an attempt at one.
+                severity = "medium"
             alert: dict[str, Any] = {
                 "timestamp": s.timestamp.isoformat(),
                 "source": "SENTINEL",
@@ -740,6 +945,14 @@ class RunManager:
                 alert["attack_class"] = label.attack_class
                 alert["attack_rationale"] = label.rationale
                 alert["classifier"] = label.classifier
+            elif isinstance(p, PolicyChanged):
+                alert.update(
+                    tenant=p.tenant,
+                    outcome=p.outcome,
+                    policy_version=p.version,
+                    previous_version=p.previous_version,
+                    policy_sha256=p.policy_sha256,
+                )
             alerts.append(alert)
         return alerts
 

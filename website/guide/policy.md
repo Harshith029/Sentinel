@@ -168,6 +168,33 @@ for the guarantees.
 
 Each tenant can have its own policy through `SENTINEL_TENANT_POLICIES`, a JSON
 map of tenant to policy file. A tenant without an entry uses the deployment
-policy. The operator can also replace a tenant's policy at runtime with
-`POST /tenants/{tenant}/policy` and the admin token, but that replacement
-lives in memory and is forgotten on restart. Keep durable policy in files.
+policy.
+
+## Replacing a policy at runtime
+
+The operator can replace a tenant's policy without a restart:
+
+```bash
+curl -X POST http://127.0.0.1:8765/tenants/acme/policy \
+  -H "Authorization: Bearer $SENTINEL_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d "$(jq -Rs '{policy: .}' policy.yaml)"
+```
+
+- **Only a newer `policy_version` replaces the active one.** A same or older
+  version is ignored, so a stale push cannot downgrade a tenant. A policy that
+  does not load is refused with `400`, and the active one stays.
+- **It survives a restart.** An applied policy is saved under
+  `${SENTINEL_DATA_DIR}/policies/` before it takes effect. If it cannot be
+  saved, nothing changes and the request fails with `500`. At startup, a saved
+  policy replaces the configured one only if its version is higher, so to go
+  back to your file, give the file a higher `policy_version`.
+- **Every reload is recorded.** Applied, ignored, rejected or failed, each
+  becomes a `PolicyChanged` record in that tenant's history (listed under
+  `GET /runs`), with the submitted version and the SHA-256 of the submitted
+  text, and a `POLICY` line in the security log. A request without the admin
+  token is refused with `403` before it gets that far.
+
+A saved policy that cannot be read, or no longer loads, stops `sentinel serve`
+and `sentinel check` with an error naming the file. Repair the file or delete
+it.

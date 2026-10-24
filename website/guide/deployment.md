@@ -73,10 +73,11 @@ work without changes. `sentinel serve --port` still overrides it.
 
 ## Run one replica
 
-Trust scores, MCP sessions, the event feed, the run index and policies
-replaced through the API live in process memory. Two replicas share none of
-it, and each enforces its own rate limits. Run one instance, and enforce any
-global limit at the load balancer.
+Trust scores, MCP sessions, the event feed and the run index live in process
+memory, and policies replaced through the API are saved in that instance's
+`SENTINEL_DATA_DIR`. Two replicas share none of it, and each enforces its own
+rate limits. Run one instance, and enforce any global limit at the load
+balancer.
 
 ## Azure Container Apps (optional, untested)
 

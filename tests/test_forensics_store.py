@@ -349,3 +349,39 @@ async def test_a_database_from_before_the_timestamp_column_is_migrated(
             )
         )
     assert "spans_by_trace_ts" in plan
+
+
+async def test_spans_written_without_a_timestamp_are_filled_in_and_age_out(
+    tmp_path: Path, make_span: Callable[..., Span]
+) -> None:
+    """0.2.2 can still write to a migrated database, but leaves ``ts`` empty.
+
+    The backfill used to run only while adding the column, so after a rollback
+    to 0.2.2 and an upgrade again those spans kept no timestamp, and a trace
+    made only of them was never deleted by retention.
+    """
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    db = tmp_path / "rolled-back.db"
+    store = SqliteForensicStore(db)
+    span = make_span(seq=0)
+    await store.put(span)
+    store.close()
+    with sqlite3.connect(db) as conn:  # what an INSERT from 0.2.2 leaves behind
+        conn.execute("UPDATE spans SET ts = NULL")
+
+    store = SqliteForensicStore(db)
+    future = datetime.now(UTC) + timedelta(days=1)
+    assert await store.purge_older_than(future) == [span.trace_id]
+    store.close()
+
+    # Checked on every open, so it must not scan the table to find nothing.
+    with sqlite3.connect(db) as conn:
+        plan = " ".join(
+            str(r) for r in conn.execute(
+                "EXPLAIN QUERY PLAN UPDATE spans SET ts = json_extract(body, '$.timestamp')"
+                " WHERE ts IS NULL"
+            )
+        )
+    assert "spans_missing_ts" in plan

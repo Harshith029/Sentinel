@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Retention could keep a trace forever. The SQLite store filled in span
+  timestamps only while adding the `ts` column, but 0.2.2 can still write to a
+  migrated database and leaves `ts` empty, so after a rollback and a second
+  upgrade those traces were never purged. Missing timestamps are now filled in
+  every time the store opens. A partial index of just those spans keeps that
+  check from scanning the table. With this, the rollback caveat in the 0.2.3
+  upgrade note no longer applies once you upgrade again.
+
 ## [0.2.3] — 2026-10-19
 
 **Upgrade from 0.2.2.** No configuration changes. If you use Cosmos DB,

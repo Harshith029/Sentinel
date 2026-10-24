@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- `versions.lock` moves past newly published advisories: certifi 2026.10.19
+  (PYSEC-2026-4320), and for the pre-commit tooling filelock 4.2.1 (three CVEs)
+  and virtualenv 21.14.10 (eleven CVEs against the old pin, and one more that
+  21.14.9 still had). virtualenv's new requirements bring packaging 26.3 and
+  distlib 0.4.3. certifi is the one that ships: the container image installs
+  from the lock. `pip install sentinel-prox` is not pinned to the lock, so a
+  fresh install already picks up the fixed certifi.
+
 ## [0.2.3] — 2026-10-19
 
 **Upgrade from 0.2.2.** No configuration changes. If you use Cosmos DB,

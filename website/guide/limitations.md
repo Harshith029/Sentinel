@@ -64,10 +64,10 @@ server, and no reconnect. Most published MCP servers are stdio.
 
 ### State lives in one process
 
-Trust scores, MCP sessions, the event feed, the run index and policies
-replaced through `POST /tenants/{tenant}/policy` are in memory. A restart
-forgets API policy reloads (put durable policy in `SENTINEL_POLICY_FILE` or
-`SENTINEL_TENANT_POLICIES`), and two replicas share none of it.
+Trust scores, MCP sessions, the event feed and the run index are in memory,
+and two replicas share none of it. A policy replaced through
+`POST /tenants/{tenant}/policy` survives a restart (it is saved under
+`SENTINEL_DATA_DIR`), but only on the replica that received it.
 
 ### Cosmos persistence is partial
 

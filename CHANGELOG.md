@@ -6,6 +6,26 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- A policy replaced through `POST /tenants/{tenant}/policy` survives a restart.
+  It lived only in memory, so a restart silently put the configured file back,
+  and nothing recorded that the policy had changed. An applied policy is now
+  saved under `${SENTINEL_DATA_DIR}/policies/` before it takes effect (a failed
+  save changes nothing and answers 500). At startup a saved policy replaces the
+  configured one only when its `policy_version` is higher. Reloads are
+  serialized, so two at once cannot save one version and enforce another.
+  Files are named by a SHA-256 of the tenant, so any tenant name works and none
+  can escape the directory or collide with another on a case-insensitive file
+  system. A saved policy that cannot be read or no longer loads stops
+  `sentinel serve` and `sentinel check` with an error naming the file.
+
+### Added
+- Every policy reload is recorded: a `PolicyChanged` span (applied, ignored,
+  rejected or failed, with the versions and the SHA-256 of the submitted text)
+  in a `policy-change` run owned by that tenant, exported to the SIEM at
+  severity `medium`, and a `POLICY` line in the security log. Earlier versions
+  cannot replay these runs, since they do not know the event type.
+
 ## [0.2.3] — 2026-10-19
 
 **Upgrade from 0.2.2.** No configuration changes. If you use Cosmos DB,

@@ -168,7 +168,7 @@ Read this before deploying anything. Each limitation changes what SENTINEL prote
 | **Only guarded tools are guarded** | A tool without rules can carry tainted data out. Add rules for every outbound tool; there is no general notion of an outbound "sink" yet |
 | **Quarantine is recorded, not enforced** (default) | The trust score never recovers, so agents making only allowed calls cross the threshold within tens of calls. `SENTINEL_ENFORCE_QUARANTINE=1` enforces it |
 | **Downstream servers: streamable HTTP only** | No stdio servers, no per-server credentials or OAuth, one shared session per server, and no reconnect. Most published MCP servers are stdio |
-| **State lives in one process** | Trust scores, MCP sessions, the event feed, the run index and API policy reloads are in memory. Two replicas share none of it |
+| **State lives in one process** | Trust scores, MCP sessions, the event feed and the run index are in memory. Two replicas share none of it, and a policy replaced through the API is saved only on the replica that received it |
 | **Cosmos persistence is partial** | Needs `pip install "sentinel-prox[cosmos]"`; run ownership, the run index after a restart and retention purging exist only for SQLite |
 | **Some state is visible across tenants** | `/events` ids are one global counter; `/downstream` and `/capabilities` describe the whole deployment |
 | **Calls the SDK rejects are not recorded** | Arguments that fail a tool's input schema are refused by the MCP SDK before SENTINEL sees them |

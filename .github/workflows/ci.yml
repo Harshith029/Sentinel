@@ -139,21 +139,10 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.11"
-      # Audits exactly what versions.lock pins. Fails the build on any known
-      # vulnerability; the fix is a pin bump in versions.lock.
-      #
-      # One exception, because no fixed release exists:
-      #   PYSEC-2026-4146 (PyJWT): decode()/decode_complete() mutate a reused
-      #   `options` dict when verify_signature is off. Unreachable here as of
-      #   2026-10-04, re-checked 2026-10-18 for mcp 1.30.0: SENTINEL never
-      #   imports jwt, and its only PyJWT users, mcp (client_credentials.py)
-      #   and msal (oauth2cli/assertion.py), call jwt.encode only. Re-check on
-      #   any mcp or msal upgrade; drop the flag once PyJWT ships a fix.
+      # Audits exactly what versions.lock pins; the command and any exceptions
+      # live in the script, which the weekly audit (audit.yml) runs too.
       - name: Audit pinned dependencies (pip-audit)
-        run: |
-          python -m pip install --upgrade pip "pip-audit==2.10.1"
-          python -m pip_audit -r versions.lock --no-deps --disable-pip --progress-spinner off \
-            --ignore-vuln PYSEC-2026-4146
+        run: bash scripts/audit_pinned_deps.sh
       # The pre-commit hook scans only what is being committed; this scans every
       # commit on every ref. Same gitleaks version as .pre-commit-config.yaml.
       - name: Secret scan, full history (gitleaks)

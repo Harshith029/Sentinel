@@ -35,14 +35,20 @@ CI runs those three on every push and PR (Python 3.11 and 3.12), plus:
 - **container**: builds `deploy/Dockerfile`, starts it, and checks it is healthy, refuses
   requests when no credential is configured (503), and does not run as root;
 - **Bicep**: compiles `deploy/main.bicep` (this shows it builds, not that it deploys);
-- **supply chain**: `pip-audit` over `versions.lock`, failing on any known
-  vulnerability, and a `gitleaks` scan of the full history;
+- **supply chain**: `pip-audit` over `versions.lock` (`scripts/audit_pinned_deps.sh`),
+  failing on any known vulnerability, and a `gitleaks` scan of the full history. The
+  same audit, and `npm audit` for the site, also run every Monday
+  (`.github/workflows/audit.yml`), so an advisory published while nothing changes
+  still surfaces;
 - **real-MCP diagnostics** (non-blocking): the real-HTTP downstream tests in
   `tests/test_downstream_remote_paths.py`, one per process, quarantined until the
   teardown defect in `docs/mcp-streamable-http-teardown.md` is fixed.
 
 A PR that fails the audit usually needs a pin bump in `versions.lock`: use the
-smallest fixed version within the current major, then rerun the tests.
+smallest fixed version within the current major, then rerun the tests. For the site,
+bump the package (or the `vite` override) in `website/package.json`. An exception to
+the audit goes in `scripts/audit_pinned_deps.sh` with a note saying why it cannot be
+reached, when that was checked, and what ends it.
 
 ## Security invariants — do not regress these
 

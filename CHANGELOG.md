@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- Dependencies are audited every week, not only when a pull request runs CI.
+  Twice in October an advisory was published while nothing changed and went
+  unnoticed until the next pull request failed on it. `audit.yml` runs
+  `pip-audit` over `versions.lock` and `npm audit` over the site every Monday,
+  and GitHub emails the owner when a scheduled run fails.
+- The site's build tooling moves to vite 6.4.5 (GHSA-8g5g-mxqh-grgj: the dev
+  server's `server.fs.deny` could be bypassed with query strings). It affects
+  `npm run dev` on a contributor's machine, not the published site.
+- The audit no longer ignores PYSEC-2026-4146. Its record now covers PyJWT
+  2.11.0 to 2.13.0 only, and the lock pins 2.15.0, so the exception had stopped
+  applying; kept, it would have hidden a future finding under that ID. The audit
+  command now lives in `scripts/audit_pinned_deps.sh`, shared by CI and the
+  weekly run.
+
 ## [0.2.4] — 2026-10-24
 
 **Upgrade from 0.2.3.** No configuration changes. Policies replaced through

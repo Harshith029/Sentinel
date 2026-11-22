@@ -340,5 +340,4 @@ and the Azure SDKs for Python. Thank you to their maintainers.
 *integrates* Azure OpenAI (attack classification) and Azure AI Content Safety / Prompt Shields
 (Layer-1 screening) as optional components.
 
-Originally built for the Microsoft Build AI Hackathon 2026 — *Security in the Agentic
-Future* — by Pali Krishna Harshith.
+SENTINEL is a personal project by Pali Krishna Harshith.

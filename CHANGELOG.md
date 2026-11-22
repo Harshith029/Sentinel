@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- The README's closing line said SENTINEL was "originally built for" the
+  Microsoft Build AI Hackathon 2026. It is a personal project, and the line now
+  says so. PyPI shows the README as the project description, so the next
+  release carries the correction.
+
 ### Fixed
 - The real-HTTP tests no longer hang. Stopping one of the tests' uvicorn
   servers set sse-starlette's process-wide `AppStatus.should_exit`: uvicorn

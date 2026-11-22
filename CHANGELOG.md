@@ -6,6 +6,34 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- The README's closing line said SENTINEL was "originally built for" the
+  Microsoft Build AI Hackathon 2026. It is a personal project, and the line now
+  says so. PyPI shows the README as the project description, so the next
+  release carries the correction.
+
+### Fixed
+- The real-HTTP tests no longer hang. Stopping one of the tests' uvicorn
+  servers set sse-starlette's process-wide `AppStatus.should_exit`: uvicorn
+  gave the test server the process's SIGTERM handler, and sse-starlette took
+  that server's shutdown for the process's. After that every SSE response in
+  the run ended before it started, and because the MCP transport answers each
+  POST with SSE, every later MCP handshake waited for an answer that never
+  came. A run could end at pytest's 120 s timeout with no summary. The test
+  servers now leave signal handlers alone; the `install_signal_handlers`
+  override they relied on no longer exists in uvicorn. It was never an MCP SDK
+  defect, and `sentinel serve` was not affected.
+  `docs/mcp-streamable-http-teardown.md` records the cause (findings TCD-04,
+  OWN-6).
+- With that fixed, `tests/test_downstream_remote_paths.py` runs in the default
+  suite instead of behind `SENTINEL_RUN_REAL_MCP_TESTS=1`, the separate
+  non-blocking CI job for it is gone, and
+  `test_real_http_sessions_after_remote_downstream` is a passing test instead
+  of a strict xfail.
+- `test_pre_commit_hook_is_installed` failed on every fresh clone, which has no
+  hook until `pre-commit install` runs. Outside CI it now skips and says so; in
+  CI, which installs the hook first, a missing hook still fails.
+
 ### Security
 - Dependencies are audited every week, not only when a pull request runs CI.
   Twice in October an advisory was published while nothing changed and went

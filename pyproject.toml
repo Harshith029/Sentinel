@@ -54,8 +54,6 @@ dependencies = [
     # session accumulation in the streamable-HTTP transport, fixed in 1.30.0).
     # (SENTINEL does its own session-ownership check and per-tenant session cap
     # as well; the SDK's fix for -3482 only covers servers using its own auth.)
-    # It is NOT a claim that 1.30.0 fixes the teardown defect in
-    # docs/mcp-streamable-http-teardown.md: that is still present in 1.30.0.
     "mcp>=1.30.0,<2",
 
     # OpenAI — exact pin written to versions.lock after resolve
@@ -89,7 +87,7 @@ cosmos = ["aiohttp>=3.9,<4"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
-    "pytest-timeout>=2.3",   # bounds the open teardown wedge; see pytest config
+    "pytest-timeout>=2.3",   # bounds every test; see pytest config
     "httpx>=0.27",
     "pre-commit>=3.8",
     "ruff>=0.6",
@@ -111,16 +109,15 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
-# Every test is bounded. There is an open, timing-sensitive defect in which a
-# real-HTTP MCP session can block forever
-# (docs/mcp-streamable-http-teardown.md); unbounded, it takes the whole run down
-# with no indication of which test was stuck. A per-test cap bounds it: CI
-# cannot sit for its full job timeout, and the stack dump names the test.
+# Every test is bounded, so a hang ends the run instead of holding CI until its
+# job timeout. Real-HTTP MCP tests used to hang this way; the cause is in
+# docs/mcp-streamable-http-teardown.md and is fixed.
 #
 # It is NOT an ordinary failure. timeout_method = "thread" is the only method
 # that works on Windows (no SIGALRM), and on expiry it dumps every thread's
 # stack and ends the whole pytest process: later tests do not run and there is
-# no summary. Read the dump for the test name. 120s is far above the slowest
+# no summary. For an async test the dump shows the event loop, not the test, so
+# rerun with -v to see which test was running. 120s is far above the slowest
 # legitimate test (~15s), so this fires only on a genuine hang.
 timeout = 120
 timeout_method = "thread"

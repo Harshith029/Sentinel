@@ -1,40 +1,40 @@
-"""Standalone probe for the streamable-HTTP teardown wedge — mcp + uvicorn only.
+"""Standalone reproduction of the "teardown wedge": mcp, uvicorn and sse-starlette only.
 
-**This is a probe, not a reproducer.** It hung once and then 0/6 on retest, which
-is why the defect is NOT attributed to upstream. See
-``docs/mcp-streamable-http-teardown.md``. The reliable reproduction currently
-lives in the test suite, not here.
+See ``docs/mcp-streamable-http-teardown.md``. While a uvicorn server runs it owns
+the process's SIGTERM handler. sse-starlette's shutdown watcher takes that
+server's ``should_exit`` for process shutdown and sets the process-wide
+``AppStatus.should_exit``, after which every SSE response ends before it starts,
+so no later MCP handshake in the process can complete.
 
 Usage::
 
-    python docs/mcp_repro_standalone.py skip     # control: one session only
-    python docs/mcp_repro_standalone.py first    # a prior session, then another
-    python docs/mcp_repro_standalone.py noterm   # prior session, no DELETE
-    python docs/mcp_repro_standalone.py timed    # second session, explicit client
+    python docs/mcp_repro_standalone.py latch   # wait one watcher poll: the next handshake fails
+    python docs/mcp_repro_standalone.py fast    # no wait: usually passes, hence "intermittent"
+    python docs/mcp_repro_standalone.py fixed   # servers leave signal handlers alone: passes
 
-A diagnostic must not carry the bugs it was written to investigate, so it uses
-the same pre-bound listener and the same explicit HTTP-client ownership as the
-test harness.
+It exits 1 when the second handshake gets no answer. It uses the same pre-bound
+listener and the same explicit HTTP-client ownership as the test harness.
 """
 from __future__ import annotations
 
 import asyncio
-import os
+import contextlib
+import faulthandler
 import socket
 import sys
 import time
-from contextlib import AsyncExitStack, asynccontextmanager
-from collections.abc import AsyncIterator
 
 import httpx
 import uvicorn
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
+from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 
+_HANDSHAKE_SECONDS = 5.0  # a healthy handshake takes well under a second
+_WATCHER_POLL_SECONDS = 0.5  # sse_starlette.sse._shutdown_watcher
 _START = time.monotonic()
-_WATCHDOG_SECONDS = 25.0
 
 
 def log(message: str) -> None:
@@ -52,19 +52,15 @@ def build_app() -> Starlette:
 
 
 class Server:
-    """uvicorn on a pre-bound listening socket.
+    """uvicorn on a pre-bound listening socket."""
 
-    Binding, closing, then letting uvicorn rebind leaves the port unowned in
-    between — the race this investigation already fixed in the test harness.
-    """
-
-    def __init__(self, app: Starlette) -> None:
+    def __init__(self, *, capture_signals: bool) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(128)
         self.port: int = self._sock.getsockname()[1]
         config = uvicorn.Config(
-            app,
+            build_app(),
             host="127.0.0.1",
             port=self.port,
             log_level="error",
@@ -72,7 +68,8 @@ class Server:
             ws="none",
         )
         self._server = uvicorn.Server(config)
-        self._server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+        if not capture_signals:  # the fix the test harness uses
+            self._server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign]
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -94,66 +91,41 @@ class Server:
             self._sock.close()
 
 
-@asynccontextmanager
-async def _client(explicit: bool) -> AsyncIterator[httpx.AsyncClient | None]:
-    """Yield an owned HTTP client, or None to let the SDK build its own.
-
-    The SDK closes the client only when it created it, so an explicitly supplied
-    one has to be closed here or the probe leaks a connection pool per run.
-    """
-    if not explicit:
-        yield None
-        return
+async def handshake(url: str, tag: str) -> bool:
+    """Open a session and initialize it, bounded. True if it completed."""
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(None, connect=10.0, pool=10.0),
         follow_redirects=True,  # /mcp answers the MCP POST with a 307 to /mcp/
     ) as client:
-        yield client
-
-
-async def open_session(url: str, tag: str, *, terminate: bool, explicit: bool) -> None:
-    log(f"{tag}: connecting (terminate_on_close={terminate}, explicit_client={explicit})")
-    async with _client(explicit) as http_client:
-        async with streamable_http_client(
-            url, http_client=http_client, terminate_on_close=terminate
-        ) as (read, write, _session_id):
-            log(f"{tag}: transport entered")
+        async with streamable_http_client(url, http_client=client) as (read, write, _sid):
             async with ClientSession(read, write) as session:
-                log(f"{tag}: session entered -> initialize()")
-                await session.initialize()
-                log(f"{tag}: initialize OK")
+                try:
+                    await asyncio.wait_for(session.initialize(), _HANDSHAKE_SECONDS)
+                except TimeoutError:
+                    log(f"{tag}: no answer to initialize within {_HANDSHAKE_SECONDS}s")
+                    return False
+    log(f"{tag}: initialize OK")
+    return True
 
 
-async def watchdog() -> None:
-    await asyncio.sleep(_WATCHDOG_SECONDS)
-    pending = asyncio.all_tasks()
-    log(f"TIMEOUT: {len(pending)} tasks pending")
-    for task in pending:
-        stack = task.get_stack(limit=1)
-        where = f"{stack[0].f_code.co_filename}:{stack[0].f_lineno}" if stack else "?"
-        log(f"    {task.get_name()} @ {where}")
-    os._exit(3)
+async def main(mode: str) -> int:
+    capture = mode != "fixed"
+    async with Server(capture_signals=capture) as first:
+        await handshake(first.url, "FIRST")
+    log(f"first server stopped, AppStatus.should_exit={AppStatus.should_exit}")
+    if mode != "fast":
+        await asyncio.sleep(2 * _WATCHER_POLL_SECONDS)
+        log(f"after a watcher poll, AppStatus.should_exit={AppStatus.should_exit}")
 
-
-async def main() -> None:
-    mode = sys.argv[1] if len(sys.argv) > 1 else "skip"
-    asyncio.create_task(watchdog())
-
-    async with AsyncExitStack() as stack:
-        if mode != "skip":
-            first = await stack.enter_async_context(Server(build_app()))
-            await open_session(
-                first.url, "FIRST", terminate=(mode != "noterm"), explicit=False
-            )
-            await first.__aexit__()
-            log("first server torn down")
-
-        second = await stack.enter_async_context(Server(build_app()))
-        await open_session(
-            second.url, "SECOND", terminate=True, explicit=(mode == "timed")
-        )
-    log("DONE - no hang")
+    async with Server(capture_signals=capture) as second:
+        ok = await handshake(second.url, "SECOND")
+    log("no hang" if ok else "REPRODUCED: the second handshake got no answer")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    faulthandler.dump_traceback_later(60, exit=True)  # never hang the terminal
+    chosen = sys.argv[1] if len(sys.argv) > 1 else "latch"
+    if chosen not in ("latch", "fast", "fixed"):
+        sys.exit(f"unknown mode {chosen!r}; use latch, fast or fixed")
+    sys.exit(asyncio.run(main(chosen)))

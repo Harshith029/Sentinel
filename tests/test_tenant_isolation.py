@@ -36,13 +36,7 @@ TOKENS = json.dumps({"acme": ACME, "globex": GLOBEX})
 
 
 async def _finish_runs(manager: RunManager) -> None:
-    """Let every background run complete, then close the manager.
-
-    Completing rather than cancelling matters here. Work killed mid-flight
-    along with its event loop is the one lead on the open Windows wedge
-    (docs/mcp-streamable-http-teardown.md): the hang rate rose when tests
-    abandoned runs and fell when they stopped doing so.
-    """
+    """Let every background run complete, then close the manager."""
     import asyncio
 
     await asyncio.gather(
@@ -65,9 +59,7 @@ async def _client(**env: str) -> AsyncIterator[tuple[httpx.AsyncClient, RunManag
             yield client, manager
     finally:
         # POST /runs starts each scenario as a BACKGROUND task, and this app has
-        # no lifespan to stop them. Abandoning them mid-flight — in-memory MCP
-        # servers and all — on an event loop pytest is about to destroy measurably
-        # raised the rate of the open Windows wedge. Let them FINISH, then close.
+        # no lifespan to stop them. Let them FINISH, then close.
         await _finish_runs(manager)
         for key, value in previous.items():
             if value is None:

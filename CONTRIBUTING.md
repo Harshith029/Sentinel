@@ -39,10 +39,7 @@ CI runs those three on every push and PR (Python 3.11 and 3.12), plus:
   failing on any known vulnerability, and a `gitleaks` scan of the full history. The
   same audit, and `npm audit` for the site, also run every Monday
   (`.github/workflows/audit.yml`), so an advisory published while nothing changes
-  still surfaces;
-- **real-MCP diagnostics** (non-blocking): the real-HTTP downstream tests in
-  `tests/test_downstream_remote_paths.py`, one per process, quarantined until the
-  teardown defect in `docs/mcp-streamable-http-teardown.md` is fixed.
+  still surfaces.
 
 A PR that fails the audit usually needs a pin bump in `versions.lock`: use the
 smallest fixed version within the current major, then rerun the tests. For the site,

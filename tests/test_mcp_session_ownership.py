@@ -10,8 +10,7 @@ the fix, reproduced against the real transport:
 * the same caller's ``DELETE`` terminated acme's session, so acme's next call
   got ``404 Session has been terminated``.
 
-These drive the real SDK session manager in-process over ASGI (no sockets), so
-they are not exposed to the Windows teardown wedge.
+These drive the real SDK session manager in-process over ASGI (no sockets).
 """
 
 from __future__ import annotations

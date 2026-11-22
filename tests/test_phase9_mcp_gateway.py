@@ -112,8 +112,13 @@ class _RunningServer:
             ws="none",
         )
         self._server = uvicorn.Server(config)
-        # Don't let uvicorn install process-wide signal handlers inside pytest.
-        self._server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+        # Keep uvicorn off the process's signal handlers. It installs them in
+        # capture_signals(); install_signal_handlers, which this used to
+        # override, no longer exists. sse-starlette treats a server that owns
+        # SIGTERM as the whole process, so stopping one set its process-wide
+        # AppStatus.should_exit and every later SSE response in the run ended
+        # before it started (docs/mcp-streamable-http-teardown.md).
+        self._server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign]
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -489,31 +494,16 @@ async def test_concurrent_runners_get_distinct_working_ports() -> None:
                 assert resp.status_code < 500, (r.port, resp.status_code)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    # Only the wedge's own pytest.fail counts as expected. Without raises=, any
-    # failure in this test, a real regression included, was absorbed as the
-    # known defect (review TCD-13).
-    raises=pytest.fail.Exception,
-    reason="UNRESOLVED streamable-HTTP teardown wedge, not yet attributed to "
-           "SENTINEL or upstream; see docs/mcp-streamable-http-teardown.md. "
-           "strict=True so an XPASS fails CI and forces this marker's removal.",
-)
 async def test_real_http_sessions_after_remote_downstream() -> None:
     """The full sequence: remote gateway → teardown → fresh gateway → 2 clients.
 
-    Placed last, immediately after the remote-downstream test, because that
-    ordering is what used to hang: tearing down a streamable-HTTP CLIENT session
-    left the process unable to complete a LATER client's ``initialize()`` — a
-    different server, a different task, no error, no timeout.
+    Runs after the remote-downstream test on purpose. Stopping that test's four
+    servers is what used to leave the process unable to complete a later
+    client's ``initialize()``: a different server, no error, no timeout. The
+    cause was the test harness's signal handling, not the MCP transport; see
+    ``test_stopping_one_server_does_not_silence_the_next`` and
+    ``docs/mcp-streamable-http-teardown.md``.
 
-    The cause is NOT established and is NOT attributed to upstream. A standalone
-    ``mcp``+``uvicorn`` script hung once and then 0/6 on retest, so it is a probe,
-    not evidence. Neither an explicitly configured HTTP client nor
-    ``terminate_on_close=False`` avoids this — both were measured and both still
-    fail. See ``docs/mcp-streamable-http-teardown.md``.
-
-    This records an OPEN defect. It is not coverage of working behaviour.
     Bounded tightly on purpose: a regression here must fail in seconds, so the
     handshake bound is separate from the cleanup bound and task stacks are
     captured BEFORE anything is cancelled.
@@ -565,3 +555,37 @@ def _blocked_state() -> str:
         ) or "<no stack>"
         lines.append(f"  [{task.get_name()}] {name} done={task.done()} @ {where}")
     return "\n".join(lines)
+
+
+# How often sse-starlette's shutdown watcher polls (sse_starlette.sse._shutdown_watcher).
+_SSE_SHUTDOWN_POLL_SECONDS: float = 0.5
+
+
+async def test_stopping_one_server_does_not_silence_the_next() -> None:
+    """A stopped test server must not end SSE responses for the rest of the process.
+
+    This was the "teardown wedge" in docs/mcp-streamable-http-teardown.md. When a
+    test server owned the process's SIGTERM handler, sse-starlette's watcher
+    read that server's ``should_exit`` as process shutdown and set the
+    process-wide ``AppStatus.should_exit``. From then on every SSE response,
+    which is how the MCP transport answers a POST, ended before sending a byte,
+    so no later handshake in the run got an answer.
+
+    The pause outlasts one watcher poll after the first server stops. Without
+    it the old harness passed whenever the next handshake beat the poll, which
+    is why the defect looked intermittent.
+    """
+    first_app = build_downstream(ToolServerState())["records"].streamable_http_app()
+    async with _RunningServer(first_app) as first:
+        async with _mcp_client(first.mcp_url) as (read, write, _sid):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+    await asyncio.sleep(2 * _SSE_SHUTDOWN_POLL_SECONDS)
+
+    second_app = build_downstream(ToolServerState())["records"].streamable_http_app()
+    async with _RunningServer(second_app) as second:
+        async with _mcp_client(second.mcp_url) as (read, write, _sid):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=_HANDSHAKE_DEADLINE)
+                listed = await asyncio.wait_for(session.list_tools(), timeout=_HANDSHAKE_DEADLINE)
+    assert "get_customer_record" in {tool.name for tool in listed.tools}

@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import socket
-from contextlib import AsyncExitStack
-from typing import Final
+from contextlib import AsyncExitStack, nullcontext
 
 import httpx
 import pytest
@@ -40,33 +38,9 @@ from sentinel.downstream import (
 from sentinel.forensics.store import InMemoryForensicStore
 from sentinel.mcp_proxy.content import result_text
 
-# QUARANTINED DIAGNOSTICS — opt in with SENTINEL_RUN_REAL_MCP_TESTS=1.
-#
-# These are NOT part of passing coverage. Each one passes on its own, but two of
-# them in a process wedge on the open teardown defect
-# (docs/mcp-streamable-http-teardown.md), so they cannot run as a module or
-# alongside the suite. An unconditional skip would have made even
-# ``-k declared`` silently skip, so the gate is an environment variable and the
-# tests really run when you ask for them:
-#
-#   SENTINEL_RUN_REAL_MCP_TESTS=1 pytest tests/test_downstream_remote_paths.py -k declared
-#
-# The `real_mcp` CI job runs them one at a time and is non-blocking until the
-# teardown defect is fixed; at that point delete the gate and fold them in.
-#
-# They are also evidence about that defect: they tear down SENTINEL's OWN
-# downstream sessions, so the wedge follows open_downstream_session teardown and
-# is not confined to the external test client.
-_OPT_IN: Final[bool] = os.getenv("SENTINEL_RUN_REAL_MCP_TESTS") == "1"
-
 pytestmark = [
     pytest.mark.filterwarnings("ignore::ResourceWarning"),
     pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning"),
-    pytest.mark.skipif(
-        not _OPT_IN,
-        reason="quarantined real-MCP diagnostic; set SENTINEL_RUN_REAL_MCP_TESTS=1 "
-               "and select ONE test (see docs/mcp-streamable-http-teardown.md)",
-    ),
 ]
 
 
@@ -83,7 +57,10 @@ class _Server:
             lifespan="on", ws="none",
         )
         self._server = uvicorn.Server(config)
-        self._server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+        # Keep uvicorn off the process's signal handlers, or stopping this server
+        # ends every later SSE response in the run
+        # (docs/mcp-streamable-http-teardown.md).
+        self._server.capture_signals = nullcontext  # type: ignore[method-assign]
         self._task: asyncio.Task[None] | None = None
 
     @property

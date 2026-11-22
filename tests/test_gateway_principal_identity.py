@@ -224,9 +224,7 @@ async def test_a_session_is_authorized_under_its_credentials_tenant() -> None:
         assert record.tenant == "acme"
 
         # And with no per-tenant credential, the deployment's own tenant stands —
-        # the single-tenant case, asserted on the same gateway rather than a
-        # second one, because every extra gateway lifecycle in this suite is
-        # another chance to hit the open teardown wedge.
+        # the single-tenant case, asserted on the same gateway.
         plain = _FakeSession()
         fallback = await gateway._proxy_for_session(plain, principal=None)  # noqa: SLF001
         assert fallback is not None

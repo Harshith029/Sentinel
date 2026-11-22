@@ -24,6 +24,9 @@ All notable changes to this project are documented here. Format follows
   non-blocking CI job for it is gone, and
   `test_real_http_sessions_after_remote_downstream` is a passing test instead
   of a strict xfail.
+- `test_pre_commit_hook_is_installed` failed on every fresh clone, which has no
+  hook until `pre-commit install` runs. Outside CI it now skips and says so; in
+  CI, which installs the hook first, a missing hook still fails.
 
 ### Security
 - Dependencies are audited every week, not only when a pull request runs CI.

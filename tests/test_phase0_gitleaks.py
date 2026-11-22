@@ -16,6 +16,7 @@ several AWS `EXAMPLE` patterns).
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -111,9 +112,24 @@ def test_gitleaks_blocks_planted_secret(staged_planted_secret: Path) -> None:
     ), combined
 
 
+def _in_ci() -> bool:
+    """GitHub Actions, like most CI services, sets CI=true."""
+    return os.environ.get("CI", "").lower() in ("true", "1")
+
+
 def test_pre_commit_hook_is_installed() -> None:
-    """`.git/hooks/pre-commit` exists after `pre-commit install` ran."""
+    """`.git/hooks/pre-commit` exists after `pre-commit install` ran.
+
+    CI runs `pre-commit install` before the tests, so there a missing hook is a
+    real failure. A fresh clone has no hook until its developer installs one,
+    so outside CI a missing hook is a setup step still to do, not a defect.
+    """
     hook = REPO_ROOT / ".git" / "hooks" / "pre-commit"
+    if not hook.is_file() and not _in_ci():
+        pytest.skip(
+            "pre-commit hook not installed in this clone, so commits here are not "
+            "scanned for secrets; run `pre-commit install` (CI installs and checks it)"
+        )
     assert hook.is_file(), (
         "Run `pre-commit install` (Phase 0 step); .git/hooks/pre-commit is "
         "missing, so commits are NOT actually being scanned."
